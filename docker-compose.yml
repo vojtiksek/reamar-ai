@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  db:
+    image: postgres:16
+    container_name: reamar_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: reamar
+      POSTGRES_PASSWORD: reamar_password
+      POSTGRES_DB: reamar
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U reamar -d reamar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+

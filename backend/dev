@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Development server script - runs uvicorn with reload watching only src/
+
+set -e
+
+cd "$(dirname "$0")"
+
+if [ ! -d ".venv" ]; then
+    echo "Error: .venv not found. Run 'python3.11 -m venv .venv && source .venv/bin/activate && pip install -e .' first."
+    exit 1
+fi
+
+source .venv/bin/activate
+
+exec uvicorn app.main:app --reload --app-dir src --port 8001 --reload-dir src

@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "reamar-backend"
+version = "0.1.0"
+description = "FastAPI + SQLAlchemy backend skeleton for Reamar AI"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.30.0",
+  "SQLAlchemy>=2.0.0",
+  "psycopg[binary]>=3.1.0",
+  "alembic>=1.13.0",
+  "pydantic-settings>=2.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "ipython",
+  "pytest>=7.0",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

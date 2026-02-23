@@ -1,0 +1,68 @@
+sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;unit_label;decimals;display_format;percent_scale
+
+1001;Cena;Jednotka;price;Cena;ANO;ANO;NE;Kč;0;currency;
+1002;Cena;Jednotka;price_per_sm;Cena m²;ANO;ANO;NE;Kč/m²;0;currency_per_m2;
+1003;Cena;Jednotka;price_change;Změna ceny;ANO;ANO;NE;%;0;percent;fraction
+1004;Cena;Jednotka;original_price;Původní cena;ANO;NE;NE;Kč;0;currency;
+1005;Cena;Jednotka;original_price_per_sm;Původní cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
+1006;Cena;Projekt;parking_outdoor_price;Cena stání;ANO;NE;ANO;Kč;0;currency;
+1007;Cena;Projekt;parking_indoor_price;Cena garáže;ANO;NE;ANO;Kč;0;currency;
+
+2001;Lokalita;Projekt;municipality;Obec;ANO;ANO;NE;;;enum_search;
+2002;Lokalita;Projekt;city;Město;ANO;ANO;NE;;;enum_search;
+2003;Lokalita;Projekt;district;Okres;ANO;ANO;NE;;;enum_search;
+2004;Lokalita;Projekt;administrative_district_iga;Obvod Prahy;ANO;ANO;ANO;;;enum;
+2005;Lokalita;Projekt;cadastral_area_iga;Katastrální území;ANO;ANO;ANO;;;enum;
+2006;Lokalita;Projekt;ride_to_center;Autem do centra;ANO;ANO;NE;min;0;duration_minutes;
+2007;Lokalita;Projekt;public_transport_to_center;MHD do centra;ANO;ANO;NE;min;0;duration_minutes;
+2008;Lokalita;Projekt;region_iga;Kraj;ANO;ANO;NE;;;enum;
+2009;Lokalita;Projekt;address;Adresa;ANO;NE;NE;;;text;
+
+3001;Dispozice;Jednotka;layout;Dispozice;ANO;ANO;NE;;;enum;
+3002;Dispozice;Jednotka;floor_area;Podlahová plocha;ANO;ANO;NE;m²;1;area_m2;
+3003;Dispozice;Jednotka;total_area;Celková plocha;ANO;ANO;NE;m²;1;area_m2;
+3004;Dispozice;Jednotka;equivalent_area;;NE;NE;NE;m²;1;area_m2;
+3005;Dispozice;Jednotka;exterior_area;Venek;ANO;ANO;NE;m²;1;area_m2;
+3006;Dispozice;Jednotka;balcony_area;Balkon;ANO;ANO;ANO;m²;1;area_m2;
+3007;Dispozice;Jednotka;terrace_area;Terasa;ANO;ANO;ANO;m²;1;area_m2;
+3008;Dispozice;Jednotka;garden_area;Zahrada;ANO;ANO;ANO;m²;1;area_m2;
+3009;Dispozice;Jednotka;floor;Podlaží;ANO;ANO;NE;;0;integer;
+3010;Dispozice;Projekt;floors;Podlaží (budovy);ANO;NE;NE;;0;integer;
+3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
+3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
+
+4001;Stav;Jednotka;availability;Stav;ANO;ANO;NE;;;enum;
+4002;Stav;Projekt;days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
+4003;Stav;Projekt;first_seen;První výskyt;ANO;NE;NE;;;date;
+4004;Stav;Projekt;last_seen;Poslední výskyt;ANO;NE;NE;;;date;
+4005;Stav;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
+4006;Stav;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
+
+5001;Standardy;Projekt;overall_quality;Kvalita;ANO;ANO;ANO;;;enum;
+5002;Standardy;Jednotka;heating;Topení;ANO;ANO;ANO;;;enum;
+5003;Standardy;Jednotka;air_conditioning;Klimatizace;ANO;ANO;ANO;;;boolean;
+5004;Standardy;Jednotka;cooling_ceilings;Chlazení stropem;ANO;ANO;ANO;;;boolean;
+5005;Standardy;Jednotka;exterior_blinds;Žaluzie;ANO;ANO;ANO;;;boolean;
+5006;Standardy;Jednotka;smart_home;Smart home;ANO;ANO;ANO;;;boolean;
+5007;Standardy;Projekt;windows;Okna;ANO;ANO;ANO;;;enum;
+5008;Standardy;Projekt;partition_walls;Příčky;ANO;ANO;ANO;;;enum;
+5009;Standardy;Projekt;amenities;Zajímavosti;ANO;NE;ANO;;;text;
+
+6001;Projekt;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
+6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
+6003;Projekt;Projekt;project_url;Odkaz na projekt;ANO;NE;ANO;;;url;
+
+7001;Financování;Projekt;payment_contract;Platba po SOSBK;ANO;ANO;ANO;%;0;percent;fraction
+7002;Financování;Projekt;payment_construction;Platba při výstavbě;ANO;ANO;ANO;%;0;percent;fraction
+7003;Financování;Projekt;payment_occupancy;Platba po dokončení;ANO;ANO;ANO;%;0;percent;fraction
+
+8001;Jednotka;Jednotka;unit_name;Název jednotky;ANO;NE;NE;;;text;
+8002;Jednotka;Jednotka;building;Budova;ANO;NE;NE;;;text;
+8003;Jednotka;Jednotka;unit_url;URL jednotky;ANO;NE;NE;;;url;
+8004;Jednotka;Jednotka;unique_id;;NE;NE;NE;;;text;
+8005;Jednotka;Jednotka;id;ID;ANO;NE;NE;;;text;
+
+9001;Technické;Projekt;project_key;;NE;NE;NE;;;text;
+9002;Technické;Projekt;gps_latitude;;NE;NE;NE;;;geo_number;
+9003;Technické;Projekt;gps_longitude;;NE;NE;NE;;;geo_number;
+9004;Technické;Projekt;postal_code;;NE;NE;NE;;;text;
