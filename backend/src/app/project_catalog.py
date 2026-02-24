@@ -5,7 +5,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-# CSV column (catalog key) -> Project model attribute name. Only for columns that exist on Project.
+# CSV column (catalog key) -> Project overview item key (flat, no dots).
+# Used when building GET /projects/overview items; keys must match /columns?view=projects accessors.
 PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "developer": "developer",
     "name": "name",
@@ -28,6 +29,7 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "heating": "heating",
     "partition_walls": "partition_walls",
     "amenities": "amenities",
+    "project_url": "project_url",  # from overrides when set
     "project": "name",  # alias for name
 }
 
@@ -122,12 +124,14 @@ def _load_project_catalog_rows() -> list[dict]:
                 sort_priority = int(_normalize(row.get("sort_priority", "")) or 0)
             except (TypeError, ValueError):
                 sort_priority = 0
+            editable = _normalize(row.get("Editable", "")).upper() == "ANO"
             rows.append({
                 "column": column,
                 "alias": _normalize(row.get("Alias", "")) or column,
                 "display_format": _normalize(row.get("display_format", "")),
                 "unit_label": _normalize(row.get("unit_label", "")),
                 "sort_priority": sort_priority,
+                "editable": editable,
             })
     rows.sort(key=lambda r: (r["sort_priority"], r["alias"]))
     _cached_project_columns = rows
@@ -153,8 +157,18 @@ def get_project_columns() -> list[dict]:
             "data_type": data_type,
             "unit": unit,
             "kind": "catalog",
+            "editable": r.get("editable", False),
         })
     return out
+
+
+def get_project_overrideable_fields() -> set[str]:
+    """
+    Return catalog column keys for project fields that are editable (Editable == ANO)
+    and visible on web (Zobrazit na webu == ANO).
+    """
+    rows = _load_project_catalog_rows()
+    return {r["column"] for r in rows if r.get("editable")}
 
 
 def get_projects_columns_with_computed() -> list[dict]:

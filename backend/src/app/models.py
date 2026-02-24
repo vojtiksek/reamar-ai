@@ -63,6 +63,10 @@ class Project(Base):
         back_populates="project",
         cascade="all, delete-orphan",
     )
+    overrides: Mapped[list["ProjectOverride"]] = relationship(
+        back_populates="project",
+        cascade="all, delete-orphan",
+    )
 
 
 class Unit(Base):
@@ -222,6 +226,27 @@ class UnitOverride(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
 
     unit: Mapped["Unit"] = relationship(back_populates="overrides")
+
+
+class ProjectOverride(Base):
+    __tablename__ = "project_overrides"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "field",
+            name="uq_project_override_project_field",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("projects.id"),
+        nullable=False,
+    )
+    field: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+    project: Mapped["Project"] = relationship(back_populates="overrides")
 
 
 class UnitSnapshot(Base):

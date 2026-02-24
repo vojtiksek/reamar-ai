@@ -7,7 +7,8 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from .filter_catalog import CATALOG_TO_DB
-from .models import Project, Unit, UnitOverride
+from .models import Project, Unit, UnitOverride, ProjectOverride
+from .project_catalog import get_project_columns, get_project_overrideable_fields
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,9 @@ _DECIMAL_FIELDS = frozenset(
     }
 )
 _STR_FIELDS = frozenset({"availability_status"})
+
+# Project-level overrideable fields (catalog column keys) derived from field_catalog.csv
+PROJECT_OVERRIDEABLE_FIELDS = frozenset(get_project_overrideable_fields())
 
 
 def _parse_int(value: str) -> int | None:
@@ -120,6 +124,76 @@ def build_override_map(overrides: list[UnitOverride]) -> dict[int, dict[str, str
             result[o.unit_id] = {}
         result[o.unit_id][o.field] = o.value
     return result
+
+
+def build_project_override_map(overrides: list[ProjectOverride]) -> dict[int, dict[str, str]]:
+    """Build project_id -> {field: value} from project_override rows."""
+    result: dict[int, dict[str, str]] = {}
+    for o in overrides:
+        if o.field not in PROJECT_OVERRIDEABLE_FIELDS:
+            continue
+        if o.project_id not in result:
+            result[o.project_id] = {}
+        result[o.project_id][o.field] = o.value
+    return result
+
+
+def _parse_project_override_value(value: str, data_type: str) -> Any:
+    """Best-effort parse for project override values based on column data_type."""
+    dt = (data_type or "").lower()
+    if dt == "bool":
+        parsed = _parse_bool(value)
+        return parsed if parsed is not None else None
+    if dt == "number":
+        # Allow integer or decimal; fall back to None on parse failure
+        try:
+            v = float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return v
+    # date/enum/text – keep as stripped string
+    if value is None:
+        return None
+    return str(value).strip()
+
+
+def apply_project_overrides_to_item(
+    project_id: int,
+    item: dict[str, Any],
+    override_map: dict[int, dict[str, str]],
+    *,
+    attr_keyed: bool = False,
+) -> dict[str, Any]:
+    """
+    Apply project-level overrides to a flat project dict.
+
+    If attr_keyed is False, item is keyed by catalog keys (field names).
+    If attr_keyed is True, item is keyed by DB attribute names (accessors);
+    overrides (catalog keys) are applied by setting item[attr] = parsed.
+    """
+    overrides = override_map.get(project_id)
+    if not overrides:
+        return item
+
+    from .project_catalog import PROJECT_CATALOG_TO_ATTR
+
+    col_types: dict[str, str] = {
+        c["key"]: c.get("data_type", "text") for c in get_project_columns()
+    }
+
+    for field, raw in overrides.items():
+        data_type = col_types.get(field, "text")
+        parsed = _parse_project_override_value(raw, data_type)
+        if parsed is None and data_type in ("number", "bool"):
+            continue
+        if attr_keyed:
+            attr = PROJECT_CATALOG_TO_ATTR.get(field)
+            if attr is not None and attr in item:
+                item[attr] = parsed
+        else:
+            if field in item:
+                item[field] = parsed
+    return item
 
 
 def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -> dict[str, Any]:

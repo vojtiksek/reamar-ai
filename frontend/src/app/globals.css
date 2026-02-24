@@ -24,3 +24,17 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+@layer components {
+  .data-grid-wrapper {
+    @apply flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white;
+  }
+
+  .data-grid-scroll {
+    @apply relative min-h-0 flex-1 overflow-auto;
+  }
+
+  .data-grid-table {
+    @apply min-w-max table-auto border-collapse text-xs sm:text-sm;
+  }
+}

@@ -16,8 +16,15 @@ from sqlalchemy.orm import Session, selectinload
 from .column_catalog import get_columns as get_column_definitions
 from .db import check_db_connection, get_db_session
 from .filter_catalog import get_filter_groups
-from .models import Project, Unit, UnitOverride, UnitPriceHistory
-from .overrides import OVERRIDEABLE_FIELDS, build_override_map, unit_to_response_dict
+from .models import Project, Unit, UnitOverride, UnitPriceHistory, ProjectOverride
+from .overrides import (
+    OVERRIDEABLE_FIELDS,
+    PROJECT_OVERRIDEABLE_FIELDS,
+    build_override_map,
+    build_project_override_map,
+    unit_to_response_dict,
+    apply_project_overrides_to_item,
+)
 from .project_catalog import (
     COMPUTED_COLUMN_KEYS,
     PROJECT_CATALOG_TO_ATTR,
@@ -28,13 +35,18 @@ from .project_catalog import (
 
 app = FastAPI(title="Reamar AI Backend")
 
-# Dev only: CORS for local frontend
+# CORS for local Next.js frontend (localhost:3000 / 3001)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ],
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_credentials=False,
 )
 
 
@@ -126,6 +138,7 @@ class ProjectsListResponse(BaseModel):
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 VALID_OVERRIDE_FIELDS = OVERRIDEABLE_FIELDS
+VALID_PROJECT_OVERRIDE_FIELDS = PROJECT_OVERRIDEABLE_FIELDS
 
 
 def _get_unit_or_404(db: Session, external_id: str) -> Unit:
@@ -138,6 +151,17 @@ def _get_unit_or_404(db: Session, external_id: str) -> Unit:
     if unit is None:
         raise HTTPException(status_code=404, detail="Unit not found")
     return unit
+
+
+def _get_project_or_404(db: Session, project_id: int) -> Project:
+    project = (
+        db.execute(select(Project).where(Project.id == project_id))
+        .scalars()
+        .first()
+    )
+    if project is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return project
 
 
 def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
@@ -223,6 +247,7 @@ def _build_units_query(
     max_price_per_m2: int | None = None,
     layout: list[str] | None = None,
     district: list[str] | None = None,
+    municipality: list[str] | None = None,
     heating: list[str] | None = None,
     windows: list[str] | None = None,
     permit_regular: bool | None = None,
@@ -249,6 +274,8 @@ def _build_units_query(
         base = base.where(Unit.layout.in_(layout))
     if district is not None and len(district) > 0:
         base = base.where(Unit.district.in_(district))
+    if municipality is not None and len(municipality) > 0:
+        base = base.where(Unit.municipality.in_(municipality))
     if heating is not None and len(heating) > 0:
         base = base.where(Unit.heating.in_(heating))
     if windows is not None and len(windows) > 0:
@@ -468,6 +495,19 @@ ALLOWED_PROJECT_OVERVIEW_SORT_BY = frozenset({
     "min_price_czk",
     "max_price_czk",
     "avg_floor_area_m2",
+    "min_parking_indoor_price_czk",
+    "max_parking_indoor_price_czk",
+    "min_parking_outdoor_price_czk",
+    "max_parking_outdoor_price_czk",
+    "project_first_seen",
+    "project_last_seen",
+    "max_days_on_market",
+    "min_payment_contract",
+    "max_payment_contract",
+    "min_payment_construction",
+    "max_payment_construction",
+    "min_payment_occupancy",
+    "max_payment_occupancy",
 })
 ALLOWED_PROJECT_OVERVIEW_SORT_DIR = ("asc", "desc")
 
@@ -500,8 +540,12 @@ def get_projects_overview(
     windows: Annotated[list[str] | None, Query(description="Filter by windows (any of)")] = None,
     permit_regular: Annotated[bool | None, Query(description="Filter by permit_regular")] = None,
     renovation: Annotated[bool | None, Query(description="Filter by renovation")] = None,
+    air_conditioning: Annotated[bool | None, Query(description="Filter by air_conditioning")] = None,
+    cooling_ceilings: Annotated[bool | None, Query(description="Filter by cooling_ceilings")] = None,
+    smart_home: Annotated[bool | None, Query(description="Filter by smart_home")] = None,
     min_floor_area: Annotated[float | None, Query(ge=0)] = None,
     max_floor_area: Annotated[float | None, Query(ge=0)] = None,
+    municipality: Annotated[list[str] | None, Query(description="Filter by municipality (any of)")] = None,
 ) -> ProjectsOverviewResponse:
     if limit not in (100, 300, 500):
         raise HTTPException(
@@ -528,10 +572,14 @@ def get_projects_overview(
         max_price_per_m2=max_price_per_m2,
         layout=layout,
         district=district,
+        municipality=municipality,
         heating=heating,
         windows=windows,
         permit_regular=permit_regular,
         renovation=renovation,
+        air_conditioning=air_conditioning,
+        cooling_ceilings=cooling_ceilings,
+        smart_home=smart_home,
         min_floor_area=min_floor_area,
         max_floor_area=max_floor_area,
     )
@@ -583,6 +631,22 @@ def get_projects_overview(
             func.min(unit_subq.c.price_czk).label("min_price_czk"),
             func.max(unit_subq.c.price_czk).label("max_price_czk"),
             func.avg(unit_subq.c.floor_area_m2).label("avg_floor_area_m2"),
+            # Parking price aggregates
+            func.min(unit_subq.c.parking_indoor_price_czk).label("min_parking_indoor_price_czk"),
+            func.max(unit_subq.c.parking_indoor_price_czk).label("max_parking_indoor_price_czk"),
+            func.min(unit_subq.c.parking_outdoor_price_czk).label("min_parking_outdoor_price_czk"),
+            func.max(unit_subq.c.parking_outdoor_price_czk).label("max_parking_outdoor_price_czk"),
+            # Project-level time/status aggregates from units
+            func.min(unit_subq.c.first_seen).label("project_first_seen"),
+            func.max(unit_subq.c.last_seen).label("project_last_seen"),
+            func.max(unit_subq.c.days_on_market).label("max_days_on_market"),
+            # Payment scheme aggregates (fractions 0–1)
+            func.min(unit_subq.c.payment_contract).label("min_payment_contract"),
+            func.max(unit_subq.c.payment_contract).label("max_payment_contract"),
+            func.min(unit_subq.c.payment_construction).label("min_payment_construction"),
+            func.max(unit_subq.c.payment_construction).label("max_payment_construction"),
+            func.min(unit_subq.c.payment_occupancy).label("min_payment_occupancy"),
+            func.max(unit_subq.c.payment_occupancy).label("max_payment_occupancy"),
         )
         .select_from(unit_subq)
         .join(Project, unit_subq.c.project_id == Project.id)
@@ -606,6 +670,22 @@ def get_projects_overview(
     )
     rows = db.execute(stmt).all()
 
+    # Load project-level overrides for all projects in this page
+    project_ids = [ (row._mapping["id"] if hasattr(row, "_mapping") else row.id) for row in rows ]
+    override_rows: list[ProjectOverride] = []
+    if project_ids:
+        override_rows = (
+            db.execute(
+                select(ProjectOverride).where(
+                    ProjectOverride.project_id.in_(project_ids),
+                    ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+                )
+            )
+            .scalars()
+            .all()
+        )
+    project_override_map = build_project_override_map(override_rows)
+
     def _dec(v: Any) -> Any:
         if v is None:
             return None
@@ -616,16 +696,22 @@ def get_projects_overview(
                 return v
         return v
 
+    # Build items with keys matching /columns?view=projects accessors (DB attr names:
+    # ride_to_center_min, public_transport_to_center_min, name, municipality, etc.)
     result = []
     for row in rows:
         r = row._mapping if hasattr(row, "_mapping") else row
         item: dict[str, Any] = {}
-        for catalog_key, attr in PROJECT_CATALOG_TO_ATTR.items():
+        seen_attrs: set[str] = set()
+        for _catalog_key, attr in PROJECT_CATALOG_TO_ATTR.items():
+            if attr in seen_attrs:
+                continue
+            seen_attrs.add(attr)
             if attr in r:
                 val = r[attr]
-                item[catalog_key] = _dec(val) if val is not None and hasattr(val, "__float__") else val
+                item[attr] = _dec(val) if val is not None and hasattr(val, "__float__") else val
             else:
-                item[catalog_key] = None
+                item[attr] = None
         item["id"] = r.get("id")
         total_units = r.get("total_units") or 0
         available_units = int(r.get("available_units") or 0)
@@ -644,6 +730,46 @@ def get_projects_overview(
         item["min_price_czk"] = int(r["min_price_czk"]) if r.get("min_price_czk") is not None else None
         item["max_price_czk"] = int(r["max_price_czk"]) if r.get("max_price_czk") is not None else None
         item["avg_floor_area_m2"] = _dec(r.get("avg_floor_area_m2"))
+        # Parking price aggregates
+        item["min_parking_indoor_price_czk"] = (
+            int(r["min_parking_indoor_price_czk"])
+            if r.get("min_parking_indoor_price_czk") is not None
+            else None
+        )
+        item["max_parking_indoor_price_czk"] = (
+            int(r["max_parking_indoor_price_czk"])
+            if r.get("max_parking_indoor_price_czk") is not None
+            else None
+        )
+        item["min_parking_outdoor_price_czk"] = (
+            int(r["min_parking_outdoor_price_czk"])
+            if r.get("min_parking_outdoor_price_czk") is not None
+            else None
+        )
+        item["max_parking_outdoor_price_czk"] = (
+            int(r["max_parking_outdoor_price_czk"])
+            if r.get("max_parking_outdoor_price_czk") is not None
+            else None
+        )
+        # Project-level time/status aggregates
+        item["project_first_seen"] = r.get("project_first_seen")
+        item["project_last_seen"] = r.get("project_last_seen")
+        item["max_days_on_market"] = (
+            int(r["max_days_on_market"]) if r.get("max_days_on_market") is not None else None
+        )
+        # Payment scheme aggregates (fractions 0–1)
+        item["min_payment_contract"] = _dec(r.get("min_payment_contract"))
+        item["max_payment_contract"] = _dec(r.get("max_payment_contract"))
+        item["min_payment_construction"] = _dec(r.get("min_payment_construction"))
+        item["max_payment_construction"] = _dec(r.get("max_payment_construction"))
+        item["min_payment_occupancy"] = _dec(r.get("min_payment_occupancy"))
+        item["max_payment_occupancy"] = _dec(r.get("max_payment_occupancy"))
+        apply_project_overrides_to_item(
+            project_id=item["id"],
+            item=item,
+            override_map=project_override_map,
+            attr_keyed=True,
+        )
         result.append(item)
     return ProjectsOverviewResponse(items=result, total=total, limit=limit, offset=offset)
 
@@ -667,10 +793,14 @@ def list_projects(
     max_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
     layout: Annotated[list[str] | None, Query()] = None,
     district: Annotated[list[str] | None, Query()] = None,
+    municipality: Annotated[list[str] | None, Query()] = None,
     heating: Annotated[list[str] | None, Query()] = None,
     windows: Annotated[list[str] | None, Query()] = None,
     permit_regular: Annotated[bool | None, Query()] = None,
     renovation: Annotated[bool | None, Query()] = None,
+    air_conditioning: Annotated[bool | None, Query()] = None,
+    cooling_ceilings: Annotated[bool | None, Query()] = None,
+    smart_home: Annotated[bool | None, Query()] = None,
     min_floor_area: Annotated[float | None, Query(ge=0)] = None,
     max_floor_area: Annotated[float | None, Query(ge=0)] = None,
 ) -> ProjectsOverviewResponse:
@@ -687,10 +817,14 @@ def list_projects(
         max_price_per_m2=max_price_per_m2,
         layout=layout,
         district=district,
+        municipality=municipality,
         heating=heating,
         windows=windows,
         permit_regular=permit_regular,
         renovation=renovation,
+        air_conditioning=air_conditioning,
+        cooling_ceilings=cooling_ceilings,
+        smart_home=smart_home,
         min_floor_area=min_floor_area,
         max_floor_area=max_floor_area,
     )
@@ -1000,4 +1134,91 @@ def delete_unit_override(
     db.commit()
     db.refresh(unit)
     return _effective_unit_response(db, unit)
+
+
+@app.put("/projects/{project_id}/overrides/{field}")
+def put_project_override(
+    project_id: int,
+    field: str,
+    body: OverrideValueBody,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Create or update a project-level override for a catalog field."""
+    if field not in VALID_PROJECT_OVERRIDE_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid project override field. Allowed: {sorted(VALID_PROJECT_OVERRIDE_FIELDS)}",
+        )
+    project = _get_project_or_404(db, project_id)
+    existing = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == project.id,
+                ProjectOverride.field == field,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing:
+        existing.value = body.value
+    else:
+        db.add(ProjectOverride(project_id=project.id, field=field, value=body.value))
+    db.commit()
+
+    override_rows = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == project.id,
+                ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    override_map = build_project_override_map(override_rows)
+    base_item = get_project(project_id=project.id, db=db)
+    return apply_project_overrides_to_item(project.id, dict(base_item), override_map)
+
+
+@app.delete("/projects/{project_id}/overrides/{field}")
+def delete_project_override(
+    project_id: int,
+    field: str,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Delete a project-level override and return updated project row."""
+    if field not in VALID_PROJECT_OVERRIDE_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid project override field. Allowed: {sorted(VALID_PROJECT_OVERRIDE_FIELDS)}",
+        )
+    project = _get_project_or_404(db, project_id)
+    existing = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == project.id,
+                ProjectOverride.field == field,
+            )
+        )
+        .scalars()
+        .first()
+    )
+    if existing:
+        db.delete(existing)
+        db.commit()
+
+    override_rows = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == project.id,
+                ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    override_map = build_project_override_map(override_rows)
+    base_item = get_project(project_id=project.id, db=db)
+    return apply_project_overrides_to_item(project.id, dict(base_item), override_map)
 

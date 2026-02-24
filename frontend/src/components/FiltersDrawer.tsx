@@ -34,16 +34,16 @@ export function FiltersDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/50 transition-opacity" aria-hidden onClick={onClose} />
       <div
-        className="fixed top-0 right-0 z-50 flex h-full w-[420px] max-w-[100vw] flex-col bg-white shadow-xl"
+        className="fixed top-0 right-0 z-50 flex h-full w-[420px] max-w-[100vw] flex-col rounded-l-xl border-l border-gray-200 bg-white shadow-xl"
         role="dialog"
         aria-label="Filtry"
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-4 py-3">
+        <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
           <h2 className="text-lg font-semibold text-gray-900">Filtry</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-gray-500 hover:bg-gray-100 hover:text-gray-700"
+            className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
             aria-label="Zavřít"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -51,11 +51,11 @@ export function FiltersDrawer({
             </svg>
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          <div className="space-y-6">
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          <div className="space-y-8">
             {filterGroups.map((group) => (
               <section key={group.name}>
-                <h3 className="mb-3 text-sm font-semibold text-gray-700">{group.name}</h3>
+                <h3 className="mb-4 text-sm font-medium text-gray-700">{group.name}</h3>
                 <div className="space-y-4">
                   {group.filters.map((spec) => (
                     <FilterField key={spec.key} spec={spec} currentFilters={currentFilters} onChange={onChange} />
@@ -65,19 +65,19 @@ export function FiltersDrawer({
             ))}
           </div>
         </div>
-        <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3">
+        <div className="shrink-0 border-t border-gray-200 bg-white px-5 py-4">
           <div className="flex gap-3">
             <button
               type="button"
               onClick={onReset}
-              className="flex-1 rounded-md border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
             >
               Reset
             </button>
             <button
               type="button"
               onClick={onApply}
-              className="flex-1 rounded-md bg-gray-800 px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-700"
+              className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-900"
             >
               Použít
             </button>
@@ -119,7 +119,7 @@ function FilterField({
             onChange={(e) => onChange(`${spec.key}_min`, e.target.value === "" ? undefined : Number(e.target.value))}
             placeholder="Min"
             disabled={disabled}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
           />
           <input
             type="number"
@@ -128,7 +128,7 @@ function FilterField({
             onChange={(e) => onChange(`${spec.key}_max`, e.target.value === "" ? undefined : Number(e.target.value))}
             placeholder="Max"
             disabled={disabled}
-            className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 disabled:text-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
           />
         </div>
       </div>
@@ -145,11 +145,11 @@ function FilterField({
           {label}
           {disabled && <span className="ml-1 text-xs text-amber-600">(zatím nepodporováno)</span>}
         </span>
-        <ul className="max-h-48 space-y-1 overflow-y-auto rounded border border-gray-200 bg-gray-50/50 p-2">
+        <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-gray-50/50 p-2">
           {options.map((val) => {
             const isChecked = selectedSet.has(val);
             return (
-              <li key={val} className="flex items-center gap-2">
+              <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-gray-100/80">
                 <input
                   type="checkbox"
                   id={`${spec.key}-${val}`}
@@ -159,9 +159,9 @@ function FilterField({
                     onChange(spec.key, next);
                   }}
                   disabled={disabled}
-                  className="h-4 w-4 rounded border-gray-300 text-gray-600 focus:ring-gray-500 disabled:opacity-50"
+                  className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
                 />
-                <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-800">
+                <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
                   {val}
                 </label>
               </li>
@@ -195,21 +195,21 @@ function FilterField({
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, undefined)}
-            className={`rounded-md px-3 py-1.5 text-sm ${value === undefined ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === undefined ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Libovolné
           </button>
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, true)}
-            className={`rounded-md px-3 py-1.5 text-sm ${value === true ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === true ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Ano
           </button>
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, false)}
-            className={`rounded-md px-3 py-1.5 text-sm ${value === false ? "bg-gray-800 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === false ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Ne
           </button>
@@ -260,22 +260,22 @@ function EnumSearchField({
         onChange={(e) => setSearch(e.target.value)}
         placeholder="Hledat…"
         disabled={disabled}
-        className="w-full rounded border border-gray-300 px-3 py-2 text-sm disabled:bg-gray-100 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-gray-500"
+        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
         aria-label={`Vyhledat v ${label}`}
       />
       {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 rounded border border-gray-200 bg-gray-50/50 p-2">
+        <div className="flex flex-wrap gap-1.5 rounded-md border border-gray-200 bg-gray-50/50 p-2">
           {selected.map((val) => (
             <span
               key={val}
-              className="inline-flex items-center gap-1 rounded-full bg-gray-200 py-0.5 pl-2 pr-1 text-sm text-gray-800"
+              className="inline-flex items-center gap-1 rounded-full bg-gray-200 py-0.5 pl-2 pr-1 text-sm font-medium text-gray-800"
             >
               {val}
               <button
                 type="button"
                 onClick={() => removeChip(val)}
                 disabled={disabled}
-                className="rounded-full p-0.5 text-gray-500 hover:bg-gray-300 hover:text-gray-800 disabled:opacity-50"
+                className="rounded-full p-0.5 text-gray-600 hover:bg-gray-300 hover:text-gray-900 disabled:opacity-50"
                 aria-label={`Odebrat ${val}`}
               >
                 <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -286,11 +286,11 @@ function EnumSearchField({
           ))}
         </div>
       )}
-      <ul className="max-h-48 space-y-1 overflow-y-auto rounded border border-gray-200 bg-gray-50/50 p-2">
+      <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-gray-50/50 p-2">
         {filtered.map((val) => {
           const isChecked = selectedSet.has(val);
           return (
-            <li key={val} className="flex items-center gap-2">
+            <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-gray-100/80">
               <input
                 type="checkbox"
                 id={`${spec.key}-${val}`}
@@ -300,9 +300,9 @@ function EnumSearchField({
                   onChange(spec.key, next);
                 }}
                 disabled={disabled}
-                className="h-4 w-4 rounded border-gray-300 text-gray-600 focus:ring-gray-500 disabled:opacity-50"
+                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
               />
-              <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-800">
+              <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
                 {val}
               </label>
             </li>

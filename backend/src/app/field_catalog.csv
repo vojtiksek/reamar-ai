@@ -5,8 +5,18 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 1003;Cena;Jednotka;price_change;Změna ceny;ANO;ANO;NE;%;0;percent;fraction
 1004;Cena;Jednotka;original_price;Původní cena;ANO;NE;NE;Kč;0;currency;
 1005;Cena;Jednotka;original_price_per_sm;Původní cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
-1006;Cena;Projekt;parking_outdoor_price;Cena stání;ANO;NE;ANO;Kč;0;currency;
-1007;Cena;Projekt;parking_indoor_price;Cena garáže;ANO;NE;ANO;Kč;0;currency;
+1006;Cena;Projekt;min_parking_outdoor_price_czk;Cena stání (od);ANO;NE;ANO;Kč;0;currency;
+1007;Cena;Projekt;max_parking_outdoor_price_czk;Cena stání (do);ANO;NE;ANO;Kč;0;currency;
+1008;Cena;Projekt;min_parking_indoor_price_czk;Cena garáže (od);ANO;NE;ANO;Kč;0;currency;
+1009;Cena;Projekt;max_parking_indoor_price_czk;Cena garáže (do);ANO;NE;ANO;Kč;0;currency;
+1010;Cena;Projekt;total_units;Počet jednotek;ANO;NE;NE;;0;integer;
+1011;Cena;Projekt;available_units;Dostupných jednotek;ANO;NE;NE;;0;integer;
+1012;Cena;Projekt;availability_ratio;Podíl dostupných;ANO;NE;NE;;0;percent;fraction
+1013;Cena;Projekt;avg_price_czk;Prům. cena;ANO;NE;NE;Kč;0;currency;
+1014;Cena;Projekt;avg_price_per_m2_czk;Prům. cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
+1015;Cena;Projekt;min_price_czk;Min. cena;ANO;NE;NE;Kč;0;currency;
+1016;Cena;Projekt;max_price_czk;Max. cena;ANO;NE;NE;Kč;0;currency;
+1017;Cena;Projekt;avg_floor_area_m2;Prům. plocha m²;ANO;NE;NE;m²;1;area_m2;
 
 2001;Lokalita;Projekt;municipality;Obec;ANO;ANO;NE;;;enum_search;
 2002;Lokalita;Projekt;city;Město;ANO;ANO;NE;;;enum_search;
@@ -32,9 +42,9 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
 
 4001;Stav;Jednotka;availability;Stav;ANO;ANO;NE;;;enum;
-4002;Stav;Projekt;days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
-4003;Stav;Projekt;first_seen;První výskyt;ANO;NE;NE;;;date;
-4004;Stav;Projekt;last_seen;Poslední výskyt;ANO;NE;NE;;;date;
+4002;Stav;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
+4003;Stav;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;
+4004;Stav;Projekt;project_last_seen;Poslední výskyt;ANO;NE;NE;;;date;
 4005;Stav;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
 4006;Stav;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
 
@@ -52,9 +62,12 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
 6003;Projekt;Projekt;project_url;Odkaz na projekt;ANO;NE;ANO;;;url;
 
-7001;Financování;Projekt;payment_contract;Platba po SOSBK;ANO;ANO;ANO;%;0;percent;fraction
-7002;Financování;Projekt;payment_construction;Platba při výstavbě;ANO;ANO;ANO;%;0;percent;fraction
-7003;Financování;Projekt;payment_occupancy;Platba po dokončení;ANO;ANO;ANO;%;0;percent;fraction
+7001;Financování;Projekt;min_payment_contract;Platba po SOSBK (od);ANO;ANO;ANO;%;0;percent;fraction
+7002;Financování;Projekt;max_payment_contract;Platba po SOSBK (do);ANO;ANO;ANO;%;0;percent;fraction
+7003;Financování;Projekt;min_payment_construction;Platba při výstavbě (od);ANO;ANO;ANO;%;0;percent;fraction
+7004;Financování;Projekt;max_payment_construction;Platba při výstavbě (do);ANO;ANO;ANO;%;0;percent;fraction
+7005;Financování;Projekt;min_payment_occupancy;Platba po dokončení (od);ANO;ANO;ANO;%;0;percent;fraction
+7006;Financování;Projekt;max_payment_occupancy;Platba po dokončení (do);ANO;ANO;ANO;%;0;percent;fraction
 
 8001;Jednotka;Jednotka;unit_name;Název jednotky;ANO;NE;NE;;;text;
 8002;Jednotka;Jednotka;building;Budova;ANO;NE;NE;;;text;

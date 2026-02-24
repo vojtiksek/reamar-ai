@@ -12,6 +12,7 @@ import {
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -36,6 +37,8 @@ type ProjectColumnDef = {
   unit?: string | null;
   kind?: "catalog" | "computed";
   accessor?: string;
+  display_format?: string;
+  editable?: boolean;
 };
 
 type ProjectColumnConfig = {
@@ -94,6 +97,17 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     column.key.startsWith("payment_")
   ) {
     return formatPercent(isNumber ? num * 100 : null);
+  }
+
+  // Dates
+  if (column.data_type === "date") {
+    try {
+      const d = value instanceof Date ? value : new Date(String(value));
+      if (Number.isNaN(d.getTime())) return String(value);
+      return d.toLocaleDateString("cs-CZ");
+    } catch {
+      return String(value);
+    }
   }
 
   // Generic number
@@ -193,9 +207,12 @@ export default function ProjectsPage() {
   const [limit, setLimit] = useState<number>(initial.limit);
   const [offset, setOffset] = useState(initial.offset);
   const [sortBy, setSortBy] = useState<string>(initial.sortBy);
-  const [sortDir, setSortDir] = useState<"asc" | "desc">(initial.sortDir);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">(initial.sortDir as "asc" | "desc");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editingCell, setEditingCell] = useState<{ projectId: number; field: string } | null>(null);
+  const [editValue, setEditValue] = useState<string | boolean>("");
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const syncToUrl = useCallback(
     (f: CurrentFilters, lim: number, off: number, sb: string, sd: string) => {
@@ -212,7 +229,7 @@ export default function ProjectsPage() {
     setLimit(parsed.limit);
     setOffset(parsed.offset);
     setSortBy(parsed.sortBy);
-    setSortDir(parsed.sortDir);
+    setSortDir(parsed.sortDir as "asc" | "desc");
   }, [searchParams]);
 
   const supportedFilterKeys = useMemo(
@@ -248,11 +265,11 @@ export default function ProjectsPage() {
     if (columnsConfig !== null) return;
     if (!columns || columns.length === 0) return;
 
-    const defaults: ProjectColumnConfig[] = columns.map((col) => ({
+    const defaults: ProjectColumnConfig[] = columns.map((col, idx) => ({
       key: col.key,
       label: col.label,
-      // visibleByDefault: catalog or no kind = visible; computed = hidden
-      visible: col.kind !== "computed",
+      // first N columns visible by default
+      visible: idx < DEFAULT_VISIBLE_COLUMNS,
     }));
 
     if (typeof window === "undefined") {
@@ -294,17 +311,17 @@ export default function ProjectsPage() {
     ? limit
     : DEFAULT_LIMIT;
 
-  // Fetch projects list (paginated, server-side sort)
+  // Fetch projects list (paginated, server-side sort, with filters)
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const params = new URLSearchParams();
-    params.set("limit", String(safeLimit));
-    params.set("offset", String(Math.max(0, offset)));
-    params.set("sort_by", sortBy);
-    params.set("sort_dir", sortDir);
-    const qs = params.toString();
-    fetch(`${API_BASE}/projects/overview?${qs}`)
+    const qs = buildUnitsQuery(
+      filters,
+      supportedFilterKeys,
+      { limit: safeLimit, offset },
+      { sort_by: sortBy, sort_dir: sortDir }
+    );
+    fetch(`${API_BASE}/projects?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
         const rows: ProjectItem[] = Array.isArray(json)
@@ -314,92 +331,192 @@ export default function ProjectsPage() {
           json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
         setProjects(rows);
         setTotal(totalValue);
-        // eslint-disable-next-line no-console
-        console.log("[projects] overview rows:", rows.length, rows[0]);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [safeLimit, offset, sortBy, sortDir]);
-
-  // Temporary debug: ensure accessors match overview row keys
-  useEffect(() => {
-    if (projects.length > 0 || columns.length > 0) {
-      // eslint-disable-next-line no-console
-      console.log("[projects] first row keys:", Object.keys(projects[0] || {}));
-      // eslint-disable-next-line no-console
-      console.log("[projects] first col accessor:", columns[0]?.accessor ?? columns[0]?.key);
-    }
-  }, [projects, columns]);
+  }, [filters, safeLimit, offset, sortBy, sortDir, supportedFilterKeys]);
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
     if (!columnsConfig) {
-      return columns.length > 0 ? columns.slice(0, 8) : [];
+      return columns.length > 0 ? columns.slice(0, DEFAULT_VISIBLE_COLUMNS) : [];
     }
     const visible = columnsConfig
       .filter((c) => c.visible)
       .map((c) => byKey.get(c.key))
       .filter((c): c is ProjectColumnDef => !!c);
-    if (visible.length === 0 && columns.length > 0) return columns.slice(0, 8);
+    if (visible.length === 0 && columns.length > 0) return columns.slice(0, DEFAULT_VISIBLE_COLUMNS);
     return visible;
   }, [columns, columnsConfig]);
+
+  const saveOverride = useCallback(
+    async (projectId: number, fieldKey: string, value: string | boolean) => {
+      setSavingOverride(true);
+      try {
+        const body = {
+          value: typeof value === "boolean" ? String(value) : String(value),
+        };
+        const res = await fetch(
+          `${API_BASE}/projects/${projectId}/overrides/${encodeURIComponent(fieldKey)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!res.ok) {
+          // eslint-disable-next-line no-console
+          console.error("Failed to save project override", await res.text());
+          return;
+        }
+        const updated = (await res.json()) as Record<string, unknown>;
+        setProjects((prev) =>
+          prev.map((row) =>
+            row.id === projectId ? { ...row, ...updated } : row
+          )
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to save project override", e);
+      } finally {
+        setSavingOverride(false);
+        setEditingCell(null);
+      }
+    },
+    []
+  );
+
+  const openDrawer = useCallback(() => {
+    setCurrentFilters({ ...filters });
+    setDrawerOpen(true);
+  }, [filters]);
+
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
+  const onApply = useCallback(() => {
+    setFilters(currentFilters);
+    syncToUrl(currentFilters, limit, 0, sortBy, sortDir);
+    setOffset(0);
+    closeDrawer();
+  }, [currentFilters, limit, sortBy, sortDir, syncToUrl, closeDrawer]);
+
+  const onReset = useCallback(() => setCurrentFilters({}), []);
+
+  const onResetAll = useCallback(() => {
+    setFilters({});
+    setCurrentFilters({});
+    syncToUrl({}, limit, 0, sortBy, sortDir);
+    setOffset(0);
+    closeDrawer();
+  }, [limit, sortBy, sortDir, syncToUrl, closeDrawer]);
+
+  const onChangeFilter = useCallback(
+    (key: string, value: number | number[] | string[] | boolean | undefined) => {
+      setCurrentFilters((prev) => ({ ...prev, [key]: value }));
+    },
+    []
+  );
 
   const setPage = useCallback(
     (newOffset: number) => {
       setOffset(newOffset);
+      syncToUrl(filters, limit, newOffset, sortBy, sortDir);
     },
-    []
+    [filters, limit, sortBy, sortDir, syncToUrl]
+  );
+
+  const setLimitAndSort = useCallback(
+    (opts: { limit?: number; sortBy?: string; sortDir?: "asc" | "desc" }) => {
+      const newLimit = opts.limit ?? limit;
+      const newSortBy = opts.sortBy ?? sortBy;
+      const newSortDir = opts.sortDir ?? sortDir;
+      if (opts.limit !== undefined) setLimit(newLimit);
+      if (opts.sortBy !== undefined) setSortBy(newSortBy);
+      if (opts.sortDir !== undefined) setSortDir(newSortDir);
+      setOffset(0);
+      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir);
+    },
+    [filters, limit, sortBy, sortDir, syncToUrl]
   );
 
   const handleSortHeaderClick = useCallback(
     (key: string) => {
       if (key !== sortBy) {
-        setSortBy(key);
-        setSortDir("asc");
+        setLimitAndSort({ sortBy: key, sortDir: "asc" });
       } else {
-        setSortDir(sortDir === "asc" ? "desc" : "asc");
+        setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
       }
-      setOffset(0);
     },
-    [sortBy, sortDir]
+    [sortBy, sortDir, setLimitAndSort]
   );
 
+  const summary = computeProjectsSummary(projects, total);
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
-        <div className="flex items-center gap-4">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm">
+        <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
-          <div className="flex items-center rounded-lg border border-gray-300 p-0.5">
-            <button
-              type="button"
-              onClick={() => router.push("/")}
-              className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
+          <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
+            <Link
+              href="/"
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Jednotky
-            </button>
-            <button
-              type="button"
-              className="rounded-md bg-gray-800 px-3 py-1.5 text-sm font-medium text-white"
+            </Link>
+            <Link
+              href="/projects"
+              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
             >
               Projekty
-            </button>
+            </Link>
           </div>
+          <button
+            type="button"
+            onClick={openDrawer}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+            title={
+              countActiveFilters(filters) > 0
+                ? `Aktivní filtry: ${countActiveFilters(filters)}`
+                : undefined
+            }
+          >
+            Filtry
+            {countActiveFilters(filters) > 0 && (
+              <span className="ml-1.5 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-800">
+                {countActiveFilters(filters)}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setColumnsOpen(true)}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+          >
+            Sloupce
+          </button>
+          <button
+            type="button"
+            onClick={onResetAll}
+            disabled={loading}
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Reset
+          </button>
         </div>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-sm">
-            <span className="text-gray-500">Řádků</span>
+          <label className="flex items-center gap-2 text-sm">
+            <span className="font-medium text-gray-700">Řádků</span>
             <select
               value={safeLimit}
               onChange={(e) => {
                 const next = Number(e.target.value);
-                setLimit(next);
-                setOffset(0);
+                setLimitAndSort({ limit: next });
               }}
               disabled={loading}
-              className="rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50"
+              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
             >
               {ROWS_PER_PAGE_OPTIONS.map((n) => (
                 <option key={n} value={n}>
@@ -408,7 +525,7 @@ export default function ProjectsPage() {
               ))}
             </select>
           </label>
-          <span className="text-xs text-gray-500">
+          <span className="text-xs sm:text-sm text-gray-600">
             {showFrom}–{showTo} z {total}
           </span>
         </div>
@@ -419,17 +536,23 @@ export default function ProjectsPage() {
           <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
         )}
         <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
-          <div className="flex min-h-0 flex-1 flex-col overflow-auto rounded border border-gray-200">
-            <div className="sticky top-0 z-[1] flex items-center justify-end gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2">
+          <SummaryBar
+            total={summary.total}
+            averagePricePerM2={summary.averagePricePerM2}
+            averagePrice={summary.averagePrice}
+            availableCount={summary.availableCount}
+          />
+          <div className="data-grid-wrapper shadow-sm">
+            <div className="flex items-center justify-end gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
               <button
                 type="button"
                 onClick={() => setPage(Math.max(0, offset - safeLimit))}
                 disabled={offset <= 0 || loading}
-                className="rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50 hover:bg-gray-100"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Předchozí
               </button>
-              <span className="text-sm text-gray-600">
+              <span className="text-xs sm:text-sm text-gray-700">
                 Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z{" "}
                 {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
               </span>
@@ -437,29 +560,31 @@ export default function ProjectsPage() {
                 type="button"
                 onClick={() => setPage(offset + safeLimit)}
                 disabled={offset + safeLimit >= total || loading}
-                className="rounded border border-gray-300 px-2 py-1 text-sm disabled:opacity-50 hover:bg-gray-100"
+                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 Další
               </button>
             </div>
-            <table className="min-w-full border-collapse">
-              <thead className="sticky top-[45px] z-[1] bg-gray-100">
-                <tr>
-                  {visibleColumns.map((col) => {
+            <div className="data-grid-scroll">
+              <table className="data-grid-table">
+                <thead className="bg-gray-50">
+                  <tr>
+                    {visibleColumns.map((col, columnIndex) => {
                     const flatKey = getProjectColumnKey(col);
                     const isActive = flatKey === sortBy;
+                    const isStickyFirst = columnIndex === 0;
                     return (
                       <th
                         key={col.key}
                         onClick={() => handleSortHeaderClick(flatKey)}
-                        className={`border-b border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 cursor-pointer select-none hover:bg-gray-200 ${
-                          isActive ? "bg-gray-200 font-semibold" : ""
-                        }`}
+                        className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs sm:text-sm font-semibold text-gray-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
+                          isActive ? "bg-gray-100" : ""
+                        } ${isStickyFirst ? "left-0 z-20" : ""}`}
                       >
                         <span className="inline-flex items-center gap-1">
                           {col.label}
                           {isActive && (
-                            <span className="text-gray-600">{sortDir === "asc" ? "▲" : "▼"}</span>
+                            <span className="text-gray-600" aria-hidden>{sortDir === "asc" ? "▲" : "▼"}</span>
                           )}
                         </span>
                       </th>
@@ -467,12 +592,12 @@ export default function ProjectsPage() {
                   })}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-200 bg-white">
+              <tbody className="divide-y divide-gray-100 bg-white">
                 {loading && projects.length === 0 ? (
                   <tr>
                     <td
                       colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-sm text-gray-500"
+                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
                     >
                       Načítání…
                     </td>
@@ -481,30 +606,144 @@ export default function ProjectsPage() {
                   <tr>
                     <td
                       colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-sm text-gray-500"
+                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
                     >
                       Žádné projekty k zobrazení.
                     </td>
                   </tr>
                 ) : (
                   projects.map((p) => (
-                    <tr key={p.id as number} className="hover:bg-gray-50">
-                      {visibleColumns.map((col) => {
+                    <tr
+                      key={p.id as number}
+                      className="transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
+                    >
+                      {visibleColumns.map((col, columnIndex) => {
                         const raw = getProjectCellValue(p, col);
-                        const formatted = formatProjectValue(raw, col);
                         const alignRight =
                           col.data_type === "number" ||
                           (col.unit != null &&
                             (col.unit.includes("Kč") || col.unit.includes("m²") || col.unit === "min")) ||
                           col.key.endsWith("_min");
+                        const fieldKey = getProjectColumnKey(col);
+                        const isEditable = col.editable && col.kind !== "computed";
+                        const isEditing =
+                          editingCell != null &&
+                          editingCell.projectId === (p.id as number) &&
+                          editingCell.field === fieldKey;
+
+                        // Special handling for range-style aggregates on projects:
+                        // parking prices (min/max) and payment_* (min/max as percent).
+                        const renderValue = () => {
+                          if (fieldKey === "min_parking_indoor_price_czk") {
+                            const minVal = p["min_parking_indoor_price_czk"] as number | null | undefined;
+                            const maxVal = p["max_parking_indoor_price_czk"] as number | null | undefined;
+                            const minF = formatCurrencyCzk(minVal ?? null);
+                            const maxF = formatCurrencyCzk(maxVal ?? null);
+                            if (minVal != null && maxVal != null && minVal !== maxVal) {
+                              return `${minF}–${maxF}`;
+                            }
+                            return minF;
+                          }
+                          if (fieldKey === "min_parking_outdoor_price_czk") {
+                            const minVal = p["min_parking_outdoor_price_czk"] as number | null | undefined;
+                            const maxVal = p["max_parking_outdoor_price_czk"] as number | null | undefined;
+                            const minF = formatCurrencyCzk(minVal ?? null);
+                            const maxF = formatCurrencyCzk(maxVal ?? null);
+                            if (minVal != null && maxVal != null && minVal !== maxVal) {
+                              return `${minF}–${maxF}`;
+                            }
+                            return minF;
+                          }
+                          if (
+                            fieldKey === "min_payment_contract" ||
+                            fieldKey === "min_payment_construction" ||
+                            fieldKey === "min_payment_occupancy"
+                          ) {
+                            const suffix = fieldKey.replace(/^min_/, "");
+                            const minVal = p[`min_${suffix}`] as number | null | undefined;
+                            const maxVal = p[`max_${suffix}`] as number | null | undefined;
+                            const minF = formatPercent(
+                              minVal != null ? Number(minVal) * 100 : null
+                            );
+                            const maxF = formatPercent(
+                              maxVal != null ? Number(maxVal) * 100 : null
+                            );
+                            if (minVal != null && maxVal != null && minVal !== maxVal) {
+                              return `${minF}–${maxF}`;
+                            }
+                            return minF;
+                          }
+                          return formatProjectValue(raw, col);
+                        };
+
+                        const isStickyFirst = columnIndex === 0;
                         return (
                           <td
                             key={col.key}
-                            className={`px-3 py-2 text-sm ${
+                            className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
                               alignRight ? "text-right" : "text-left"
-                            }`}
+                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
+                            onDoubleClick={() => {
+                              if (!isEditable || loading || savingOverride) return;
+                              const projectId = p.id as number;
+                              if (col.data_type === "bool") {
+                                const current =
+                                  typeof raw === "boolean"
+                                    ? raw
+                                    : String(raw ?? "").toLowerCase() === "true";
+                                setEditingCell({ projectId, field: fieldKey });
+                                setEditValue(current);
+                              } else {
+                                setEditingCell({ projectId, field: fieldKey });
+                                setEditValue(raw == null ? "" : String(raw));
+                              }
+                            }}
                           >
-                            {formatted}
+                            {isEditing && col.data_type === "bool" ? (
+                              <input
+                                type="checkbox"
+                                className="h-4 w-4"
+                                checked={
+                                  typeof editValue === "boolean"
+                                    ? editValue
+                                    : String(editValue).toLowerCase() === "true"
+                                }
+                                onChange={(e) => setEditValue(e.target.checked)}
+                                onBlur={() =>
+                                  saveOverride(p.id as number, fieldKey, editValue)
+                                }
+                              />
+                            ) : isEditing ? (
+                              <input
+                                type={col.data_type === "number" ? "number" : "text"}
+                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+                                autoFocus
+                                value={
+                                  typeof editValue === "boolean"
+                                    ? editValue
+                                      ? "true"
+                                      : "false"
+                                    : (editValue as string)
+                                }
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={() =>
+                                  saveOverride(p.id as number, fieldKey, editValue)
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    void saveOverride(
+                                      p.id as number,
+                                      fieldKey,
+                                      editValue
+                                    );
+                                  } else if (e.key === "Escape") {
+                                    setEditingCell(null);
+                                  }
+                                }}
+                              />
+                            ) : (
+                              renderValue()
+                            )}
                           </td>
                         );
                       })}
@@ -516,6 +755,65 @@ export default function ProjectsPage() {
           </div>
         </div>
       </main>
+      <FiltersDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        filterGroups={filterGroups}
+        currentFilters={currentFilters}
+        onChange={onChangeFilter}
+        onReset={onReset}
+        onApply={onApply}
+      />
+      {columnsOpen && columnsConfig && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            aria-hidden
+            onClick={() => setColumnsOpen(false)}
+          />
+          <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-gray-200 bg-white shadow-xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
+              <h2 className="text-sm font-semibold text-gray-900">Sloupce</h2>
+              <button
+                type="button"
+                onClick={() => setColumnsOpen(false)}
+                className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                aria-label="Zavřít"
+              >
+                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-4 py-4">
+              <div className="space-y-0.5">
+                {columnsConfig.map((cfg) => (
+                  <label
+                    key={cfg.key}
+                    className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-900 transition-colors hover:bg-gray-50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={cfg.visible}
+                      onChange={(e) =>
+                        setColumnsConfig((prev) =>
+                          prev
+                            ? prev.map((c) =>
+                                c.key === cfg.key ? { ...c, visible: e.target.checked } : c
+                              )
+                            : prev
+                        )
+                      }
+                      className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20"
+                    />
+                    <span className="font-medium text-gray-800">{cfg.label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

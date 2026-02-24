@@ -17,22 +17,22 @@ function formatInteger(n: number | null): string {
 
 export function SummaryBar({ total, averagePricePerM2, averagePrice, availableCount }: Props) {
   return (
-    <div className="flex flex-wrap gap-3">
-      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Celkem jednotek</p>
-        <p className="mt-0.5 text-xl font-semibold text-gray-900">{formatInteger(total)}</p>
+    <div className="flex flex-wrap gap-2.5">
+      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700">Celkem jednotek</p>
+        <p className="mt-0.5 text-base font-semibold text-gray-900">{formatInteger(total)}</p>
       </div>
-      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Prům. cena za m²</p>
-        <p className="mt-0.5 text-xl font-semibold text-gray-900">{formatCurrencyCzk(averagePricePerM2)}</p>
+      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700">Prům. cena za m²</p>
+        <p className="mt-0.5 text-base font-semibold text-gray-900">{formatCurrencyCzk(averagePricePerM2)}</p>
       </div>
-      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Prům. cena</p>
-        <p className="mt-0.5 text-xl font-semibold text-gray-900">{formatCurrencyCzk(averagePrice)}</p>
+      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700">Prům. cena</p>
+        <p className="mt-0.5 text-base font-semibold text-gray-900">{formatCurrencyCzk(averagePrice)}</p>
       </div>
-      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm">
-        <p className="text-xs font-medium uppercase tracking-wide text-gray-500">Dostupných</p>
-        <p className="mt-0.5 text-xl font-semibold text-gray-900">{formatInteger(availableCount)}</p>
+      <div className="min-w-0 flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 shadow-sm">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-gray-700">Dostupných</p>
+        <p className="mt-0.5 text-base font-semibold text-gray-900">{formatInteger(availableCount)}</p>
       </div>
     </div>
   );
