@@ -35,9 +35,16 @@ export function formatMinutes(value: number | null | undefined): string {
   return `${Number(value).toFixed(1)} min`;
 }
 
+/**
+ * Percent formatter that supports both:
+ * - fractions 0..1 (e.g. 0.2 -> 20 %)
+ * - already-percent values 0..100 (e.g. 20 -> 20 %)
+ */
 export function formatPercent(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${Math.round(value)} %`;
+  const n = Number(value);
+  const pct = Math.abs(n) <= 1 ? n * 100 : n;
+  return `${Math.round(pct)} %`;
 }
 
 /**
@@ -66,8 +73,11 @@ export function formatByDisplayFormat(
   catalogKey?: string
 ): string {
   if (value == null || value === "") return "—";
+
   if (typeof value === "boolean") return value ? "ANO" : "NE";
+
   if (catalogKey === "layout" && typeof value === "string") return formatLayout(value);
+
   switch (displayFormat) {
     case "currency":
       return formatCurrencyCzk(Number(value));
@@ -79,8 +89,10 @@ export function formatByDisplayFormat(
       return formatMinutes(Number(value));
     case "percent":
       return formatPercent(Number(value));
-    case "integer":
-      return Number.isNaN(Number(value)) ? String(value) : `${Math.round(Number(value))}`;
+    case "integer": {
+      const n = Number(value);
+      return Number.isNaN(n) ? String(value) : `${Math.round(n)}`;
+    }
     default:
       return String(value);
   }
@@ -94,7 +106,6 @@ export type FormatValueMeta = {
 
 /**
  * Format a value for display using catalog meta (display_format, unit_label, key).
- * Uses display_format for currency, area_m2, duration_minutes, percent, boolean, layout enum.
  */
 export function formatValue(value: unknown, meta: FormatValueMeta): string {
   const displayFormat = meta.display_format ?? "text";
