@@ -375,7 +375,7 @@ export default function ProjectsPage() {
           <div className="flex items-center rounded-lg border border-gray-300 p-0.5">
             <button
               type="button"
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/units")}
               className="rounded-md px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100"
             >
               Jednotky
