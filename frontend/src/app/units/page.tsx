@@ -55,13 +55,11 @@ const DEFAULT_VISIBLE_COLUMNS = 10;
 function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
   if (value == null || value === "") return "—";
 
-  // Booleans
   if (typeof value === "boolean") return value ? "ANO" : "NE";
 
   const num = Number(value);
   const isNumber = !Number.isNaN(num);
 
-  // Layouts list
   if (column.key === "layouts_present") {
     if (Array.isArray(value)) {
       const parts = value.map((v) => formatLayout(typeof v === "string" ? v : String(v)));
@@ -70,17 +68,14 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return String(value);
   }
 
-  // Currency
   if (column.unit === "Kč") {
     return formatCurrencyCzk(isNumber ? num : null);
   }
 
-  // Area
   if (column.unit && column.unit.includes("m²")) {
     return formatAreaM2(isNumber ? num : null);
   }
 
-  // Duration (minutes)
   if (
     column.unit === "min" ||
     column.key.endsWith("_min") ||
@@ -90,16 +85,11 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return formatMinutes(isNumber ? num : null);
   }
 
-  // Percent-style fields (stored as fraction 0–1)
-  if (
-    column.unit === "%" ||
-    column.key === "available_ratio" ||
-    column.key.startsWith("payment_")
-  ) {
-    return formatPercent(isNumber ? num * 100 : null);
+  // stored as fraction 0–1
+  if (column.unit === "%" || column.key === "available_ratio" || column.key.startsWith("payment_")) {
+    return formatPercent(isNumber ? num : null);
   }
 
-  // Dates
   if (column.data_type === "date") {
     try {
       const d = value instanceof Date ? value : new Date(String(value));
@@ -110,7 +100,6 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     }
   }
 
-  // Generic number
   if (column.data_type === "number" && isNumber) {
     return String(num);
   }
@@ -131,12 +120,8 @@ function getProjectCellValue(row: ProjectItem, col: ProjectColumnDef): unknown {
 }
 
 function computeProjectsSummary(items: ProjectItem[], totalCount: number) {
-  const withPpm2 = items.filter(
-    (p) => p.avg_price_per_m2_czk != null && !Number.isNaN(Number(p.avg_price_per_m2_czk))
-  );
-  const withPrice = items.filter(
-    (p) => p.avg_price_czk != null && !Number.isNaN(Number(p.avg_price_czk))
-  );
+  const withPpm2 = items.filter((p) => p.avg_price_per_m2_czk != null && !Number.isNaN(Number(p.avg_price_per_m2_czk)));
+  const withPrice = items.filter((p) => p.avg_price_czk != null && !Number.isNaN(Number(p.avg_price_czk)));
   const sumPpm2 = withPpm2.reduce((a, p) => a + Number(p.avg_price_per_m2_czk), 0);
   const sumPrice = withPrice.reduce((a, p) => a + Number(p.avg_price_czk), 0);
   const availableCount = items.reduce((a, p) => a + (Number(p.available_units) || 0), 0);
@@ -156,9 +141,7 @@ function parseProjectsSearchParams(params: URLSearchParams): {
   sortDir: string;
 } {
   const limitParam = parseInt(params.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT;
-  const limit = ROWS_PER_PAGE_OPTIONS.includes(limitParam as (typeof ROWS_PER_PAGE_OPTIONS)[number])
-    ? limitParam
-    : DEFAULT_LIMIT;
+  const limit = ROWS_PER_PAGE_OPTIONS.includes(limitParam as (typeof ROWS_PER_PAGE_OPTIONS)[number]) ? limitParam : DEFAULT_LIMIT;
   const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
   const sortBy = params.get("sort_by") ?? "avg_price_per_m2_czk";
   const sortDir = (params.get("sort_dir") === "desc" ? "desc" : "asc") as "asc" | "desc";
@@ -183,15 +166,12 @@ function toProjectsSearchParams(
   return params;
 }
 
-export default function ProjectsPage() {
+export default function UnitsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const initial = useMemo(
-    () => parseProjectsSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
-    []
-  );
+  const initial = useMemo(() => parseProjectsSearchParams(new URLSearchParams(searchParams?.toString() ?? "")), []);
 
   const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
   const [filters, setFilters] = useState<CurrentFilters>(initial.filters);
@@ -233,16 +213,10 @@ export default function ProjectsPage() {
   }, [searchParams]);
 
   const supportedFilterKeys = useMemo(
-    () =>
-      new Set(
-        filterGroups.flatMap((g) =>
-          g.filters.filter((f) => f.backend_supported).map((f) => f.key)
-        )
-      ),
+    () => new Set(filterGroups.flatMap((g) => g.filters.filter((f) => f.backend_supported).map((f) => f.key))),
     [filterGroups]
   );
 
-  // Fetch filter metadata
   useEffect(() => {
     fetch(`${API_BASE}/projects/filters`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
@@ -250,17 +224,13 @@ export default function ProjectsPage() {
       .catch(() => setFilterGroups([]));
   }, []);
 
-  // Fetch column definitions
   useEffect(() => {
     fetch(`${API_BASE}/columns?view=projects`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: ProjectColumnDef[]) => {
-        setColumns(Array.isArray(data) ? data : []);
-      })
+      .then((data: ProjectColumnDef[]) => setColumns(Array.isArray(data) ? data : []))
       .catch(() => setColumns([]));
   }, []);
 
-  // Initialize columns config from localStorage or defaults
   useEffect(() => {
     if (columnsConfig !== null) return;
     if (!columns || columns.length === 0) return;
@@ -268,7 +238,6 @@ export default function ProjectsPage() {
     const defaults: ProjectColumnConfig[] = columns.map((col, idx) => ({
       key: col.key,
       label: col.label,
-      // first N columns visible by default
       visible: idx < DEFAULT_VISIBLE_COLUMNS,
     }));
 
@@ -287,9 +256,7 @@ export default function ProjectsPage() {
       const byKey = new Map(parsed.map((c) => [c.key, c]));
       const merged = defaults.map((d) => {
         const existing = byKey.get(d.key);
-        return existing
-          ? { ...d, visible: existing.visible, label: existing.label ?? d.label }
-          : d;
+        return existing ? { ...d, visible: existing.visible, label: existing.label ?? d.label } : d;
       });
       setColumnsConfig(merged);
     } catch {
@@ -297,7 +264,6 @@ export default function ProjectsPage() {
     }
   }, [columnsConfig, columns]);
 
-  // Persist columnsConfig
   useEffect(() => {
     if (columnsConfig == null || typeof window === "undefined") return;
     try {
@@ -307,11 +273,8 @@ export default function ProjectsPage() {
     }
   }, [columnsConfig]);
 
-  const safeLimit = ROWS_PER_PAGE_OPTIONS.includes(limit as (typeof ROWS_PER_PAGE_OPTIONS)[number])
-    ? limit
-    : DEFAULT_LIMIT;
+  const safeLimit = ROWS_PER_PAGE_OPTIONS.includes(limit as (typeof ROWS_PER_PAGE_OPTIONS)[number]) ? limit : DEFAULT_LIMIT;
 
-  // Fetch projects list (paginated, server-side sort, with filters)
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -327,8 +290,7 @@ export default function ProjectsPage() {
         const rows: ProjectItem[] = Array.isArray(json)
           ? (json as ProjectItem[])
           : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
-        const totalValue =
-          json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
+        const totalValue = json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
         setProjects(rows);
         setTotal(totalValue);
       })
@@ -349,42 +311,30 @@ export default function ProjectsPage() {
     return visible;
   }, [columns, columnsConfig]);
 
-  const saveOverride = useCallback(
-    async (projectId: number, fieldKey: string, value: string | boolean) => {
-      setSavingOverride(true);
-      try {
-        const body = {
-          value: typeof value === "boolean" ? String(value) : String(value),
-        };
-        const res = await fetch(
-          `${API_BASE}/projects/${projectId}/overrides/${encodeURIComponent(fieldKey)}`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(body),
-          }
-        );
-        if (!res.ok) {
-          // eslint-disable-next-line no-console
-          console.error("Failed to save project override", await res.text());
-          return;
-        }
-        const updated = (await res.json()) as Record<string, unknown>;
-        setProjects((prev) =>
-          prev.map((row) =>
-            row.id === projectId ? { ...row, ...updated } : row
-          )
-        );
-      } catch (e) {
+  const saveOverride = useCallback(async (projectId: number, fieldKey: string, value: string | boolean) => {
+    setSavingOverride(true);
+    try {
+      const body = { value: typeof value === "boolean" ? String(value) : String(value) };
+      const res = await fetch(`${API_BASE}/projects/${projectId}/overrides/${encodeURIComponent(fieldKey)}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
         // eslint-disable-next-line no-console
-        console.error("Failed to save project override", e);
-      } finally {
-        setSavingOverride(false);
-        setEditingCell(null);
+        console.error("Failed to save project override", await res.text());
+        return;
       }
-    },
-    []
-  );
+      const updated = (await res.json()) as Record<string, unknown>;
+      setProjects((prev) => prev.map((row) => (row.id === projectId ? { ...row, ...updated } : row)));
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("Failed to save project override", e);
+    } finally {
+      setSavingOverride(false);
+      setEditingCell(null);
+    }
+  }, []);
 
   const openDrawer = useCallback(() => {
     setCurrentFilters({ ...filters });
@@ -401,7 +351,6 @@ export default function ProjectsPage() {
   }, [currentFilters, limit, sortBy, sortDir, syncToUrl, closeDrawer]);
 
   const onReset = useCallback(() => setCurrentFilters({}), []);
-
   const onResetAll = useCallback(() => {
     setFilters({});
     setCurrentFilters({});
@@ -410,45 +359,33 @@ export default function ProjectsPage() {
     closeDrawer();
   }, [limit, sortBy, sortDir, syncToUrl, closeDrawer]);
 
-  const onChangeFilter = useCallback(
-    (key: string, value: number | number[] | string[] | boolean | undefined) => {
-      setCurrentFilters((prev) => ({ ...prev, [key]: value }));
-    },
-    []
-  );
+  const onChangeFilter = useCallback((key: string, value: number | number[] | string[] | boolean | undefined) => {
+    setCurrentFilters((prev) => ({ ...prev, [key]: value }));
+  }, []);
 
-  const setPage = useCallback(
-    (newOffset: number) => {
-      setOffset(newOffset);
-      syncToUrl(filters, limit, newOffset, sortBy, sortDir);
-    },
-    [filters, limit, sortBy, sortDir, syncToUrl]
-  );
+  const setPage = useCallback((newOffset: number) => {
+    setOffset(newOffset);
+    syncToUrl(filters, limit, newOffset, sortBy, sortDir);
+  }, [filters, limit, sortBy, sortDir, syncToUrl]);
 
-  const setLimitAndSort = useCallback(
-    (opts: { limit?: number; sortBy?: string; sortDir?: "asc" | "desc" }) => {
-      const newLimit = opts.limit ?? limit;
-      const newSortBy = opts.sortBy ?? sortBy;
-      const newSortDir = opts.sortDir ?? sortDir;
-      if (opts.limit !== undefined) setLimit(newLimit);
-      if (opts.sortBy !== undefined) setSortBy(newSortBy);
-      if (opts.sortDir !== undefined) setSortDir(newSortDir);
-      setOffset(0);
-      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir);
-    },
-    [filters, limit, sortBy, sortDir, syncToUrl]
-  );
+  const setLimitAndSort = useCallback((opts: { limit?: number; sortBy?: string; sortDir?: "asc" | "desc" }) => {
+    const newLimit = opts.limit ?? limit;
+    const newSortBy = opts.sortBy ?? sortBy;
+    const newSortDir = opts.sortDir ?? sortDir;
+    if (opts.limit !== undefined) setLimit(newLimit);
+    if (opts.sortBy !== undefined) setSortBy(newSortBy);
+    if (opts.sortDir !== undefined) setSortDir(newSortDir);
+    setOffset(0);
+    syncToUrl(filters, newLimit, 0, newSortBy, newSortDir);
+  }, [filters, limit, sortBy, sortDir, syncToUrl]);
 
-  const handleSortHeaderClick = useCallback(
-    (key: string) => {
-      if (key !== sortBy) {
-        setLimitAndSort({ sortBy: key, sortDir: "asc" });
-      } else {
-        setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
-      }
-    },
-    [sortBy, sortDir, setLimitAndSort]
-  );
+  const handleSortHeaderClick = useCallback((key: string) => {
+    if (key !== sortBy) {
+      setLimitAndSort({ sortBy: key, sortDir: "asc" });
+    } else {
+      setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
+    }
+  }, [sortBy, sortDir, setLimitAndSort]);
 
   const summary = computeProjectsSummary(projects, total);
   const showFrom = total === 0 ? 0 : offset + 1;
@@ -456,19 +393,19 @@ export default function ProjectsPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm sm:gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm">
+        <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
-          <div className="relative z-10 flex shrink-0 items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
+          <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
             <Link
               href="/units"
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
             >
               Jednotky
             </Link>
             <Link
               href="/projects"
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Projekty
             </Link>
@@ -477,11 +414,7 @@ export default function ProjectsPage() {
             type="button"
             onClick={openDrawer}
             className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
-            title={
-              countActiveFilters(filters) > 0
-                ? `Aktivní filtry: ${countActiveFilters(filters)}`
-                : undefined
-            }
+            title={countActiveFilters(filters) > 0 ? `Aktivní filtry: ${countActiveFilters(filters)}` : undefined}
           >
             Filtry
             {countActiveFilters(filters) > 0 && (
@@ -501,27 +434,22 @@ export default function ProjectsPage() {
             type="button"
             onClick={onResetAll}
             disabled={loading}
-            className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Reset
           </button>
         </div>
-        <div className="mt-2 flex w-full items-center gap-3 shrink-0 sm:mt-0 sm:w-auto sm:ml-auto">
+        <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <span className="font-medium text-gray-700">Řádků</span>
             <select
               value={safeLimit}
-              onChange={(e) => {
-                const next = Number(e.target.value);
-                setLimitAndSort({ limit: next });
-              }}
+              onChange={(e) => setLimitAndSort({ limit: Number(e.target.value) })}
               disabled={loading}
               className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
             >
               {ROWS_PER_PAGE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
+                <option key={n} value={n}>{n}</option>
               ))}
             </select>
           </label>
@@ -535,6 +463,7 @@ export default function ProjectsPage() {
         {error && (
           <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
         )}
+
         <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
           <SummaryBar
             total={summary.total}
@@ -542,6 +471,7 @@ export default function ProjectsPage() {
             averagePrice={summary.averagePrice}
             availableCount={summary.availableCount}
           />
+
           <div className="data-grid-wrapper shadow-sm">
             <div className="flex items-center justify-end gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
               <button
@@ -565,197 +495,160 @@ export default function ProjectsPage() {
                 Další
               </button>
             </div>
+
             <div className="data-grid-scroll">
               <table className="data-grid-table">
                 <thead className="bg-gray-50">
                   <tr>
                     {visibleColumns.map((col, columnIndex) => {
-                    const flatKey = getProjectColumnKey(col);
-                    const isActive = flatKey === sortBy;
-                    const isStickyFirst = columnIndex === 0;
-                    return (
-                      <th
-                        key={col.key}
-                        onClick={() => handleSortHeaderClick(flatKey)}
-                        className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs sm:text-sm font-semibold text-gray-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
-                          isActive ? "bg-gray-100" : ""
-                        } ${isStickyFirst ? "left-0 z-20" : ""}`}
-                      >
-                        <span className="inline-flex items-center gap-1">
-                          {col.label}
-                          {isActive && (
-                            <span className="text-gray-600" aria-hidden>{sortDir === "asc" ? "▲" : "▼"}</span>
-                          )}
-                        </span>
-                      </th>
-                    );
-                  })}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {loading && projects.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
-                    >
-                      Načítání…
-                    </td>
-                  </tr>
-                ) : projects.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
-                    >
-                      Žádné projekty k zobrazení.
-                    </td>
-                  </tr>
-                ) : (
-                  projects.map((p) => (
-                    <tr
-                      key={p.id as number}
-                      className="transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
-                    >
-                      {visibleColumns.map((col, columnIndex) => {
-                        const raw = getProjectCellValue(p, col);
-                        const alignRight =
-                          col.data_type === "number" ||
-                          (col.unit != null &&
-                            (col.unit.includes("Kč") || col.unit.includes("m²") || col.unit === "min")) ||
-                          col.key.endsWith("_min");
-                        const fieldKey = getProjectColumnKey(col);
-                        const isEditable = col.editable && col.kind !== "computed";
-                        const isEditing =
-                          editingCell != null &&
-                          editingCell.projectId === (p.id as number) &&
-                          editingCell.field === fieldKey;
+                      const flatKey = getProjectColumnKey(col);
+                      const isActive = flatKey === sortBy;
+                      const isStickyFirst = columnIndex === 0;
 
-                        // Special handling for range-style aggregates on projects:
-                        // parking prices (min/max) and payment_* (min/max as percent).
-                        const renderValue = () => {
-                          if (fieldKey === "min_parking_indoor_price_czk") {
-                            const minVal = p["min_parking_indoor_price_czk"] as number | null | undefined;
-                            const maxVal = p["max_parking_indoor_price_czk"] as number | null | undefined;
-                            const minF = formatCurrencyCzk(minVal ?? null);
-                            const maxF = formatCurrencyCzk(maxVal ?? null);
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
-                          }
-                          if (fieldKey === "min_parking_outdoor_price_czk") {
-                            const minVal = p["min_parking_outdoor_price_czk"] as number | null | undefined;
-                            const maxVal = p["max_parking_outdoor_price_czk"] as number | null | undefined;
-                            const minF = formatCurrencyCzk(minVal ?? null);
-                            const maxF = formatCurrencyCzk(maxVal ?? null);
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
-                          }
-                          if (
-                            fieldKey === "min_payment_contract" ||
-                            fieldKey === "min_payment_construction" ||
-                            fieldKey === "min_payment_occupancy"
-                          ) {
-                            const suffix = fieldKey.replace(/^min_/, "");
-                            const minVal = p[`min_${suffix}`] as number | null | undefined;
-                            const maxVal = p[`max_${suffix}`] as number | null | undefined;
-                            const minF = formatPercent(
-                              minVal != null ? Number(minVal) * 100 : null
-                            );
-                            const maxF = formatPercent(
-                              maxVal != null ? Number(maxVal) * 100 : null
-                            );
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
-                          }
-                          return formatProjectValue(raw, col);
-                        };
-
-                        const isStickyFirst = columnIndex === 0;
-                        return (
-                          <td
-                            key={col.key}
-                            className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
-                              alignRight ? "text-right" : "text-left"
-                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
-                            onDoubleClick={() => {
-                              if (!isEditable || loading || savingOverride) return;
-                              const projectId = p.id as number;
-                              if (col.data_type === "bool") {
-                                const current =
-                                  typeof raw === "boolean"
-                                    ? raw
-                                    : String(raw ?? "").toLowerCase() === "true";
-                                setEditingCell({ projectId, field: fieldKey });
-                                setEditValue(current);
-                              } else {
-                                setEditingCell({ projectId, field: fieldKey });
-                                setEditValue(raw == null ? "" : String(raw));
-                              }
-                            }}
-                          >
-                            {isEditing && col.data_type === "bool" ? (
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={
-                                  typeof editValue === "boolean"
-                                    ? editValue
-                                    : String(editValue).toLowerCase() === "true"
-                                }
-                                onChange={(e) => setEditValue(e.target.checked)}
-                                onBlur={() =>
-                                  saveOverride(p.id as number, fieldKey, editValue)
-                                }
-                              />
-                            ) : isEditing ? (
-                              <input
-                                type={col.data_type === "number" ? "number" : "text"}
-                                className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-                                autoFocus
-                                value={
-                                  typeof editValue === "boolean"
-                                    ? editValue
-                                      ? "true"
-                                      : "false"
-                                    : (editValue as string)
-                                }
-                                onChange={(e) => setEditValue(e.target.value)}
-                                onBlur={() =>
-                                  saveOverride(p.id as number, fieldKey, editValue)
-                                }
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    void saveOverride(
-                                      p.id as number,
-                                      fieldKey,
-                                      editValue
-                                    );
-                                  } else if (e.key === "Escape") {
-                                    setEditingCell(null);
-                                  }
-                                }}
-                              />
-                            ) : (
-                              renderValue()
+                      return (
+                        <th
+                          key={col.key}
+                          onClick={() => handleSortHeaderClick(flatKey)}
+                          className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs sm:text-sm font-semibold text-gray-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
+                            isActive ? "bg-gray-100" : ""
+                          } ${isStickyFirst ? "left-0 z-20" : ""}`}
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            {col.label}
+                            {isActive && (
+                              <span className="text-gray-600" aria-hidden>
+                                {sortDir === "asc" ? "▲" : "▼"}
+                              </span>
                             )}
-                          </td>
-                        );
-                      })}
+                          </span>
+                        </th>
+                      );
+                    })}
+                  </tr>
+                </thead>
+
+                <tbody className="divide-y divide-gray-100 bg-white">
+                  {loading && projects.length === 0 ? (
+                    <tr>
+                      <td colSpan={visibleColumns.length || 1} className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600">
+                        Načítání…
+                      </td>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
+                  ) : projects.length === 0 ? (
+                    <tr>
+                      <td colSpan={visibleColumns.length || 1} className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600">
+                        Žádné projekty k zobrazení.
+                      </td>
+                    </tr>
+                  ) : (
+                    projects.map((p) => (
+                      <tr key={p.id as number} className="transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100">
+                        {visibleColumns.map((col, columnIndex) => {
+                          const raw = getProjectCellValue(p, col);
+                          const alignRight =
+                            col.data_type === "number" ||
+                            (col.unit != null && (col.unit.includes("Kč") || col.unit.includes("m²") || col.unit === "min")) ||
+                            col.key.endsWith("_min");
+
+                          const fieldKey = getProjectColumnKey(col);
+                          const isEditable = col.editable && col.kind !== "computed";
+                          const isEditing =
+                            editingCell != null &&
+                            editingCell.projectId === (p.id as number) &&
+                            editingCell.field === fieldKey;
+
+                          const renderValue = () => {
+                            if (fieldKey === "min_parking_indoor_price_czk") {
+                              const minVal = p["min_parking_indoor_price_czk"] as number | null | undefined;
+                              const maxVal = p["max_parking_indoor_price_czk"] as number | null | undefined;
+                              const minF = formatCurrencyCzk(minVal ?? null);
+                              const maxF = formatCurrencyCzk(maxVal ?? null);
+                              if (minVal != null && maxVal != null && minVal !== maxVal) return `${minF}–${maxF}`;
+                              return minF;
+                            }
+                            if (fieldKey === "min_parking_outdoor_price_czk") {
+                              const minVal = p["min_parking_outdoor_price_czk"] as number | null | undefined;
+                              const maxVal = p["max_parking_outdoor_price_czk"] as number | null | undefined;
+                              const minF = formatCurrencyCzk(minVal ?? null);
+                              const maxF = formatCurrencyCzk(maxVal ?? null);
+                              if (minVal != null && maxVal != null && minVal !== maxVal) return `${minF}–${maxF}`;
+                              return minF;
+                            }
+                            if (
+                              fieldKey === "min_payment_contract" ||
+                              fieldKey === "min_payment_construction" ||
+                              fieldKey === "min_payment_occupancy"
+                            ) {
+                              const suffix = fieldKey.replace(/^min_/, "");
+                              const minVal = p[`min_${suffix}`] as number | null | undefined;
+                              const maxVal = p[`max_${suffix}`] as number | null | undefined;
+                              const minF = formatPercent(minVal != null ? Number(minVal) : null);
+                              const maxF = formatPercent(maxVal != null ? Number(maxVal) : null);
+                              if (minVal != null && maxVal != null && minVal !== maxVal) return `${minF}–${maxF}`;
+                              return minF;
+                            }
+                            return formatProjectValue(raw, col);
+                          };
+
+                          const isStickyFirst = columnIndex === 0;
+
+                          return (
+                            <td
+                              key={col.key}
+                              className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
+                                alignRight ? "text-right" : "text-left"
+                              } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
+                              onDoubleClick={() => {
+                                if (!isEditable || loading || savingOverride) return;
+                                const projectId = p.id as number;
+                                if (col.data_type === "bool") {
+                                  const current =
+                                    typeof raw === "boolean" ? raw : String(raw ?? "").toLowerCase() === "true";
+                                  setEditingCell({ projectId, field: fieldKey });
+                                  setEditValue(current);
+                                } else {
+                                  setEditingCell({ projectId, field: fieldKey });
+                                  setEditValue(raw == null ? "" : String(raw));
+                                }
+                              }}
+                            >
+                              {isEditing && col.data_type === "bool" ? (
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={typeof editValue === "boolean" ? editValue : String(editValue).toLowerCase() === "true"}
+                                  onChange={(e) => setEditValue(e.target.checked)}
+                                  onBlur={() => saveOverride(p.id as number, fieldKey, editValue)}
+                                />
+                              ) : isEditing ? (
+                                <input
+                                  type={col.data_type === "number" ? "number" : "text"}
+                                  className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+                                  autoFocus
+                                  value={typeof editValue === "boolean" ? (editValue ? "true" : "false") : (editValue as string)}
+                                  onChange={(e) => setEditValue(e.target.value)}
+                                  onBlur={() => saveOverride(p.id as number, fieldKey, editValue)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") void saveOverride(p.id as number, fieldKey, editValue);
+                                    else if (e.key === "Escape") setEditingCell(null);
+                                  }}
+                                />
+                              ) : (
+                                renderValue()
+                              )}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
-        </div>
       </main>
+
       <FiltersDrawer
         open={drawerOpen}
         onClose={closeDrawer}
@@ -765,13 +658,10 @@ export default function ProjectsPage() {
         onReset={onReset}
         onApply={onApply}
       />
+
       {columnsOpen && columnsConfig && (
         <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            aria-hidden
-            onClick={() => setColumnsOpen(false)}
-          />
+          <div className="fixed inset-0 z-40 bg-black/40" aria-hidden onClick={() => setColumnsOpen(false)} />
           <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-gray-200 bg-white shadow-xl">
             <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
               <h2 className="text-sm font-semibold text-gray-900">Sloupce</h2>
@@ -798,11 +688,7 @@ export default function ProjectsPage() {
                       checked={cfg.visible}
                       onChange={(e) =>
                         setColumnsConfig((prev) =>
-                          prev
-                            ? prev.map((c) =>
-                                c.key === cfg.key ? { ...c, visible: e.target.checked } : c
-                              )
-                            : prev
+                          prev ? prev.map((c) => (c.key === cfg.key ? { ...c, visible: e.target.checked } : c)) : prev
                         )
                       }
                       className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20"
