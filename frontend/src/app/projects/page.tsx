@@ -139,7 +139,7 @@ function parseProjectsSearchParams(params: URLSearchParams): {
   limit: number;
   offset: number;
   sortBy: string;
-  sortDir: string;
+  sortDir: "asc" | "desc";
 } {
   const limitParam = parseInt(params.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT;
   const limit = ROWS_PER_PAGE_OPTIONS.includes(limitParam as (typeof ROWS_PER_PAGE_OPTIONS)[number])
