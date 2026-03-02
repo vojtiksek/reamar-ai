@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.db import get_db
-from app.main import get_project
+from app.main import get_project, get_unit
 from app.overrides import apply_override, build_override_map, unit_to_response_dict
 from app.project_catalog import PROJECT_CATALOG_TO_ATTR, get_project_columns
 from app.models import Project, ProjectOverride, Unit, UnitOverride
@@ -135,3 +135,23 @@ def test_get_project_applies_project_overrides():
 
         # Effective project representation must include the override value
         assert item[field_key] == "manual-value"
+
+
+def test_get_unit_applies_unit_overrides():
+    with get_db() as db:
+        project = Project(developer="Dev", name="Proj", address="Addr")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+
+        unit = Unit(external_id="u-1", project_id=project.id)
+        db.add(unit)
+        db.commit()
+        db.refresh(unit)
+
+        override = UnitOverride(unit_id=unit.id, field="price_czk", value="123456")
+        db.add(override)
+        db.commit()
+
+        resp = get_unit(external_id="u-1", db=db)
+        assert resp.price_czk == 123456
