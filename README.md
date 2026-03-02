@@ -177,6 +177,34 @@ alembic revision --autogenerate -m "init schema"
 alembic upgrade head
 ```
 
+#### 5.1 Backfill cached project aggregates
+
+The `project_aggregates` table stores cached per-project metrics computed from
+effective unit values (base + overrides). If you add this feature to an
+existing database, you should backfill aggregates once.
+
+From the `backend` directory, with your virtual environment active:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.scripts.backfill_project_aggregates
+```
+
+This script will:
+
+- find all distinct `project_id` values in the `units` table,
+- recompute aggregates in batches of 200 projects,
+- upsert rows into `project_aggregates`,
+- print progress and total elapsed time.
+
+To verify, you can inspect the table directly, for example:
+
+```sql
+SELECT COUNT(*) FROM project_aggregates;
+SELECT * FROM project_aggregates LIMIT 10;
+```
+
 ### 6. Import Units from JSON
 
 The import script loads unit data from JSON files into the database.
