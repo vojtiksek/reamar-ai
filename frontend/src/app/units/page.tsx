@@ -102,15 +102,35 @@ const COLUMNS_STORAGE_KEY = "reamar_units_table_columns_v1";
 
 /** Map column accessor/key to field_catalog column (unit.data key from backend). */
 const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
+  // Prices
   price_czk: "price",
   price_per_m2_czk: "price_per_sm",
+  original_price_czk: "original_price",
+  original_price_per_m2_czk: "original_price_per_sm",
+
+  // Areas
   floor_area_m2: "floor_area",
-  ride_to_center_min: "ride_to_center",
-  public_transport_to_center_min: "public_transport_to_center",
+  total_area_m2: "total_area",
+  balcony_area_m2: "balcony_area",
+  terrace_area_m2: "terrace_area",
+  garden_area_m2: "garden_area",
+
+  // Time / status
+  days_on_market: "days_on_market",
+  first_seen: "first_seen",
+  last_seen: "last_seen",
+
+  // Unit meta
   layout: "layout",
   available: "available",
+  url: "unit_url",
+  id: "id",
+
+  // Location
   municipality: "municipality",
   district: "district",
+
+  // Project-related fields on unit
   "project.name": "project",
   "project.municipality": "municipality",
   "project.district": "district",
@@ -215,6 +235,8 @@ export default function Home() {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsConfig, setColumnsConfig] = useState<ColumnConfig[] | null>(null);
   const [serverColumns, setServerColumns] = useState<ColumnDef[] | null>(null);
+  const [clientSortBy, setClientSortBy] = useState<string | null>(null);
+  const [clientSortDir, setClientSortDir] = useState<"asc" | "desc">("asc");
 
   const supportedFilterKeys = useMemo(
     () => new Set(filterGroups.flatMap((g) => g.filters.filter((f) => f.backend_supported).map((f) => f.key))),
@@ -331,6 +353,9 @@ export default function Home() {
   const validSortDir = SORT_DIR_OPTIONS.includes(sortDir as "asc" | "desc") ? sortDir : DEFAULT_SORT_DIR;
 
   useEffect(() => {
+    // When we trigger a backend fetch, clear any client-side sort
+    setClientSortBy(null);
+    setClientSortDir("asc");
     setLoading(true);
     setError(null);
     const qs = buildUnitsQuery(
@@ -421,12 +446,29 @@ export default function Home() {
   );
 
   const handleSortHeaderClick = useCallback(
-    (nextSortBy: string) => {
-      if (nextSortBy !== sortBy) {
-        setLimitAndSort({ sortBy: nextSortBy, sortDir: "asc" });
-      } else {
-        setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
+    (columnKey: string, accessor: string, dataType: string) => {
+      const backendField = BACKEND_SORT_FIELDS.find(
+        (f) => accessor === f || accessor.endsWith(`.${f}`)
+      );
+
+      if (backendField) {
+        // Backend-supported sort: use server-side sorting and clear client sort
+        setClientSortBy(null);
+        setClientSortDir("asc");
+        if (backendField !== sortBy) {
+          setLimitAndSort({ sortBy: backendField, sortDir: "asc" });
+        } else {
+          setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
+        }
+        return;
       }
+
+      // Client-side sort for all other columns
+      setClientSortBy(columnKey);
+      setClientSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+
+      // NOTE: We keep sortBy/sortDir unchanged so backend query stays as-is;
+      // only the current page rows are re-ordered in-memory.
     },
     [sortBy, sortDir, setLimitAndSort]
   );
@@ -436,6 +478,47 @@ export default function Home() {
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const displayedUnits = useMemo(() => {
+    if (!clientSortBy) return units;
+    const col = serverColumns?.find((c) => c.key === clientSortBy);
+    if (!col) return units;
+    const accessor = col.accessor || col.key;
+    const dt = col.data_type;
+
+    const getRaw = (u: Unit): unknown => {
+      const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[col.key] ?? col.key;
+      return getValue(u, accessor, catalogKey);
+    };
+
+    const sorted = [...units].sort((a, b) => {
+      const va = getRaw(a);
+      const vb = getRaw(b);
+
+      // Treat null/undefined as "last"
+      const aNull = va === null || va === undefined;
+      const bNull = vb === null || vb === undefined;
+      if (aNull && bNull) return 0;
+      if (aNull) return 1;
+      if (bNull) return -1;
+
+      if (dt === "number") {
+        const na = Number(va);
+        const nb = Number(vb);
+        if (Number.isNaN(na) && Number.isNaN(nb)) return 0;
+        if (Number.isNaN(na)) return 1;
+        if (Number.isNaN(nb)) return -1;
+        return na - nb;
+      }
+
+      const sa = String(va);
+      const sb = String(vb);
+      return sa.localeCompare(sb, "cs", { sensitivity: "base" });
+    });
+
+    if (clientSortDir === "desc") sorted.reverse();
+    return sorted;
+  }, [units, clientSortBy, clientSortDir, serverColumns]);
 
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
@@ -589,26 +672,38 @@ export default function Home() {
               <table className="data-grid-table">
                 <thead className="bg-gray-50">
                   <tr>
-                    {visibleColumns.map(({ key, label, accessor, align, sortable }, columnIndex) => {
-                    const sortByValue = BACKEND_SORT_FIELDS.find(
+                {visibleColumns.map(({ key, label, accessor, align, sortable, data_type }, columnIndex) => {
+                    const backendField = BACKEND_SORT_FIELDS.find(
                       (f) => accessor === f || accessor.endsWith(`.${f}`)
                     );
-                    const isSortable = sortable && !!sortByValue;
-                    const isActive = sortByValue === sortBy;
+                    const isBackendSortable = !!backendField;
+                    const isClientActive = clientSortBy === key;
+                    const isBackendActive = backendField === sortBy && !clientSortBy;
+                    const isActive = isClientActive || isBackendActive;
                       const isStickyFirst = columnIndex === 0;
                       return (
                         <th
                           key={key}
-                          onClick={() => isSortable && sortByValue && handleSortHeaderClick(sortByValue)}
+                          onClick={() => handleSortHeaderClick(key, accessor, data_type)}
                           className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 ${
                             align === "right" ? "text-right" : "text-left"
-                          } ${isSortable ? "cursor-pointer select-none hover:bg-gray-100" : ""} ${
+                          } ${sortable ? "cursor-pointer select-none hover:bg-gray-100" : ""} ${
                             isActive ? "bg-gray-100" : ""
                           } ${isStickyFirst ? "left-0 z-20" : ""}`}
                         >
                           <span className="inline-flex items-center gap-1">
                             {label}
-                            {isActive && <span className="text-gray-600">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                            {isActive && (
+                              <span className="text-gray-600">
+                                {clientSortBy
+                                  ? clientSortDir === "asc"
+                                    ? "▲"
+                                    : "▼"
+                                  : sortDir === "asc"
+                                  ? "▲"
+                                  : "▼"}
+                              </span>
+                            )}
                           </span>
                         </th>
                       );
@@ -626,7 +721,7 @@ export default function Home() {
                       </td>
                     </tr>
                   ) : (
-                    units.map((u) => (
+                    displayedUnits.map((u) => (
                       <tr
                         key={u.external_id}
                         className="cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
