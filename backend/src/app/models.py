@@ -285,6 +285,32 @@ class UnitPriceHistory(Base):
     unit: Mapped["Unit"] = relationship(back_populates="price_history")
 
 
+class ProjectAggregates(Base):
+    __tablename__ = "project_aggregates"
+
+    project_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("projects.id"),
+        primary_key=True,
+    )
+    total_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    available_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    availability_ratio: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    avg_price_czk: Mapped[Decimal | None] = mapped_column(Numeric(16, 4), nullable=True)
+    min_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    avg_price_per_m2_czk: Mapped[Decimal | None] = mapped_column(Numeric(16, 4), nullable=True)
+    avg_floor_area_m2: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    project: Mapped["Project"] = relationship("Project")
+
+
 # Indexes
 Index("ix_units_project_id", Unit.project_id)
 Index("ix_units_price_per_m2_czk", Unit.price_per_m2_czk)

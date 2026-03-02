@@ -134,6 +134,16 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.name": "project",
   "project.municipality": "municipality",
   "project.district": "district",
+
+  // Project aggregates cached per project
+  "project.total_units": "total_units",
+  "project.available_units": "available_units",
+  "project.availability_ratio": "availability_ratio",
+  "project.avg_price_czk": "avg_price_czk",
+  "project.min_price_czk": "min_price_czk",
+  "project.max_price_czk": "max_price_czk",
+  "project.avg_price_per_m2_czk": "avg_price_per_m2_czk",
+  "project.avg_floor_area_m2": "avg_floor_area_m2",
 };
 
 function getValue(unit: Unit, accessor: string, catalogKey?: string): unknown {

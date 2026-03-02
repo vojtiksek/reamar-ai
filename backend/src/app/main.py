@@ -25,6 +25,7 @@ from .overrides import (
     unit_to_response_dict,
     apply_project_overrides_to_item,
 )
+from .aggregates import recompute_project_aggregates
 from .project_catalog import (
     COMPUTED_COLUMN_KEYS,
     PROJECT_CATALOG_TO_ATTR,
@@ -455,10 +456,52 @@ def list_units(
     ).scalars().all()
     override_map = build_override_map(override_rows)
 
-    items = [
-        UnitResponse.model_validate(unit_to_response_dict(u, override_map))
-        for u in units
-    ]
+    # Load cached project aggregates for all projects present in this page
+    project_ids = {u.project_id for u in units}
+    agg_by_project_id: dict[int, Any] = {}
+    if project_ids:
+        from .models import ProjectAggregates  # local import to avoid circular
+
+        agg_rows = (
+            db.execute(
+                select(ProjectAggregates).where(ProjectAggregates.project_id.in_(project_ids))
+            )
+            .scalars()
+            .all()
+        )
+        agg_by_project_id = {row.project_id: row for row in agg_rows}
+
+    items: list[UnitResponse] = []
+    for u in units:
+        d = unit_to_response_dict(u, override_map)
+        agg = agg_by_project_id.get(u.project_id)
+        if agg is not None:
+            data = dict(d.get("data") or {})
+            # Use catalog column keys so /columns?view=units works:
+            # total_units, available_units, availability_ratio, avg_price_czk,
+            # min_price_czk, max_price_czk, avg_price_per_m2_czk, avg_floor_area_m2
+            def _dec(val: Any) -> Any:
+                if val is None:
+                    return None
+                if hasattr(val, "__float__"):
+                    try:
+                        return float(val)
+                    except (TypeError, ValueError):
+                        return val
+                return val
+
+            data["total_units"] = agg.total_units
+            data["available_units"] = agg.available_units
+            data["availability_ratio"] = _dec(agg.availability_ratio)
+            data["avg_price_czk"] = _dec(agg.avg_price_czk)
+            data["min_price_czk"] = agg.min_price_czk
+            data["max_price_czk"] = agg.max_price_czk
+            data["avg_price_per_m2_czk"] = _dec(agg.avg_price_per_m2_czk)
+            data["avg_floor_area_m2"] = _dec(agg.avg_floor_area_m2)
+            d["data"] = data
+
+        items.append(UnitResponse.model_validate(d))
+
     return UnitsListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
@@ -1118,6 +1161,12 @@ def put_unit_override(
         existing.value = body.value
     else:
         db.add(UnitOverride(unit_id=unit.id, field=field, value=body.value))
+
+    db.flush()
+    # Recompute cached aggregates for this unit's project when relevant fields change
+    if field in ("price_czk", "price_per_m2_czk", "available", "floor_area_m2"):
+        recompute_project_aggregates(db, [unit.project_id])
+
     db.commit()
     db.refresh(unit)
     return _effective_unit_response(db, unit)
@@ -1146,6 +1195,11 @@ def delete_unit_override(
     )
     if existing:
         db.delete(existing)
+
+    db.flush()
+    if field in ("price_czk", "price_per_m2_czk", "available", "floor_area_m2"):
+        recompute_project_aggregates(db, [unit.project_id])
+
     db.commit()
     db.refresh(unit)
     return _effective_unit_response(db, unit)

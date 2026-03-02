@@ -9,7 +9,8 @@ from app.db import get_db
 from app.main import get_project, get_unit
 from app.overrides import apply_override, build_override_map, unit_to_response_dict
 from app.project_catalog import PROJECT_CATALOG_TO_ATTR, get_project_columns
-from app.models import Project, ProjectOverride, Unit, UnitOverride
+from app.models import Project, ProjectOverride, ProjectAggregates, Unit, UnitOverride
+from app.aggregates import recompute_project_aggregates
 
 
 def test_override_parse_int():
@@ -155,3 +156,38 @@ def test_get_unit_applies_unit_overrides():
 
         resp = get_unit(external_id="u-1", db=db)
         assert resp.price_czk == 123456
+
+
+def test_recompute_project_aggregates_uses_effective_unit_values():
+    with get_db() as db:
+        project = Project(developer="Dev", name="Proj", address="Addr")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+
+        # Two units with different base prices and availability
+        u1 = Unit(external_id="u-1", project_id=project.id, price_czk=1000000, price_per_m2_czk=100000, floor_area_m2=50, available=True)
+        u2 = Unit(external_id="u-2", project_id=project.id, price_czk=2000000, price_per_m2_czk=80000, floor_area_m2=75, available=False)
+        db.add_all([u1, u2])
+        db.commit()
+        db.refresh(u1)
+        db.refresh(u2)
+
+        # Override price on u2 to 1500000 and mark it available
+        o1 = UnitOverride(unit_id=u2.id, field="price_czk", value="1500000")
+        o2 = UnitOverride(unit_id=u2.id, field="available", value="true")
+        db.add_all([o1, o2])
+        db.commit()
+
+        # Recompute aggregates; should use overridden values
+        recompute_project_aggregates(db, [project.id])
+
+        agg = db.get(ProjectAggregates, project.id)
+        assert agg is not None
+
+        # total_units should be 2
+        assert agg.total_units == 2
+        # both units effectively available after override
+        assert agg.available_units == 2
+        # avg_price_czk should be (1_000_000 + 1_500_000) / 2 = 1_250_000
+        assert float(agg.avg_price_czk) == 1250000.0

@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import Project, Unit, UnitPriceHistory, UnitSnapshot
+from .aggregates import recompute_project_aggregates
 
 # Canonical mapping: API JSON key -> Unit DB attribute. No duplicate columns; renames only.
 # Keys not listed use _key_to_attr(key) if that column exists. Skip: unique_id, id, project, availability.
@@ -540,6 +541,8 @@ def import_units(
             from datetime import timezone
             captured_at = datetime.now(timezone.utc)
 
+        touched_project_ids: set[int] = set()
+
         for chunk_start in range(0, len(valid), chunk_size):
             chunk = valid[chunk_start : chunk_start + chunk_size]
             project_keys = [k for _, k, _ in chunk]
@@ -571,6 +574,8 @@ def import_units(
             for unit_data, key, external_id in chunk:
                 project = project_key_to_project[key]
                 project_id = project.id  # None in dry-run for new projects; we don't persist then
+                if project_id is not None:
+                    touched_project_ids.add(project_id)
                 apply_project_data(project, unit_data, only_if_present=(key in projects_map))
                 unit = units_map.get(external_id)
                 is_new = unit is None
@@ -617,6 +622,9 @@ def import_units(
                 db.flush()
 
         if not dry_run:
+            # Recompute cached project aggregates for all affected projects in this import
+            if touched_project_ids:
+                recompute_project_aggregates(db, sorted(touched_project_ids))
             db.commit()
 
     total_elapsed = time.perf_counter() - total_start
