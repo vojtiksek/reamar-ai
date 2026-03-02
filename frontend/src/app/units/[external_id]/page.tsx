@@ -137,7 +137,7 @@ export default function UnitDetailPage() {
         } else if (res.status >= 500) {
           userMessage = `Server error (${res.status})`;
         } else {
-          userMessage = detail ?? res.statusText || `HTTP ${res.status}`;
+          userMessage = detail ?? (res.statusText || `HTTP ${res.status}`);
         }
 
         throw new Error(userMessage);
