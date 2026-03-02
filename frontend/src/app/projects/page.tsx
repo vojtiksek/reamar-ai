@@ -1,5 +1,7 @@
 "use client";
 
+import type React from "react";
+
 import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { SummaryBar } from "@/components/SummaryBar";
 import {
@@ -14,7 +16,7 @@ import {
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const API_BASE = "http://127.0.0.1:8001";
 
@@ -213,6 +215,8 @@ export default function ProjectsPage() {
   const [editingCell, setEditingCell] = useState<{ projectId: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
   const [savingOverride, setSavingOverride] = useState(false);
+
+  const rowClickTimeoutRef = useRef<number | null>(null);
 
   const syncToUrl = useCallback(
     (f: CurrentFilters, lim: number, off: number, sb: string, sd: string) => {
@@ -454,6 +458,53 @@ export default function ProjectsPage() {
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
+  const handleRowClick = useCallback(
+    (e: React.MouseEvent<HTMLTableRowElement>, projectId: number) => {
+      // Do not navigate while a cell is in edit mode
+      if (editingCell) return;
+
+      // Ignore clicks from interactive elements (links, buttons, inputs, etc.)
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const interactive = target.closest(
+          "a, button, input, select, textarea, label, [role='button'], [data-no-row-nav]"
+        );
+        if (interactive) return;
+      }
+
+      // Ignore modified or non-left clicks
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+
+      // Double-click: cancel any pending navigation so inline editing can proceed
+      if (e.detail > 1) {
+        if (rowClickTimeoutRef.current !== null) {
+          window.clearTimeout(rowClickTimeoutRef.current);
+          rowClickTimeoutRef.current = null;
+        }
+        return;
+      }
+
+      // Schedule navigation; if this turns into a double-click, the second click will cancel it
+      if (rowClickTimeoutRef.current !== null) {
+        window.clearTimeout(rowClickTimeoutRef.current);
+      }
+      rowClickTimeoutRef.current = window.setTimeout(() => {
+        rowClickTimeoutRef.current = null;
+        router.push(`/projects/${projectId}`);
+      }, 180);
+    },
+    [router, editingCell]
+  );
+
+  useEffect(
+    () => () => {
+      if (rowClickTimeoutRef.current !== null) {
+        window.clearTimeout(rowClickTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm sm:gap-4">
@@ -615,7 +666,8 @@ export default function ProjectsPage() {
                   projects.map((p) => (
                     <tr
                       key={p.id as number}
-                      className="transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
+                      className="cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
+                      onClick={(e) => handleRowClick(e, p.id as number)}
                     >
                       {visibleColumns.map((col, columnIndex) => {
                         const raw = getProjectCellValue(p, col);
