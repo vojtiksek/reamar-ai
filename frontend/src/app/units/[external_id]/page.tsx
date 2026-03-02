@@ -2,6 +2,7 @@
 
 import { formatAreaM2, formatCurrencyCzk, formatLayout } from "@/lib/format";
 import { isEditableCatalogColumn } from "@/lib/columns";
+import { API_BASE } from "@/lib/api";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -13,8 +14,6 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-
-const API = "http://127.0.0.1:8001";
 
 type UnitDetail = {
   external_id: string;
@@ -54,6 +53,16 @@ type FetchState<T> = {
 
 type EditableUnitColumn = UnitColumn & { overrideField: string };
 
+type DebugLog = {
+  label: string;
+  url: string;
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  bodySnippet?: string;
+  errorMessage?: string;
+};
+
 function formatValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "ANO" : "NE";
@@ -91,6 +100,69 @@ export default function UnitDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
+
+  const appendDebugLog = (log: DebugLog) => {
+    setDebugLogs((prev) => [...prev, log]);
+  };
+
+  async function fetchJsonWithDebug<T>(url: string, label: string): Promise<T> {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const text = await res.text();
+        const bodySnippet = text.slice(0, 200);
+        let detail: string | undefined;
+        try {
+          const parsed = JSON.parse(text);
+          if (parsed && typeof parsed.detail === "string") {
+            detail = parsed.detail;
+          }
+        } catch {
+          // ignore JSON parse errors
+        }
+
+        appendDebugLog({
+          label,
+          url,
+          ok: false,
+          status: res.status,
+          statusText: res.statusText,
+          bodySnippet,
+        });
+
+        let userMessage: string;
+        if (res.status === 404 && detail) {
+          userMessage = detail;
+        } else if (res.status >= 500) {
+          userMessage = `Server error (${res.status})`;
+        } else {
+          userMessage = detail ?? res.statusText || `HTTP ${res.status}`;
+        }
+
+        throw new Error(userMessage);
+      }
+
+      appendDebugLog({
+        label,
+        url,
+        ok: true,
+        status: res.status,
+        statusText: res.statusText,
+      });
+
+      return (await res.json()) as T;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      appendDebugLog({
+        label,
+        url,
+        ok: false,
+        errorMessage: message,
+      });
+      throw e;
+    }
+  }
 
   useEffect(() => {
     if (!external_id) return;
@@ -98,33 +170,42 @@ export default function UnitDetailPage() {
 
     setUnitState({ data: null, loading: true, error: null });
     setColumnsState({ data: null, loading: true, error: null });
+    setHistory([]);
+    setDebugLogs([]);
 
-    Promise.all([
-      fetch(`${API}/units/${encodeURIComponent(id)}`).then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(res.statusText))
-      ),
-      fetch(`${API}/units/${encodeURIComponent(id)}/price-history`).then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(res.statusText))
-      ),
-      fetch(`${API}/columns?view=units`).then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(res.statusText))
-      ),
-    ])
-      .then(([u, h, cols]) => {
-        setUnitState({ data: u as UnitDetail, loading: false, error: null });
-        setOriginalUnit(u as UnitDetail);
-        setHistory(Array.isArray(h) ? h : []);
+    const unitUrl = `${API_BASE}/units/${encodeURIComponent(id)}`;
+    const columnsUrl = `${API_BASE}/columns?view=units`;
+    const historyUrl = `${API_BASE}/units/${encodeURIComponent(id)}/price-history`;
+
+    void (async () => {
+      try {
+        // Required: unit + columns
+        const [u, cols] = await Promise.all([
+          fetchJsonWithDebug<UnitDetail>(unitUrl, "unit"),
+          fetchJsonWithDebug<UnitColumn[]>(columnsUrl, "columns"),
+        ]);
+
+        setUnitState({ data: u, loading: false, error: null });
+        setOriginalUnit(u);
         setColumnsState({
-          data: Array.isArray(cols) ? (cols as UnitColumn[]) : [],
+          data: Array.isArray(cols) ? cols : [],
           loading: false,
           error: null,
         });
-      })
-      .catch((e) => {
+
+        // Optional: price history – do not fail the whole page if it errors
+        try {
+          const h = await fetchJsonWithDebug<PriceHistoryEntry[]>(historyUrl, "price-history");
+          setHistory(Array.isArray(h) ? h : []);
+        } catch {
+          // leave history empty; error is visible in debugLogs
+        }
+      } catch (e) {
         const msg = e instanceof Error ? e.message : "Chyba";
         setUnitState({ data: null, loading: false, error: msg });
         setColumnsState({ data: null, loading: false, error: msg });
-      });
+      }
+    })();
   }, [external_id]);
 
   const unit = unitState.data;
@@ -211,7 +292,7 @@ export default function UnitDetailPage() {
               : String(rawVal);
 
         const res = await fetch(
-          `${API}/units/${encodeURIComponent(id)}/overrides/${encodeURIComponent(field)}`,
+          `${API_BASE}/units/${encodeURIComponent(id)}/overrides/${encodeURIComponent(field)}`,
           {
             method: "PUT",
             headers: { "Content-Type": "application/json" },
@@ -239,7 +320,44 @@ export default function UnitDetailPage() {
   };
 
   if (unitState.loading) return <div className="p-4">Načítání…</div>;
-  if (unitState.error) return <div className="p-4 text-red-600">Chyba: {unitState.error}</div>;
+  if (unitState.error) {
+    return (
+      <div className="p-4 space-y-3">
+        <div className="text-red-600">
+          {unitState.error === "Unit not found" ? "Jednotka nenalezena." : `Chyba: ${unitState.error}`}
+        </div>
+        {debugMode && (
+          <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+            <div className="mb-1 font-semibold">Debug</div>
+            <p>API_BASE: {API_BASE}</p>
+            <p>external_id: {external_id}</p>
+            <ul className="mt-1 space-y-1">
+              {debugLogs.map((log, idx) => (
+                <li key={`${log.label}-${idx}`}>
+                  <div>
+                    <span className="font-semibold">{log.label}</span>: {log.url}
+                  </div>
+                  {!log.ok && (
+                    <div className="ml-2">
+                      {log.status && (
+                        <span>
+                          status {log.status} {log.statusText ?? ""}
+                        </span>
+                      )}
+                      {log.errorMessage && <div>error: {log.errorMessage}</div>}
+                      {log.bodySnippet && (
+                        <div className="truncate">body: {log.bodySnippet}</div>
+                      )}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    );
+  }
   if (!unit) return null;
 
   const chartData = history

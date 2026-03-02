@@ -14,11 +14,10 @@ import {
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
+import { API_BASE } from "@/lib/api";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-
-const API_BASE = "http://127.0.0.1:8001";
 
 type ProjectItem = {
   id: number;

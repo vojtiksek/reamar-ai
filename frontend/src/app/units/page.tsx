@@ -13,12 +13,11 @@ import {
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
 import { formatValue } from "@/lib/format";
+import { API_BASE } from "@/lib/api";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
-
-const API_BASE = "http://127.0.0.1:8001";
 
 type Unit = {
   external_id: string;
