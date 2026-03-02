@@ -5,8 +5,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from app.db import get_db
+from app.main import get_project
 from app.overrides import apply_override, build_override_map, unit_to_response_dict
-from app.models import Unit, UnitOverride
+from app.project_catalog import PROJECT_CATALOG_TO_ATTR, get_project_columns
+from app.models import Project, ProjectOverride, Unit, UnitOverride
 
 
 def test_override_parse_int():
@@ -103,3 +106,32 @@ def test_unit_to_response_dict_applies_overrides():
     assert d["equivalent_area_m2"] == 70.0
     assert d["external_id"] == "ext-1"
     assert d["project"]["name"] == "Project A"
+
+
+def test_get_project_applies_project_overrides():
+    # Pick an editable text-like project column from catalog
+    cols = get_project_columns()
+    editable_text_cols = [c for c in cols if c.get("editable") and c.get("data_type") == "text"]
+    if not editable_text_cols:
+        pytest.skip("No editable text project columns configured")
+    col = editable_text_cols[0]
+    field_key = col["key"]
+    attr = PROJECT_CATALOG_TO_ATTR.get(field_key)
+    assert attr is not None
+
+    with get_db() as db:
+        # Create a project with default/base values
+        project = Project(developer="Dev", name="Proj", address="Addr")
+        db.add(project)
+        db.commit()
+        db.refresh(project)
+
+        # Create a project override for the chosen field
+        override = ProjectOverride(project_id=project.id, field=field_key, value="manual-value")
+        db.add(override)
+        db.commit()
+
+        item = get_project(project_id=project.id, db=db)
+
+        # Effective project representation must include the override value
+        assert item[field_key] == "manual-value"

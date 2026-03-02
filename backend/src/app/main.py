@@ -1036,8 +1036,23 @@ def get_project(
     )
     row = db.execute(stmt).first()
     if row is None:
-        return _project_row_to_item(project, type("Row", (), {"_mapping": {}})())
-    return _project_row_to_item(row[0], row)
+        base_item = _project_row_to_item(project, type("Row", (), {"_mapping": {}})())
+    else:
+        base_item = _project_row_to_item(row[0], row)
+
+    # Apply project-level overrides so detail matches list/overview behaviour.
+    override_rows = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == project.id,
+                ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    override_map = build_project_override_map(override_rows)
+    return apply_project_overrides_to_item(project.id, dict(base_item), override_map)
 
 
 @app.get("/units/{external_id}", response_model=UnitResponse)
