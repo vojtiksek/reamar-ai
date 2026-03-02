@@ -132,32 +132,14 @@ export default function UnitDetailPage() {
   const editableColumns = useMemo<EditableUnitColumn[]>(() => {
     if (!columnsState.data) return [];
 
-    const OVERRIDEABLE_UNIT_FIELDS = new Set([
-      "price_czk",
-      "price_per_m2_czk",
-      "available",
-      "availability_status",
-      "floor_area_m2",
-      "equivalent_area_m2",
-      "exterior_area_m2",
-    ]);
-
     const cols: EditableUnitColumn[] = columnsState.data
-      .filter((c) => isEditableCatalogColumn(c, { entity: "unit" }))
-      .map((c) => {
-        const accessor = (c.accessor ?? c.key) as string;
-        const overrideField =
-          (OVERRIDEABLE_UNIT_FIELDS.has(accessor) && accessor) ||
-          (OVERRIDEABLE_UNIT_FIELDS.has(c.key) ? c.key : undefined);
-        if (!overrideField) {
-          return null;
-        }
-        return {
-          ...c,
-          overrideField,
-        } as EditableUnitColumn;
-      })
-      .filter((c): c is EditableUnitColumn => c !== null);
+      .filter((c) => isEditableCatalogColumn({ ...c, key: c.key }, { entity: "unit" }))
+      .map((c) => ({
+        ...c,
+        // For units view, backend already exposes attr-keyed fields (e.g. price_czk),
+        // which are exactly what UnitOverride expects.
+        overrideField: c.key,
+      }));
 
     if (process.env.NODE_ENV === "development" && debugMode && columnsState.data.length > 0) {
       // eslint-disable-next-line no-console
@@ -351,9 +333,19 @@ export default function UnitDetailPage() {
       <section className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
         <h2 className="mb-3 text-base font-semibold text-gray-900">Upravitelné údaje</h2>
         {debugMode && (
-          <p className="mb-2 text-xs text-gray-500">
-            Loaded columns: {columnsState.data?.length ?? 0}, editable: {editableColumns.length}
-          </p>
+          <div className="mb-3 space-y-1 text-xs text-gray-500">
+            <p>
+              Loaded columns: {columnsState.data?.length ?? 0}, editable: {editableColumns.length}
+            </p>
+            <p>Unit keys: {unit ? Object.keys(unit).slice(0, 20).join(", ") : "—"}</p>
+            <p>
+              Sample columns:{" "}
+              {columnsState.data
+                ?.slice(0, 10)
+                .map((c) => `${c.key}${unit && c.key in unit ? "✓" : "✗"}`)
+                .join(", ") || "—"}
+            </p>
+          </div>
         )}
         {columnsState.loading ? (
           <p className="text-sm text-gray-600">Načítání sloupců…</p>
