@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+
+import { isEditableCatalogColumn } from "@/lib/columns";
 
 const API_BASE = "http://127.0.0.1:8001";
 
@@ -14,7 +16,8 @@ type ProjectColumn = {
   data_type: string;
   unit?: string | null;
   kind?: "catalog" | "computed";
-  editable?: boolean;
+  editable?: boolean | string | number | null;
+  entity?: string | null;
 };
 
 type FetchState<T> = {
@@ -39,7 +42,10 @@ function parseBool(value: unknown): boolean {
 
 export default function ProjectDetailPage() {
   const params = useParams();
+  const searchParams = useSearchParams();
   const projectId = params?.id as string | undefined;
+
+  const debugMode = searchParams?.get("debug") === "1";
 
   const [projectState, setProjectState] = useState<FetchState<ProjectDetail>>({
     data: null,
@@ -88,21 +94,23 @@ export default function ProjectDetailPage() {
 
   const editableColumns = useMemo(() => {
     if (!columnsState.data) return [] as ProjectColumn[];
-    const cols = columnsState.data.filter((c) => c.editable && c.kind !== "computed");
+    const cols = columnsState.data.filter((c) => isEditableCatalogColumn(c, { entity: "project" }));
 
-    if (process.env.NODE_ENV === "development") {
+    if (process.env.NODE_ENV === "development" && debugMode && columnsState.data.length > 0) {
       // Debug: help diagnose why no editable fields are shown
       // eslint-disable-next-line no-console
       console.log(
         "[ProjectDetail] columns loaded:",
         columnsState.data.length,
         "editable:",
-        cols.length
+        cols.length,
+        "sample:",
+        columnsState.data[0]
       );
     }
 
     return cols;
-  }, [columnsState.data]);
+  }, [columnsState.data, debugMode]);
 
   const project = projectState.data;
 
@@ -273,6 +281,11 @@ export default function ProjectDetailPage() {
 
           <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-base font-semibold text-gray-900">Upravitelné údaje</h2>
+            {debugMode && (
+              <p className="mb-2 text-xs text-gray-500">
+                Loaded columns: {columnsState.data?.length ?? 0}, editable: {editableColumns.length}
+              </p>
+            )}
             {columnsState.loading ? (
               <p className="text-sm text-gray-600">Načítání sloupců…</p>
             ) : editableColumns.length === 0 ? (
