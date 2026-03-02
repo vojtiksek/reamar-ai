@@ -88,7 +88,20 @@ export default function ProjectDetailPage() {
 
   const editableColumns = useMemo(() => {
     if (!columnsState.data) return [] as ProjectColumn[];
-    return columnsState.data.filter((c) => c.kind === "catalog" && c.editable);
+    const cols = columnsState.data.filter((c) => c.editable && c.kind !== "computed");
+
+    if (process.env.NODE_ENV === "development") {
+      // Debug: help diagnose why no editable fields are shown
+      // eslint-disable-next-line no-console
+      console.log(
+        "[ProjectDetail] columns loaded:",
+        columnsState.data.length,
+        "editable:",
+        cols.length
+      );
+    }
+
+    return cols;
   }, [columnsState.data]);
 
   const project = projectState.data;
