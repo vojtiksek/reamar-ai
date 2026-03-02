@@ -734,7 +734,21 @@ export default function Home() {
                       <tr
                         key={u.external_id}
                         className="cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
-                        onClick={() => router.push(`/units/${encodeURIComponent(u.external_id)}`)}
+                        onClick={() => {
+                          const rawExternalId =
+                            (u as any).external_id ??
+                            (u as any).source_unit_id ??
+                            (u as any).id;
+                          if (!rawExternalId) {
+                            if (process.env.NODE_ENV === "development") {
+                              // eslint-disable-next-line no-console
+                              console.warn("[UnitsPage] Missing externalId for row", u);
+                            }
+                            return;
+                          }
+                          const externalId = String(rawExternalId);
+                          router.push(`/units/${encodeURIComponent(externalId)}`);
+                        }}
                       >
                         {visibleColumns.map(({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
                           const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
