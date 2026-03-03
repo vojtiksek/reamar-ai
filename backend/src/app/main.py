@@ -91,6 +91,7 @@ class UnitResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     external_id: str
+    project_id: int
     unit_name: str | None
     layout: str | None
     floor: int | None

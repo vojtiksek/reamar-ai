@@ -17,7 +17,7 @@ import { API_BASE } from "@/lib/api";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Unit = {
   external_id: string;
@@ -247,11 +247,25 @@ export default function Home() {
   const [clientSortBy, setClientSortBy] = useState<string | null>(null);
   const [clientSortDir, setClientSortDir] = useState<"asc" | "desc">("asc");
 
+  const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
+  const [editValue, setEditValue] = useState<string | boolean>("");
+  const [savingOverride, setSavingOverride] = useState(false);
+
+  const rowClickTimeoutRef = useRef<number | null>(null);
+
   const supportedFilterKeys = useMemo(
     () => new Set(filterGroups.flatMap((g) => g.filters.filter((f) => f.backend_supported).map((f) => f.key))),
     [filterGroups]
   );
   const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
+
+  const getExternalIdForRow = useCallback((u: Unit): string | null => {
+    const rawExternalId = (u as any).external_id ?? (u as any).source_unit_id ?? (u as any).id;
+    if (!rawExternalId) {
+      return null;
+    }
+    return String(rawExternalId);
+  }, []);
 
   // Fetch dynamic column definitions for units view
   useEffect(() => {
@@ -577,6 +591,109 @@ export default function Home() {
     }));
   }, [serverColumns, columnsConfig]);
 
+  const saveOverride = useCallback(
+    async (externalId: string, fieldKey: string, value: string | boolean) => {
+      setSavingOverride(true);
+      try {
+        const body = {
+          value: typeof value === "boolean" ? String(value) : String(value),
+        };
+        const res = await fetch(
+          `${API_BASE}/units/${encodeURIComponent(externalId)}/overrides/${encodeURIComponent(fieldKey)}`,
+          {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }
+        );
+        if (!res.ok) {
+          // eslint-disable-next-line no-console
+          console.error("Failed to save unit override", await res.text());
+          return;
+        }
+        const updated = (await res.json()) as any;
+        setUnits((prev) =>
+          prev.map((row) => {
+            const rowExternalId = getExternalIdForRow(row);
+            if (!rowExternalId || rowExternalId !== externalId) return row;
+            return {
+              ...row,
+              price_czk: updated.price_czk ?? row.price_czk,
+              price_per_m2_czk: updated.price_per_m2_czk ?? row.price_per_m2_czk,
+              available: updated.available ?? row.available,
+              floor_area_m2: updated.floor_area_m2 ?? row.floor_area_m2,
+              data: updated.data ?? row.data,
+              project: updated.project ?? row.project,
+            };
+          })
+        );
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error("Failed to save unit override", e);
+      } finally {
+        setSavingOverride(false);
+        setEditingCell(null);
+      }
+    },
+    [getExternalIdForRow]
+  );
+
+  const handleRowClick = useCallback(
+    (e: React.MouseEvent<HTMLTableRowElement>, u: Unit) => {
+      // Do not navigate while a cell is in edit mode
+      if (editingCell) return;
+
+      // Ignore clicks from interactive elements (links, buttons, inputs, etc.)
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const interactive = target.closest(
+          "a, button, input, select, textarea, label, [role='button'], [data-no-row-nav]"
+        );
+        if (interactive) return;
+      }
+
+      // Ignore modified or non-left clicks
+      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+
+      const externalId = getExternalIdForRow(u);
+      if (!externalId) {
+        if (process.env.NODE_ENV === "development") {
+          // eslint-disable-next-line no-console
+          console.warn("[UnitsPage] Missing externalId for row", u);
+        }
+        return;
+      }
+
+      // Double-click: cancel any pending navigation so inline editing can proceed
+      if (e.detail > 1) {
+        if (rowClickTimeoutRef.current !== null) {
+          window.clearTimeout(rowClickTimeoutRef.current);
+          rowClickTimeoutRef.current = null;
+        }
+        return;
+      }
+
+      // Schedule navigation; if this turns into a double-click, the second click will cancel it
+      if (rowClickTimeoutRef.current !== null) {
+        window.clearTimeout(rowClickTimeoutRef.current);
+      }
+      rowClickTimeoutRef.current = window.setTimeout(() => {
+        rowClickTimeoutRef.current = null;
+        router.push(`/units/${encodeURIComponent(externalId)}`);
+      }, 180);
+    },
+    [router, editingCell, getExternalIdForRow]
+  );
+
+  useEffect(
+    () => () => {
+      if (rowClickTimeoutRef.current !== null) {
+        window.clearTimeout(rowClickTimeoutRef.current);
+      }
+    },
+    []
+  );
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
@@ -734,48 +851,105 @@ export default function Home() {
                       <tr
                         key={u.external_id}
                         className="cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
-                        onClick={() => {
-                          const rawExternalId =
-                            (u as any).external_id ??
-                            (u as any).source_unit_id ??
-                            (u as any).id;
-                          if (!rawExternalId) {
-                            if (process.env.NODE_ENV === "development") {
-                              // eslint-disable-next-line no-console
-                              console.warn("[UnitsPage] Missing externalId for row", u);
-                            }
-                            return;
-                          }
-                          const externalId = String(rawExternalId);
-                          router.push(`/units/${encodeURIComponent(externalId)}`);
-                        }}
+                        onClick={(e) => handleRowClick(e, u)}
                       >
-                        {visibleColumns.map(({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
-                          const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
-                          const raw = getValue(u, accessor, catalogKey);
-                          const formatted = formatValue(raw, {
-                            display_format: df ?? data_type,
-                            key,
-                          });
-                          const isAvailableCol = key === "available";
-                          const isStickyFirst = columnIndex === 0;
-                          return (
-                            <td
-                              key={key}
-                              className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
-                                align === "right" ? "text-right" : "text-left"
-                              } ${
-                                isAvailableCol
-                                  ? raw
-                                    ? "text-green-600"
-                                    : "text-red-600"
-                                  : ""
-                              } ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
-                            >
-                              {formatted}
-                            </td>
-                          );
-                        })}
+                        {visibleColumns.map(
+                          ({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
+                            const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
+                            const raw = getValue(u, accessor, catalogKey);
+                            const formatted = formatValue(raw, {
+                              display_format: df ?? data_type,
+                              key,
+                            });
+                            const isAvailableCol = key === "available";
+                            const isStickyFirst = columnIndex === 0;
+                            const externalId = getExternalIdForRow(u);
+                            const isEditable =
+                              key === "available" || key === "price_czk" || key === "price_per_m2_czk";
+                            const isEditing =
+                              editingCell != null &&
+                              externalId != null &&
+                              editingCell.externalId === externalId &&
+                              editingCell.field === key;
+
+                            return (
+                              <td
+                                key={key}
+                                className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
+                                  align === "right" ? "text-right" : "text-left"
+                                } ${
+                                  isAvailableCol
+                                    ? raw
+                                      ? "text-green-600"
+                                      : "text-red-600"
+                                    : ""
+                                } ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${
+                                  isEditable ? "cursor-pointer" : ""
+                                }`}
+                                onDoubleClick={() => {
+                                  if (!isEditable || loading || savingOverride) return;
+                                  if (!externalId) return;
+                                  if (data_type === "bool") {
+                                    const current =
+                                      typeof raw === "boolean"
+                                        ? raw
+                                        : String(raw ?? "").toLowerCase() === "true";
+                                    setEditingCell({ externalId, field: key });
+                                    setEditValue(current);
+                                  } else {
+                                    setEditingCell({ externalId, field: key });
+                                    setEditValue(raw == null ? "" : String(raw));
+                                  }
+                                }}
+                              >
+                                {isEditing && data_type === "bool" ? (
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={
+                                      typeof editValue === "boolean"
+                                        ? editValue
+                                        : String(editValue).toLowerCase() === "true"
+                                    }
+                                    onChange={(e) => setEditValue(e.target.checked)}
+                                    onBlur={() => {
+                                      if (!externalId) return;
+                                      void saveOverride(externalId, key, editValue);
+                                    }}
+                                  />
+                                ) : isEditing ? (
+                                  <input
+                                    type={data_type === "number" ? "number" : "text"}
+                                    className="w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+                                    autoFocus
+                                    value={
+                                      typeof editValue === "boolean"
+                                        ? editValue
+                                          ? "true"
+                                          : "false"
+                                        : (editValue as string)
+                                    }
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={() => {
+                                      if (!externalId) return;
+                                      void saveOverride(externalId, key, editValue);
+                                    }}
+                                    onKeyDown={(e) => {
+                                      if (!externalId) return;
+                                      if (e.key === "Enter") {
+                                        void saveOverride(externalId, key, editValue);
+                                      } else if (e.key === "Escape") {
+                                        setEditingCell(null);
+                                      }
+                                    }}
+                                  />
+                                ) : (
+                                  formatted
+                                )}
+                              </td>
+                            );
+                          }
+                        )}
                       </tr>
                     ))
                   )}

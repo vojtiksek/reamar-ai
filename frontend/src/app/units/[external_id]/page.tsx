@@ -3,6 +3,7 @@
 import { formatAreaM2, formatCurrencyCzk, formatLayout } from "@/lib/format";
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
+import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -17,6 +18,7 @@ import {
 
 type UnitDetail = {
   external_id: string;
+  project_id: number;
   project: { name: string };
   unit_name: string | null;
   layout: string | null;
@@ -418,7 +420,17 @@ export default function UnitDetailPage() {
       <dl className="mb-6 grid gap-2 text-sm">
         <div>
           <dt className="font-medium text-gray-500">Projekt</dt>
-          <dd>{unit.project?.name ?? "—"}</dd>
+          <dd>
+            {unit.project?.name ?? "—"}
+            {unit.project_id ? (
+              <Link
+                href={`/projects/${unit.project_id}`}
+                className="ml-2 text-xs font-medium text-blue-600 hover:text-blue-800"
+              >
+                Upravit projekt
+              </Link>
+            ) : null}
+          </dd>
         </div>
         <div>
           <dt className="font-medium text-gray-500">Název jednotky</dt>

@@ -257,6 +257,7 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
 
     return {
         "external_id": base.external_id,
+        "project_id": base.project_id,
         "unit_name": base.unit_name,
         "layout": base.layout,
         "floor": base.floor,
