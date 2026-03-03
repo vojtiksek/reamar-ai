@@ -948,6 +948,22 @@ def _project_agg_subquery():
             ),
             median_pt,
             func.avg(Unit.floor_area_m2).label("avg_floor_area_m2"),
+            # Parking price aggregates (Kč)
+            func.min(Unit.parking_indoor_price_czk).label("min_parking_indoor_price_czk"),
+            func.max(Unit.parking_indoor_price_czk).label("max_parking_indoor_price_czk"),
+            func.min(Unit.parking_outdoor_price_czk).label("min_parking_outdoor_price_czk"),
+            func.max(Unit.parking_outdoor_price_czk).label("max_parking_outdoor_price_czk"),
+            # Time / status
+            func.min(Unit.first_seen).label("project_first_seen"),
+            func.max(Unit.last_seen).label("project_last_seen"),
+            func.max(Unit.days_on_market).label("max_days_on_market"),
+            # Financing (fractions 0–1)
+            func.min(Unit.payment_contract).label("min_payment_contract"),
+            func.max(Unit.payment_contract).label("max_payment_contract"),
+            func.min(Unit.payment_construction).label("min_payment_construction"),
+            func.max(Unit.payment_construction).label("max_payment_construction"),
+            func.min(Unit.payment_occupancy).label("min_payment_occupancy"),
+            func.max(Unit.payment_occupancy).label("max_payment_occupancy"),
             layouts,
         )
         .group_by(Unit.project_id)

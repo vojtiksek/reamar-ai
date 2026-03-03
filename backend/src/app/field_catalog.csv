@@ -5,10 +5,10 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 1003;Cena;Jednotka;price_change;Změna ceny;ANO;ANO;NE;%;0;percent;fraction
 1004;Cena;Jednotka;original_price;Původní cena;ANO;NE;NE;Kč;0;currency;
 1005;Cena;Jednotka;original_price_per_sm;Původní cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
-1006;Cena;Projekt;min_parking_outdoor_price_czk;Cena stání (od);ANO;NE;ANO;Kč;0;currency;
-1007;Cena;Projekt;max_parking_outdoor_price_czk;Cena stání (do);ANO;NE;ANO;Kč;0;currency;
-1008;Cena;Projekt;min_parking_indoor_price_czk;Cena garáže (od);ANO;NE;ANO;Kč;0;currency;
-1009;Cena;Projekt;max_parking_indoor_price_czk;Cena garáže (do);ANO;NE;ANO;Kč;0;currency;
+1006;Cena;Projekt;min_parking_outdoor_price_czk;Cena stání (projekt);ANO;NE;ANO;Kč;0;currency;
+1007;Cena;Projekt;max_parking_outdoor_price_czk;Cena stání (max, interní);NE;NE;NE;Kč;0;currency;
+1008;Cena;Projekt;min_parking_indoor_price_czk;Cena garáže (projekt);ANO;NE;ANO;Kč;0;currency;
+1009;Cena;Projekt;max_parking_indoor_price_czk;Cena garáže (max, interní);NE;NE;NE;Kč;0;currency;
 1010;Cena;Projekt;total_units;Počet jednotek;ANO;NE;NE;;0;integer;
 1011;Cena;Projekt;available_units;Dostupných jednotek;ANO;NE;NE;;0;integer;
 1012;Cena;Projekt;availability_ratio;Podíl dostupných;ANO;NE;NE;;0;percent;fraction
