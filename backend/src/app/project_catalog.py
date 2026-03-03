@@ -31,6 +31,11 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "amenities": "amenities",
     "project_url": "project_url",  # from overrides when set
     "project": "name",  # alias for name
+    # Financing fields are computed/project-level values living on the overview item dict.
+    # We map catalog keys to the same item keys so overrides can apply in both list + detail views.
+    "payment_contract": "payment_contract",
+    "payment_construction": "payment_construction",
+    "payment_occupancy": "payment_occupancy",
 }
 
 # Computed column keys (kind="computed") in display order.

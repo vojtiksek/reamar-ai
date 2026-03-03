@@ -62,12 +62,12 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
 6003;Projekt;Projekt;project_url;Odkaz na projekt;ANO;NE;ANO;;;url;
 
-7001;Financování;Projekt;min_payment_contract;Platba po SOSBK (od);ANO;ANO;ANO;%;0;percent;fraction
-7002;Financování;Projekt;max_payment_contract;Platba po SOSBK (do);ANO;ANO;ANO;%;0;percent;fraction
-7003;Financování;Projekt;min_payment_construction;Platba při výstavbě (od);ANO;ANO;ANO;%;0;percent;fraction
-7004;Financování;Projekt;max_payment_construction;Platba při výstavbě (do);ANO;ANO;ANO;%;0;percent;fraction
-7005;Financování;Projekt;min_payment_occupancy;Platba po dokončení (od);ANO;ANO;ANO;%;0;percent;fraction
-7006;Financování;Projekt;max_payment_occupancy;Platba po dokončení (do);ANO;ANO;ANO;%;0;percent;fraction
+7001;Financování;Projekt;payment_contract;Platba po SOSBK;ANO;ANO;ANO;%;0;percent;fraction
+7002;Financování;Projekt;payment_construction;Platba při výstavbě;ANO;ANO;ANO;%;0;percent;fraction
+7003;Financování;Projekt;payment_occupancy;Platba po dokončení;ANO;ANO;ANO;%;0;percent;fraction
+7004;Financování;Projekt;min_payment_construction;Platba při výstavbě (od);NE;NE;NE;%;0;percent;fraction
+7005;Financování;Projekt;min_payment_occupancy;Platba po dokončení (od);NE;NE;NE;%;0;percent;fraction
+7006;Financování;Projekt;max_payment_occupancy;Platba po dokončení (do);NE;NE;NE;%;0;percent;fraction
 
 8001;Jednotka;Jednotka;unit_name;Název jednotky;ANO;NE;NE;;;text;
 8002;Jednotka;Jednotka;building;Budova;ANO;NE;NE;;;text;

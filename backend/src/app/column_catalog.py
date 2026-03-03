@@ -146,12 +146,10 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "project_first_seen",
     "project_last_seen",
     "max_days_on_market",
-    "min_payment_contract",
-    "max_payment_contract",
-    "min_payment_construction",
-    "max_payment_construction",
-    "min_payment_occupancy",
-    "max_payment_occupancy",
+    # Single-value financing fields per project (computed from units or overrides)
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
 })
 
 

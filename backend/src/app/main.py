@@ -812,13 +812,29 @@ def get_projects_overview(
         item["max_days_on_market"] = (
             int(r["max_days_on_market"]) if r.get("max_days_on_market") is not None else None
         )
-        # Payment scheme aggregates (fractions 0–1)
-        item["min_payment_contract"] = _dec(r.get("min_payment_contract"))
-        item["max_payment_contract"] = _dec(r.get("max_payment_contract"))
-        item["min_payment_construction"] = _dec(r.get("min_payment_construction"))
-        item["max_payment_construction"] = _dec(r.get("max_payment_construction"))
-        item["min_payment_occupancy"] = _dec(r.get("min_payment_occupancy"))
-        item["max_payment_occupancy"] = _dec(r.get("max_payment_occupancy"))
+        # Payment scheme aggregates (fractions 0–1).
+        # Keep raw min/max for potential debugging, but expose single-value
+        # payment_* fields that are easier to work with in the UI.
+        min_pay_contract = _dec(r.get("min_payment_contract"))
+        max_pay_contract = _dec(r.get("max_payment_contract"))
+        min_pay_construction = _dec(r.get("min_payment_construction"))
+        max_pay_construction = _dec(r.get("max_payment_construction"))
+        min_pay_occupancy = _dec(r.get("min_payment_occupancy"))
+        max_pay_occupancy = _dec(r.get("max_payment_occupancy"))
+
+        item["min_payment_contract"] = min_pay_contract
+        item["max_payment_contract"] = max_pay_contract
+        item["min_payment_construction"] = min_pay_construction
+        item["max_payment_construction"] = max_pay_construction
+        item["min_payment_occupancy"] = min_pay_occupancy
+        item["max_payment_occupancy"] = max_pay_occupancy
+
+        def _first_non_none(a: Any, b: Any) -> Any:
+            return a if a is not None else b
+
+        item["payment_contract"] = _first_non_none(min_pay_contract, max_pay_contract)
+        item["payment_construction"] = _first_non_none(min_pay_construction, max_pay_construction)
+        item["payment_occupancy"] = _first_non_none(min_pay_occupancy, max_pay_occupancy)
         apply_project_overrides_to_item(
             project_id=item["id"],
             item=item,
@@ -964,6 +980,8 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     out["units_total"] = units_total
     out["units_available"] = units_available
     out["units_priced"] = int(agg.get("units_priced") or 0)
+
+    # Core aggregate metrics
     for k in (
         "min_price_czk",
         "avg_price_czk",
@@ -989,6 +1007,25 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
             out[k] = v.isoformat()
         else:
             out[k] = v
+
+    # Derived single-value financing fields (per project).
+    def _first_non_none(a, b):
+        return a if a is not None else b
+
+    pay_contract = _first_non_none(agg.get("min_payment_contract"), agg.get("max_payment_contract"))
+    if isinstance(pay_contract, Decimal):
+        pay_contract = float(pay_contract)
+    out["payment_contract"] = pay_contract
+
+    pay_construction = _first_non_none(agg.get("min_payment_construction"), agg.get("max_payment_construction"))
+    if isinstance(pay_construction, Decimal):
+        pay_construction = float(pay_construction)
+    out["payment_construction"] = pay_construction
+
+    pay_occupancy = _first_non_none(agg.get("min_payment_occupancy"), agg.get("max_payment_occupancy"))
+    if isinstance(pay_occupancy, Decimal):
+        pay_occupancy = float(pay_occupancy)
+    out["payment_occupancy"] = pay_occupancy
     out["available_ratio"] = (
         (units_available / units_total) if units_total else 0.0
     )
