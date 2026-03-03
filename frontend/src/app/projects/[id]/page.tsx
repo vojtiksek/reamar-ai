@@ -94,7 +94,33 @@ export default function ProjectDetailPage() {
 
   const editableColumns = useMemo(() => {
     if (!columnsState.data) return [] as ProjectColumn[];
-    const cols = columnsState.data.filter((c) => isEditableCatalogColumn(c, { entity: "project" }));
+    const base = columnsState.data.filter((c) => isEditableCatalogColumn(c, { entity: "project" }));
+
+    // Pro financování/parkování chceme pouze jednu hodnotu na projekt (bez "od"/"do").
+    // Skryjeme tedy max_* varianty a u min_* přepíšeme label na finální název pole.
+    const HIDE_KEYS = new Set<string>([
+      "max_parking_indoor_price_czk",
+      "max_parking_outdoor_price_czk",
+      "max_payment_contract",
+      "max_payment_construction",
+      "max_payment_occupancy",
+    ]);
+
+    const SINGLE_VALUE_LABELS: Record<string, string> = {
+      min_parking_indoor_price_czk: "Cena garáže (projekt)",
+      min_parking_outdoor_price_czk: "Cena stání (projekt)",
+      min_payment_contract: "Platba po SOSBK",
+      min_payment_construction: "Platba při výstavbě",
+      min_payment_occupancy: "Platba po dokončení",
+    };
+
+    const cols = base
+      .filter((c) => !HIDE_KEYS.has(c.key))
+      .map((c) =>
+        SINGLE_VALUE_LABELS[c.key]
+          ? { ...c, label: SINGLE_VALUE_LABELS[c.key] }
+          : c
+      );
 
     if (process.env.NODE_ENV === "development" && debugMode && columnsState.data.length > 0) {
       // Debug: help diagnose why no editable fields are shown
@@ -102,7 +128,7 @@ export default function ProjectDetailPage() {
       console.log(
         "[ProjectDetail] columns loaded:",
         columnsState.data.length,
-        "editable:",
+        "editable (after single-value filtering):",
         cols.length,
         "sample:",
         columnsState.data[0]
