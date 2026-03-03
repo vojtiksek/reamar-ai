@@ -682,28 +682,20 @@ export default function ProjectsPage() {
                           editingCell.projectId === (p.id as number) &&
                           editingCell.field === fieldKey;
 
-                        // Special handling for range-style aggregates on projects:
-                        // parking prices (min/max) and payment_* (min/max as percent).
+                        // Special handling for financování/parkování: zobrazuj jen jednu hodnotu,
+                        // i když na backendu existují min/max agregáty.
                         const renderValue = () => {
                           if (fieldKey === "min_parking_indoor_price_czk") {
                             const minVal = p["min_parking_indoor_price_czk"] as number | null | undefined;
                             const maxVal = p["max_parking_indoor_price_czk"] as number | null | undefined;
-                            const minF = formatCurrencyCzk(minVal ?? null);
-                            const maxF = formatCurrencyCzk(maxVal ?? null);
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
+                            const value = (minVal ?? maxVal) ?? null;
+                            return formatCurrencyCzk(value);
                           }
                           if (fieldKey === "min_parking_outdoor_price_czk") {
                             const minVal = p["min_parking_outdoor_price_czk"] as number | null | undefined;
                             const maxVal = p["max_parking_outdoor_price_czk"] as number | null | undefined;
-                            const minF = formatCurrencyCzk(minVal ?? null);
-                            const maxF = formatCurrencyCzk(maxVal ?? null);
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
+                            const value = (minVal ?? maxVal) ?? null;
+                            return formatCurrencyCzk(value);
                           }
                           if (
                             fieldKey === "min_payment_contract" ||
@@ -713,16 +705,9 @@ export default function ProjectsPage() {
                             const suffix = fieldKey.replace(/^min_/, "");
                             const minVal = p[`min_${suffix}`] as number | null | undefined;
                             const maxVal = p[`max_${suffix}`] as number | null | undefined;
-                            const minF = formatPercent(
-                              minVal != null ? Number(minVal) * 100 : null
-                            );
-                            const maxF = formatPercent(
-                              maxVal != null ? Number(maxVal) * 100 : null
-                            );
-                            if (minVal != null && maxVal != null && minVal !== maxVal) {
-                              return `${minF}–${maxF}`;
-                            }
-                            return minF;
+                            const value = (minVal ?? maxVal) ?? null;
+                            // Hodnota je uložena jako zlomek 0–1; formatPercent se o přepočet postará.
+                            return formatPercent(value != null ? Number(value) : null);
                           }
                           return formatProjectValue(raw, col);
                         };
