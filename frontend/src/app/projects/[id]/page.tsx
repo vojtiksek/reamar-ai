@@ -289,11 +289,8 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba po SOSBK</dt>
                   <dd>
                     {formatPercent(
-                      (project["min_payment_contract"] as number | null | undefined) ?? null
-                    )}{" "}
-                    –{" "}
-                    {formatPercent(
-                      (project["max_payment_contract"] as number | null | undefined) ?? null
+                      ((project["min_payment_contract"] as number | null | undefined) ??
+                        (project["max_payment_contract"] as number | null | undefined)) ?? null
                     )}
                   </dd>
                 </div>
@@ -301,11 +298,8 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba při výstavbě</dt>
                   <dd>
                     {formatPercent(
-                      (project["min_payment_construction"] as number | null | undefined) ?? null
-                    )}{" "}
-                    –{" "}
-                    {formatPercent(
-                      (project["max_payment_construction"] as number | null | undefined) ?? null
+                      ((project["min_payment_construction"] as number | null | undefined) ??
+                        (project["max_payment_construction"] as number | null | undefined)) ?? null
                     )}
                   </dd>
                 </div>
@@ -313,11 +307,8 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba po dokončení</dt>
                   <dd>
                     {formatPercent(
-                      (project["min_payment_occupancy"] as number | null | undefined) ?? null
-                    )}{" "}
-                    –{" "}
-                    {formatPercent(
-                      (project["max_payment_occupancy"] as number | null | undefined) ?? null
+                      ((project["min_payment_occupancy"] as number | null | undefined) ??
+                        (project["max_payment_occupancy"] as number | null | undefined)) ?? null
                     )}
                   </dd>
                 </div>
@@ -325,11 +316,8 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Cena garáže (projekt)</dt>
                   <dd>
                     {formatCurrencyCzk(
-                      (project["min_parking_indoor_price_czk"] as number | null | undefined) ?? null
-                    )}{" "}
-                    –{" "}
-                    {formatCurrencyCzk(
-                      (project["max_parking_indoor_price_czk"] as number | null | undefined) ?? null
+                      ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
+                        (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
                     )}
                   </dd>
                 </div>
@@ -337,11 +325,8 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Cena stání (projekt)</dt>
                   <dd>
                     {formatCurrencyCzk(
-                      (project["min_parking_outdoor_price_czk"] as number | null | undefined) ?? null
-                    )}{" "}
-                    –{" "}
-                    {formatCurrencyCzk(
-                      (project["max_parking_outdoor_price_czk"] as number | null | undefined) ?? null
+                      ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
+                        (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
                     )}
                   </dd>
                 </div>

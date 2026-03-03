@@ -979,22 +979,6 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         "avg_public_transport_to_center_min",
         "median_public_transport_to_center_min",
         "avg_floor_area_m2",
-        # Parking price aggregates
-        "min_parking_indoor_price_czk",
-        "max_parking_indoor_price_czk",
-        "min_parking_outdoor_price_czk",
-        "max_parking_outdoor_price_czk",
-        # Time/status aggregates
-        "project_first_seen",
-        "project_last_seen",
-        "max_days_on_market",
-        # Payment scheme aggregates
-        "min_payment_contract",
-        "max_payment_contract",
-        "min_payment_construction",
-        "max_payment_construction",
-        "min_payment_occupancy",
-        "max_payment_occupancy",
     ):
         v = agg.get(k)
         if v is None:
