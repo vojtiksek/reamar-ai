@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
+import { formatCurrencyCzk, formatPercent } from "@/lib/format";
 
 type ProjectDetail = Record<string, unknown>;
 
@@ -277,6 +278,86 @@ export default function ProjectDetailPage() {
               </dl>
             )}
           </section>
+
+          {project && (
+            <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+              <h2 className="mb-3 text-base font-semibold text-gray-900">Shrnutí financování a parkování</h2>
+              <dl className="grid gap-3 text-sm text-gray-900 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                  <dt className="font-medium text-gray-500">Platba po SOSBK</dt>
+                  <dd>
+                    {formatPercent(
+                      (project["min_payment_contract"] as number | null | undefined) ?? null
+                    )}{" "}
+                    –{" "}
+                    {formatPercent(
+                      (project["max_payment_contract"] as number | null | undefined) ?? null
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Platba při výstavbě</dt>
+                  <dd>
+                    {formatPercent(
+                      (project["min_payment_construction"] as number | null | undefined) ?? null
+                    )}{" "}
+                    –{" "}
+                    {formatPercent(
+                      (project["max_payment_construction"] as number | null | undefined) ?? null
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Platba po dokončení</dt>
+                  <dd>
+                    {formatPercent(
+                      (project["min_payment_occupancy"] as number | null | undefined) ?? null
+                    )}{" "}
+                    –{" "}
+                    {formatPercent(
+                      (project["max_payment_occupancy"] as number | null | undefined) ?? null
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Cena garáže (projekt)</dt>
+                  <dd>
+                    {formatCurrencyCzk(
+                      (project["min_parking_indoor_price_czk"] as number | null | undefined) ?? null
+                    )}{" "}
+                    –{" "}
+                    {formatCurrencyCzk(
+                      (project["max_parking_indoor_price_czk"] as number | null | undefined) ?? null
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Cena stání (projekt)</dt>
+                  <dd>
+                    {formatCurrencyCzk(
+                      (project["min_parking_outdoor_price_czk"] as number | null | undefined) ?? null
+                    )}{" "}
+                    –{" "}
+                    {formatCurrencyCzk(
+                      (project["max_parking_outdoor_price_czk"] as number | null | undefined) ?? null
+                    )}
+                  </dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Dní na trhu (max)</dt>
+                  <dd>{project["max_days_on_market"] ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">První výskyt (projekt)</dt>
+                  <dd>{(project["project_first_seen"] as string | undefined) ?? "—"}</dd>
+                </div>
+                <div>
+                  <dt className="font-medium text-gray-500">Poslední výskyt (projekt)</dt>
+                  <dd>{(project["project_last_seen"] as string | undefined) ?? "—"}</dd>
+                </div>
+              </dl>
+            </section>
+          )}
 
           <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
             <h2 className="mb-3 text-base font-semibold text-gray-900">Upravitelné údaje</h2>

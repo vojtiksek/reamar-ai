@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Iterable, Sequence
+from datetime import date
+from typing import Iterable, Sequence, Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -83,13 +84,80 @@ def recompute_project_aggregates(db: Session, project_ids: Sequence[int]) -> Non
             db.merge(agg)
             continue
 
-        # Effective values from unit_to_response_dict
+        # Effective values from unit_to_response_dict (top-level fields)
         prices = [d.get("price_czk") for d in unit_dicts if d.get("price_czk") is not None]
         prices_per_m2 = [
             d.get("price_per_m2_czk") for d in unit_dicts if d.get("price_per_m2_czk") is not None
         ]
         areas = [d.get("floor_area_m2") for d in unit_dicts if d.get("floor_area_m2") is not None]
         available_units = sum(1 for d in unit_dicts if bool(d.get("available")))
+
+        # Extra metrics are stored in the nested data dict keyed by catalog column
+        parking_indoor_vals: list[int] = []
+        parking_outdoor_vals: list[int] = []
+        payment_contract_vals: list[Decimal] = []
+        payment_construction_vals: list[Decimal] = []
+        payment_occupancy_vals: list[Decimal] = []
+        first_seen_vals: list[date] = []
+        last_seen_vals: list[date] = []
+        days_on_market_vals: list[int] = []
+
+        for d in unit_dicts:
+            extra: dict[str, Any] = d.get("data") or {}
+
+            def _as_int(val: Any) -> int | None:
+                if val is None:
+                    return None
+                try:
+                    return int(val)
+                except Exception:
+                    return None
+
+            def _as_decimal(val: Any) -> Decimal | None:
+                if val is None:
+                    return None
+                try:
+                    return Decimal(str(val))
+                except Exception:
+                    return None
+
+            def _as_date(val: Any) -> date | None:
+                if val is None:
+                    return None
+                if isinstance(val, date):
+                    return val
+                try:
+                    return date.fromisoformat(str(val))
+                except Exception:
+                    return None
+
+            pi = _as_int(extra.get("parking_indoor_price"))
+            if pi is not None:
+                parking_indoor_vals.append(pi)
+            po = _as_int(extra.get("parking_outdoor_price"))
+            if po is not None:
+                parking_outdoor_vals.append(po)
+
+            pc = _as_decimal(extra.get("payment_contract"))
+            if pc is not None:
+                payment_contract_vals.append(pc)
+            pcon = _as_decimal(extra.get("payment_construction"))
+            if pcon is not None:
+                payment_construction_vals.append(pcon)
+            pocc = _as_decimal(extra.get("payment_occupancy"))
+            if pocc is not None:
+                payment_occupancy_vals.append(pocc)
+
+            fs = _as_date(extra.get("first_seen"))
+            if fs is not None:
+                first_seen_vals.append(fs)
+            ls = _as_date(extra.get("last_seen"))
+            if ls is not None:
+                last_seen_vals.append(ls)
+
+            dom = _as_int(extra.get("days_on_market"))
+            if dom is not None:
+                days_on_market_vals.append(dom)
 
         def _avg(values: Iterable[object]) -> Decimal | None:
             nums: list[Decimal] = []
@@ -134,6 +202,26 @@ def recompute_project_aggregates(db: Session, project_ids: Sequence[int]) -> Non
         agg.max_price_czk = max_price
         agg.avg_price_per_m2_czk = avg_price_per_m2
         agg.avg_floor_area_m2 = avg_floor_area
+
+        # Parking price aggregates
+        agg.min_parking_indoor_price_czk = min(parking_indoor_vals) if parking_indoor_vals else None
+        agg.max_parking_indoor_price_czk = max(parking_indoor_vals) if parking_indoor_vals else None
+        agg.min_parking_outdoor_price_czk = min(parking_outdoor_vals) if parking_outdoor_vals else None
+        agg.max_parking_outdoor_price_czk = max(parking_outdoor_vals) if parking_outdoor_vals else None
+
+        # Time/status aggregates
+        agg.project_first_seen = min(first_seen_vals) if first_seen_vals else None
+        agg.project_last_seen = max(last_seen_vals) if last_seen_vals else None
+        agg.max_days_on_market = max(days_on_market_vals) if days_on_market_vals else None
+
+        # Payment scheme aggregates
+        agg.min_payment_contract = min(payment_contract_vals) if payment_contract_vals else None
+        agg.max_payment_contract = max(payment_contract_vals) if payment_contract_vals else None
+        agg.min_payment_construction = min(payment_construction_vals) if payment_construction_vals else None
+        agg.max_payment_construction = max(payment_construction_vals) if payment_construction_vals else None
+        agg.min_payment_occupancy = min(payment_occupancy_vals) if payment_occupancy_vals else None
+        agg.max_payment_occupancy = max(payment_occupancy_vals) if payment_occupancy_vals else None
+
         db.merge(agg)
 
     db.flush()

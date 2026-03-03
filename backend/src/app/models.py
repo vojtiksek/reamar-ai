@@ -301,6 +301,22 @@ class ProjectAggregates(Base):
     max_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
     avg_price_per_m2_czk: Mapped[Decimal | None] = mapped_column(Numeric(16, 4), nullable=True)
     avg_floor_area_m2: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    # Parking price aggregates (Kč)
+    min_parking_indoor_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_parking_indoor_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    min_parking_outdoor_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    max_parking_outdoor_price_czk: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Time/status aggregates
+    project_first_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    project_last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
+    max_days_on_market: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Payment scheme aggregates (fractions 0–1)
+    min_payment_contract: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    max_payment_contract: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    min_payment_construction: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    max_payment_construction: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    min_payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    max_payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

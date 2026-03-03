@@ -494,6 +494,22 @@ def list_units(
             data["max_price_czk"] = agg.max_price_czk
             data["avg_price_per_m2_czk"] = _dec(agg.avg_price_per_m2_czk)
             data["avg_floor_area_m2"] = _dec(agg.avg_floor_area_m2)
+            # Parking price aggregates
+            data["min_parking_indoor_price_czk"] = agg.min_parking_indoor_price_czk
+            data["max_parking_indoor_price_czk"] = agg.max_parking_indoor_price_czk
+            data["min_parking_outdoor_price_czk"] = agg.min_parking_outdoor_price_czk
+            data["max_parking_outdoor_price_czk"] = agg.max_parking_outdoor_price_czk
+            # Time/status aggregates
+            data["project_first_seen"] = agg.project_first_seen
+            data["project_last_seen"] = agg.project_last_seen
+            data["max_days_on_market"] = agg.max_days_on_market
+            # Payment scheme aggregates
+            data["min_payment_contract"] = _dec(agg.min_payment_contract)
+            data["max_payment_contract"] = _dec(agg.max_payment_contract)
+            data["min_payment_construction"] = _dec(agg.min_payment_construction)
+            data["max_payment_construction"] = _dec(agg.max_payment_construction)
+            data["min_payment_occupancy"] = _dec(agg.min_payment_occupancy)
+            data["max_payment_occupancy"] = _dec(agg.max_payment_occupancy)
             d["data"] = data
 
         items.append(UnitResponse.model_validate(d))

@@ -143,6 +143,22 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.max_price_czk": "max_price_czk",
   "project.avg_price_per_m2_czk": "avg_price_per_m2_czk",
   "project.avg_floor_area_m2": "avg_floor_area_m2",
+  // Project parking price aggregates
+  "project.min_parking_indoor_price_czk": "min_parking_indoor_price_czk",
+  "project.max_parking_indoor_price_czk": "max_parking_indoor_price_czk",
+  "project.min_parking_outdoor_price_czk": "min_parking_outdoor_price_czk",
+  "project.max_parking_outdoor_price_czk": "max_parking_outdoor_price_czk",
+  // Project time/status aggregates
+  "project.project_first_seen": "project_first_seen",
+  "project.project_last_seen": "project_last_seen",
+  "project.max_days_on_market": "max_days_on_market",
+  // Project payment scheme aggregates
+  "project.min_payment_contract": "min_payment_contract",
+  "project.max_payment_contract": "max_payment_contract",
+  "project.min_payment_construction": "min_payment_construction",
+  "project.max_payment_construction": "max_payment_construction",
+  "project.min_payment_occupancy": "min_payment_occupancy",
+  "project.max_payment_occupancy": "max_payment_occupancy",
 };
 
 function getValue(unit: Unit, accessor: string, catalogKey?: string): unknown {
