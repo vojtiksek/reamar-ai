@@ -956,6 +956,7 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
                 out[key] = val
         else:
             out[key] = None
+
     # Computed from aggregate row (use row._mapping or positional)
     agg = row._mapping if hasattr(row, "_mapping") else {}
     units_total = agg.get("units_total") or 0
@@ -978,14 +979,32 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         "avg_public_transport_to_center_min",
         "median_public_transport_to_center_min",
         "avg_floor_area_m2",
+        # Parking price aggregates
+        "min_parking_indoor_price_czk",
+        "max_parking_indoor_price_czk",
+        "min_parking_outdoor_price_czk",
+        "max_parking_outdoor_price_czk",
+        # Time/status aggregates
+        "project_first_seen",
+        "project_last_seen",
+        "max_days_on_market",
+        # Payment scheme aggregates
+        "min_payment_contract",
+        "max_payment_contract",
+        "min_payment_construction",
+        "max_payment_construction",
+        "min_payment_occupancy",
+        "max_payment_occupancy",
     ):
         v = agg.get(k)
-        if v is not None and isinstance(v, Decimal):
-            out[k] = float(v)
-        elif v is not None:
-            out[k] = v
-        else:
+        if v is None:
             out[k] = None
+        elif isinstance(v, Decimal):
+            out[k] = float(v)
+        elif hasattr(v, "isoformat"):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
     out["available_ratio"] = (
         (units_available / units_total) if units_total else 0.0
     )

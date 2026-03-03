@@ -114,6 +114,12 @@ export default function ProjectDetailPage() {
 
   const project = projectState.data;
 
+  // Name can come from catalog key "project" (alias for name) or "name"
+  const name =
+    (project && ((project["project"] as string | undefined) ?? (project["name"] as string | undefined))) || "";
+  const developer = (project && (project["developer"] as string | undefined)) ?? "—";
+  const address = (project && (project["address"] as string | undefined)) ?? "—";
+
   const handleStartEdit = () => {
     if (!project) return;
     const nextDraft: Record<string, unknown> = {};
@@ -189,10 +195,6 @@ export default function ProjectDetailPage() {
       setSaving(false);
     }
   };
-
-  const name = (project && (project["name"] as string | undefined)) ?? "";
-  const developer = (project && (project["developer"] as string | undefined)) ?? "—";
-  const address = (project && (project["address"] as string | undefined)) ?? "—";
 
   return (
     <div className="flex h-screen flex-col overflow-hidden">
