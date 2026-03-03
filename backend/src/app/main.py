@@ -357,11 +357,11 @@ def get_units_filters(db: DbSession) -> dict:
     "/units",
     response_model=UnitsListResponse,
     summary="List units with pagination and filters",
-    description="Returns a paginated list of units. Optional query params: limit (100|300|500), offset, available, min_price, max_price, min_price_per_m2, max_price_per_m2, layout, district, heating, windows, permit_regular, renovation, min_floor_area, max_floor_area, sort_by, sort_dir. Response: total (count before pagination), items (UnitResponse with overrides applied).",
+    description="Returns a paginated list of units. Optional query params: limit (1–1000, default 100), offset, available, min_price, max_price, min_price_per_m2, max_price_per_m2, layout, district, heating, windows, permit_regular, renovation, min_floor_area, max_floor_area, sort_by, sort_dir. Response: total (count before pagination), items (UnitResponse with overrides applied).",
 )
 def list_units(
     db: DbSession,
-    limit: Annotated[int, Query(description="Page size")] = 100,
+    limit: Annotated[int, Query(ge=1, le=1000, description="Page size (1–1000)")] = 100,
     offset: Annotated[int, Query(ge=0, description="Skip N items")] = 0,
     available: Annotated[bool | None, Query(description="Filter by available")] = None,
     min_price: Annotated[int | None, Query(ge=0)] = None,
@@ -382,11 +382,6 @@ def list_units(
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
-    if limit not in (100, 300, 500):
-        raise HTTPException(
-            status_code=422,
-            detail="limit must be one of 100, 300, 500",
-        )
     if sort_by not in ALLOWED_SORT_BY:
         raise HTTPException(
             status_code=422,

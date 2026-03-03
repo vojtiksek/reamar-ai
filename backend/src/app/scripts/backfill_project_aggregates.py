@@ -20,7 +20,6 @@ from app.aggregates import recompute_project_aggregates
 from app.db import get_db
 from app.models import Unit
 
-
 def _batched(iterable: Iterable[int], batch_size: int) -> Iterable[List[int]]:
     batch: List[int] = []
     for item in iterable:
@@ -30,7 +29,6 @@ def _batched(iterable: Iterable[int], batch_size: int) -> Iterable[List[int]]:
             batch = []
     if batch:
         yield batch
-
 
 def main(batch_size: int = 200) -> None:
     start = time.perf_counter()
@@ -68,7 +66,5 @@ def main(batch_size: int = 200) -> None:
     total_elapsed = time.perf_counter() - start
     print(f"Done. Recomputed aggregates for {processed} projects in {total_elapsed:.2f}s.")
 
-
 if __name__ == "__main__":
     main()
-
