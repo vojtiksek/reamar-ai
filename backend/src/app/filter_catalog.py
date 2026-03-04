@@ -86,6 +86,10 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "district_okres_iga": ("Unit", "district_okres_iga"),
     # Project – used when filter is explicitly project-scoped (project name, developer for project)
     "project": ("Project", "name"),
+    # Lokální cenová odchylka (p.b., vypočtená offline)
+    "local_price_diff_500m": ("Unit", "local_price_diff_500m"),
+    "local_price_diff_1000m": ("Unit", "local_price_diff_1000m"),
+    "local_price_diff_2000m": ("Unit", "local_price_diff_2000m"),
 }
 
 

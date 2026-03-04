@@ -5,6 +5,9 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 1003;Cena;Jednotka;price_change;Změna ceny;ANO;ANO;NE;%;0;percent;fraction
 1004;Cena;Jednotka;original_price;Původní cena;ANO;NE;NE;Kč;0;currency;
 1005;Cena;Jednotka;original_price_per_sm;Původní cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
+1018;Cena vs trhem;Jednotka;local_price_diff_500m;Odchylka od trhu (500 m);ANO;NE;NE;%;0;percent;
+1019;Cena vs trhem;Jednotka;local_price_diff_1000m;Odchylka od trhu (1 km);ANO;NE;NE;%;0;percent;
+1020;Cena vs trhem;Jednotka;local_price_diff_2000m;Odchylka od trhu (2 km);ANO;NE;NE;%;0;percent;
 1006;Cena;Projekt;min_parking_outdoor_price_czk;Cena stání (projekt);ANO;NE;ANO;Kč;0;currency;
 1007;Cena;Projekt;max_parking_outdoor_price_czk;Cena stání (max, interní);NE;NE;NE;Kč;0;currency;
 1008;Cena;Projekt;min_parking_indoor_price_czk;Cena garáže (projekt);ANO;NE;ANO;Kč;0;currency;

@@ -150,6 +150,21 @@ class Unit(Base):
     payment_construction: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
 
+    # Lokální cenová odchylka (procentní rozdíl vůči trhu v okolí, v p.b.).
+    # Hodnoty se počítají offline (skript / cron) z effective price_per_m2_czk.
+    local_price_diff_500m: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+    )
+    local_price_diff_1000m: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+    )
+    local_price_diff_2000m: Mapped[Decimal | None] = mapped_column(
+        Numeric(6, 2),
+        nullable=True,
+    )
+
     first_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
     sold_date: Mapped[date | None] = mapped_column(Date, nullable=True)

@@ -198,6 +198,18 @@ def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+@app.post(
+    "/units/local-price-diffs/recompute",
+    summary="Recompute local price differences for all units",
+    description="Offline-style recompute of local_price_diff_* fields for all units. Intended for cron/manual use; may take several seconds on larger datasets.",
+)
+def recompute_units_local_price_diffs(db: DbSession) -> dict[str, Any]:
+    from .aggregates import recompute_local_price_diffs
+
+    recompute_local_price_diffs(db)
+    return {"status": "ok"}
+
+
 @app.get("/filters")
 def get_filters(db: DbSession):
     """Return filter definitions from field_catalog.csv (Filterable == ANO). Cached in memory; options from DB for enum."""

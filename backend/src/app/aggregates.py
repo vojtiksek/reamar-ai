@@ -4,6 +4,8 @@ from decimal import Decimal
 from datetime import date
 from typing import Iterable, Sequence, Any
 
+import math
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -223,6 +225,230 @@ def recompute_project_aggregates(db: Session, project_ids: Sequence[int]) -> Non
         agg.max_payment_occupancy = max(payment_occupancy_vals) if payment_occupancy_vals else None
 
         db.merge(agg)
+
+    db.flush()
+
+
+EARTH_RADIUS_M = 6371000.0
+
+
+def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance between two points in metres."""
+    phi1 = math.radians(lat1)
+    phi2 = math.radians(lat2)
+    d_phi = math.radians(lat2 - lat1)
+    d_lambda = math.radians(lon2 - lon1)
+
+    a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(
+        d_lambda / 2
+    ) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+    return EARTH_RADIUS_M * c
+
+
+def _layout_group(layout: str | None) -> str | None:
+    """Map raw layout like 'layout_1', 'layout_1_5' to bucket name."""
+    if not layout:
+        return None
+    s = str(layout).strip().lower()
+    if s.startswith("layout_"):
+        parts = s.split("_")
+        if len(parts) == 2:
+            # layout_1 -> 1kk, layout_2 -> 2kk, ...
+            try:
+                n = int(parts[1])
+            except ValueError:
+                return None
+            if n in (1, 2, 3, 4):
+                return f"{n}kk"
+            return None
+        if len(parts) == 3 and parts[1] == "1" and parts[2] == "5":
+            # layout_1_5 -> 1,5kk
+            return "1.5kk"
+    # Fallback for values typu "1+kk", "2+kk"
+    if s.endswith("+kk"):
+        try:
+            n = int(s.split("+", 1)[0])
+        except ValueError:
+            return None
+        if n in (1, 2, 3, 4):
+            return f"{n}kk"
+    return None
+
+
+def recompute_local_price_diffs(db: Session) -> None:
+    """
+    Recompute local price differences (vs. market) for all units.
+
+    For each unit with GPS + price_per_m2 + floor_area + layout bucket, we compute
+    percentage difference between its price_per_m2 and the average price_per_m2 of
+    comparable units in a radius of 500m / 1km / 2km.
+
+    Comparable = same layout bucket + area range:
+    - 1kk: layout group '1kk' AND 20–35 m²
+    - 2kk: '2kk' AND 40–60 m²
+    - 3kk: '3kk' AND 60–80 m²
+    - 4kk: '4kk' AND 80–120 m²
+    - 1,5kk: průměr průměrů (bucket 1kk a bucket 2kk) v daném okruhu.
+    """
+    # Load all units that have GPS and price_per_m2 & floor area.
+    units = (
+        db.execute(
+            select(Unit).where(
+                Unit.gps_latitude.isnot(None),
+                Unit.gps_longitude.isnot(None),
+                Unit.price_per_m2_czk.isnot(None),
+                Unit.floor_area_m2.isnot(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not units:
+        return
+
+    unit_ids = [u.id for u in units]
+    override_rows = (
+        db.execute(
+            select(UnitOverride).where(
+                UnitOverride.unit_id.in_(unit_ids),
+                UnitOverride.field.in_(OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    override_map = build_override_map(override_rows)
+
+    # Prepare effective data per unit.
+    infos: list[dict[str, Any]] = []
+    for u in units:
+        lat = u.gps_latitude
+        lon = u.gps_longitude
+        if lat is None or lon is None:
+            continue
+        data = unit_to_response_dict(u, override_map)
+        price_pm2 = data.get("price_per_m2_czk")
+        area = data.get("floor_area_m2")
+        layout = data.get("layout")
+        if price_pm2 is None or area is None or layout is None:
+            continue
+        try:
+            price_pm2_f = float(price_pm2)
+            area_f = float(area)
+        except (TypeError, ValueError):
+            continue
+        group = _layout_group(str(layout))
+        if group is None:
+            continue
+        infos.append(
+            {
+                "unit": u,
+                "id": u.id,
+                "lat": float(lat),
+                "lon": float(lon),
+                "price_pm2": price_pm2_f,
+                "area": area_f,
+                "group": group,
+            }
+        )
+
+    if not infos:
+        return
+
+    def in_area_bucket(group: str, area: float, target_group: str) -> bool:
+        """Check if unit with (group, area) belongs to bucket for target_group."""
+        # Buckets defined strictly by group + area.
+        if group != target_group:
+            return False
+        if target_group == "1kk":
+            return 20.0 <= area <= 35.0
+        if target_group == "2kk":
+            return 40.0 <= area <= 60.0
+        if target_group == "3kk":
+            return 60.0 <= area <= 80.0
+        if target_group == "4kk":
+            return 80.0 <= area <= 120.0
+        return False
+
+    def avg(values: list[float]) -> float | None:
+        if not values:
+            return None
+        return float(sum(values) / len(values))
+
+    radii = (500.0, 1000.0, 2000.0)
+
+    # For each unit compute diffs for each radius.
+    for info in infos:
+        u = info["unit"]
+        lat1 = info["lat"]
+        lon1 = info["lon"]
+        price_pm2 = info["price_pm2"]
+        area = info["area"]
+        group = info["group"]
+
+        diffs: dict[float, float | None] = {r: None for r in radii}
+
+        for radius in radii:
+            bucket_1_prices: list[float] = []
+            bucket_2_prices: list[float] = []
+            bucket_3_prices: list[float] = []
+            bucket_4_prices: list[float] = []
+
+            for other in infos:
+                if other["id"] == info["id"]:
+                    continue
+                d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
+                if d > radius:
+                    continue
+                g2 = other["group"]
+                a2 = other["area"]
+                p2 = other["price_pm2"]
+                if in_area_bucket(g2, a2, "1kk"):
+                    bucket_1_prices.append(p2)
+                if in_area_bucket(g2, a2, "2kk"):
+                    bucket_2_prices.append(p2)
+                if in_area_bucket(g2, a2, "3kk"):
+                    bucket_3_prices.append(p2)
+                if in_area_bucket(g2, a2, "4kk"):
+                    bucket_4_prices.append(p2)
+
+            ref_avg: float | None = None
+            if group == "1kk":
+                ref_avg = avg(bucket_1_prices)
+            elif group == "2kk":
+                ref_avg = avg(bucket_2_prices)
+            elif group == "3kk":
+                ref_avg = avg(bucket_3_prices)
+            elif group == "4kk":
+                ref_avg = avg(bucket_4_prices)
+            elif group == "1.5kk":
+                ref1 = avg(bucket_1_prices)
+                ref2 = avg(bucket_2_prices)
+                if ref1 is not None and ref2 is not None:
+                    ref_avg = (ref1 + ref2) / 2.0
+                elif ref1 is not None:
+                    ref_avg = ref1
+                elif ref2 is not None:
+                    ref_avg = ref2
+
+            if ref_avg is None or ref_avg <= 0:
+                diffs[radius] = None
+            else:
+                diffs[radius] = (price_pm2 - ref_avg) / ref_avg * 100.0
+
+        # Assign back to ORM model (as Decimal-compatible values).
+        def _as_decimal(v: float | None) -> Decimal | None:
+            if v is None:
+                return None
+            try:
+                return Decimal(str(round(v, 2)))
+            except Exception:
+                return None
+
+        u.local_price_diff_500m = _as_decimal(diffs[500.0])
+        u.local_price_diff_1000m = _as_decimal(diffs[1000.0])
+        u.local_price_diff_2000m = _as_decimal(diffs[2000.0])
 
     db.flush()
 
