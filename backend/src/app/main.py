@@ -230,6 +230,9 @@ ALLOWED_SORT_BY = (
     # Unit-level sortable fields
     "price_per_m2_czk",
     "price_czk",
+    "price_change",
+    "original_price_czk",
+    "original_price_per_m2_czk",
     "ride_to_center_min",
     "public_transport_to_center_min",
     "floor_area_m2",
@@ -241,12 +244,39 @@ ALLOWED_SORT_BY = (
     "days_on_market",
     "first_seen",
     "last_seen",
+    "sold_date",
     "updated_at",
-    "payment_contract",
+    "layout",
+    "floor",
+    "floors",
+    "orientation",
+    "category",
+    "availability_status",
+    "renovation",
+    "overall_quality",
+    "heating",
+    "air_conditioning",
+    "cooling_ceilings",
+    "exterior_blinds",
     "smart_home",
-    "permit_regular",
+    "windows",
+    "partition_walls",
+    "amenities",
+    "city",
     "municipality",
     "district",
+    "cadastral_area_iga",
+    "municipal_district_iga",
+    "administrative_district_iga",
+    "region_iga",
+    "address",
+    "developer",
+    # Project name (column "Projekt" v tabulce jednotek)
+    "name",
+    # Jednotkové financování
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
     # Project-level aggregate fields injected into unit.data (via ProjectAggregates)
     "total_units",
     "available_units",
@@ -466,10 +496,14 @@ def list_units(
     avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
     available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
 
-    # Řazení: část polí je přímo na Unit, část jsou projektové agregáty (ProjectAggregates).
+    # Řazení: část polí je přímo na Unit, část jsou projektové atributy (Project)
+    # a část jsou projektové agregáty (ProjectAggregates).
     unit_sort_columns: dict[str, Any] = {
         "price_per_m2_czk": Unit.price_per_m2_czk,
         "price_czk": Unit.price_czk,
+        "price_change": Unit.price_change,
+        "original_price_czk": Unit.original_price_czk,
+        "original_price_per_m2_czk": Unit.original_price_per_m2_czk,
         "ride_to_center_min": Unit.ride_to_center_min,
         "public_transport_to_center_min": Unit.public_transport_to_center_min,
         "floor_area_m2": Unit.floor_area_m2,
@@ -481,12 +515,43 @@ def list_units(
         "days_on_market": Unit.days_on_market,
         "first_seen": Unit.first_seen,
         "last_seen": Unit.last_seen,
+        "sold_date": Unit.sold_date,
         "updated_at": Unit.updated_at,
-        "payment_contract": Unit.payment_contract,
+        "layout": Unit.layout,
+        "floor": Unit.floor,
+        "floors": Unit.floors,
+        "orientation": Unit.orientation,
+        "category": Unit.category,
+        "availability_status": Unit.availability_status,
+        "renovation": Unit.renovation,
+        "overall_quality": Unit.overall_quality,
+        "heating": Unit.heating,
+        "air_conditioning": Unit.air_conditioning,
+        "cooling_ceilings": Unit.cooling_ceilings,
+        "exterior_blinds": Unit.exterior_blinds,
         "smart_home": Unit.smart_home,
-        "permit_regular": Unit.permit_regular,
+        "windows": Unit.windows,
+        "partition_walls": Unit.partition_walls,
+        "amenities": Unit.amenities,
+        "city": Unit.city,
         "municipality": Unit.municipality,
         "district": Unit.district,
+        "cadastral_area_iga": Unit.cadastral_area_iga,
+        "municipal_district_iga": Unit.municipal_district_iga,
+        "administrative_district_iga": Unit.administrative_district_iga,
+        "region_iga": Unit.region_iga,
+        "address": Unit.address,
+        "developer": Unit.developer,
+        # Jednotkové financování
+        "payment_contract": Unit.payment_contract,
+        "payment_construction": Unit.payment_construction,
+        "payment_occupancy": Unit.payment_occupancy,
+    }
+
+    # Projektové atributy (sloupce typu "Projekt", které mají accessor project.*)
+    project_sort_columns: dict[str, Any] = {
+        # Column "Projekt" v jednotkách -> Project.name
+        "name": Project.name,
     }
 
     order_fn = asc if sort_dir == "asc" else desc
@@ -496,6 +561,16 @@ def list_units(
         order_clause = order_fn(sort_column).nulls_last()
         stmt = (
             base.options(selectinload(Unit.project))
+            .order_by(order_clause, Unit.external_id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+    elif sort_by in project_sort_columns:
+        sort_column = project_sort_columns[sort_by]
+        order_clause = order_fn(sort_column).nulls_last()
+        stmt = (
+            base.join(Project, Project.id == Unit.project_id)
+            .options(selectinload(Unit.project))
             .order_by(order_clause, Unit.external_id.asc())
             .offset(offset)
             .limit(limit)
