@@ -1,10 +1,11 @@
 "use client";
 
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
+import { MapContainer, Marker, Polygon, Popup, TileLayer, useMapEvent } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import L from "leaflet";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
+import type { LatLng } from "@/lib/geo";
 
 type ProjectPoint = {
   id: number;
@@ -20,6 +21,10 @@ type ProjectPoint = {
 type Props = {
   projects: ProjectPoint[];
   center: LatLngExpression;
+  polygon: LatLng[];
+  draftPolygon: LatLng[];
+  drawing: boolean;
+  onMapClick?: (lat: number, lng: number) => void;
 };
 
 const projectMarkerIcon = L.divIcon({
@@ -30,13 +35,30 @@ const projectMarkerIcon = L.divIcon({
   iconAnchor: [9, 9],
 });
 
-function ProjectsLeafletMap({ projects, center }: Props) {
+function ClickCapture(props: { drawing: boolean; onClick?: (lat: number, lng: number) => void }) {
+  useMapEvent("click", (e) => {
+    if (!props.drawing || !props.onClick) return;
+    props.onClick(e.latlng.lat, e.latlng.lng);
+  });
+  return null;
+}
+
+function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, onMapClick }: Props) {
+  const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
+
   return (
     <MapContainer center={center} zoom={11} className="h-full w-full" scrollWheelZoom>
       <TileLayer
         attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
+      <ClickCapture drawing={drawing} onClick={onMapClick} />
+      {activePolygon.length >= 2 && (
+        <Polygon
+          positions={activePolygon.map((p) => [p.lat, p.lng]) as [number, number][]}
+          pathOptions={{ color: "#2563eb", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.15 }}
+        />
+      )}
       {projects.map((p) =>
         p.gps_latitude != null && p.gps_longitude != null ? (
           <Marker

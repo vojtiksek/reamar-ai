@@ -14,6 +14,7 @@ import {
 } from "@/lib/filters";
 import { formatPercent, formatValue } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
+import { decodePolygon, isPointInPolygon } from "@/lib/geo";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -338,6 +339,7 @@ function parseSearchParams(params: URLSearchParams): {
   offset: number;
   sortBy: string;
   sortDir: string;
+  polygon?: string | null;
 } {
   const limitParam = parseInt(params.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT;
   const limit = ROWS_PER_PAGE_OPTIONS.includes(limitParam as (typeof ROWS_PER_PAGE_OPTIONS)[number])
@@ -347,12 +349,14 @@ function parseSearchParams(params: URLSearchParams): {
   const sortBy = params.get("sort_by") ?? DEFAULT_SORT_BY;
   const sortDir = params.get("sort_dir") ?? DEFAULT_SORT_DIR;
   const filters = parseFiltersFromSearchParams(params);
+  const polygon = params.get("poly");
   return {
     filters,
     limit,
     offset,
     sortBy: SORT_BY_OPTIONS.includes(sortBy as (typeof SORT_BY_OPTIONS)[number]) ? sortBy : DEFAULT_SORT_BY,
     sortDir: SORT_DIR_OPTIONS.includes(sortDir as "asc" | "desc") ? sortDir : DEFAULT_SORT_DIR,
+    polygon,
   };
 }
 
@@ -361,7 +365,8 @@ function toSearchParams(
   limit: number,
   offset: number,
   sortBy: string,
-  sortDir: string
+  sortDir: string,
+  polygon?: string | null
 ): URLSearchParams {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
@@ -370,6 +375,9 @@ function toSearchParams(
   params.set("sort_dir", sortDir);
   const fp = filtersToSearchParams(filters);
   fp.forEach((v, k) => params.set(k, v));
+  if (polygon && polygon.trim() !== "") {
+    params.set("poly", polygon);
+  }
   return params;
 }
 
@@ -406,6 +414,9 @@ export default function Home() {
   );
   const [sortDir, setSortDir] = useState(() =>
     parseSearchParams(new URLSearchParams(searchParams?.toString() ?? "")).sortDir
+  );
+  const [polygon, setPolygon] = useState<string | null>(() =>
+    parseSearchParams(new URLSearchParams(searchParams?.toString() ?? "")).polygon ?? null
   );
   const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -503,8 +514,8 @@ export default function Home() {
   }, [columnsConfig]);
 
   const syncToUrl = useCallback(
-    (f: CurrentFilters, lim: number, off: number, sb: string, sd: string) => {
-      const p = toSearchParams(f, lim, off, sb, sd);
+    (f: CurrentFilters, lim: number, off: number, sb: string, sd: string, poly: string | null) => {
+      const p = toSearchParams(f, lim, off, sb, sd, poly ?? undefined);
       const qs = p.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
@@ -518,6 +529,7 @@ export default function Home() {
     setOffset(parsed.offset);
     setSortBy(parsed.sortBy);
     setSortDir(parsed.sortDir);
+    setPolygon(parsed.polygon ?? null);
   }, [searchParams]);
 
   useEffect(() => {
@@ -552,10 +564,30 @@ export default function Home() {
     fetch(`${API_BASE}/units?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: UnitsListResponse) => {
-        setUnits(data.items ?? []);
-        setTotal(data.total ?? 0);
+        let items = data.items ?? [];
+
+        // Pokud je polygon v URL, aplikuj klientský filtr na GPS projektu.
+        if (polygon && polygon.trim() !== "") {
+          const polyPoints = decodePolygon(polygon);
+          if (polyPoints.length >= 3) {
+            items = items.filter((u) => {
+              const proj = u.project as any;
+              const lat = (proj?.gps_latitude ?? (u as any).project?.gps_latitude) as
+                | number
+                | undefined;
+              const lng = (proj?.gps_longitude ?? (u as any).project?.gps_longitude) as
+                | number
+                | undefined;
+              if (lat == null || lng == null) return false;
+              return isPointInPolygon(lat, lng, polyPoints);
+            });
+          }
+        }
+
+        setUnits(items);
+        setTotal(items.length);
         setSummaryOverride({
-          total: data.total ?? 0,
+          total: items.length,
           averagePrice: data.average_price_czk ?? null,
           averagePricePerM2: data.average_price_per_m2_czk ?? null,
           availableCount: data.available_count ?? 0,
@@ -563,7 +595,7 @@ export default function Home() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, validSortBy, validSortDir, supportedFilterKeys]);
+  }, [filters, safeLimit, offset, validSortBy, validSortDir, supportedFilterKeys, polygon]);
 
   const openDrawer = useCallback(() => {
     setCurrentFilters({ ...filters });
@@ -577,10 +609,10 @@ export default function Home() {
   const onResetAll = useCallback(() => {
     setFilters({});
     setCurrentFilters({});
-    syncToUrl({}, limit, 0, sortBy, sortDir);
+    syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, syncToUrl, closeDrawer]);
+  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
 
   const onChange = useCallback((key: string, value: number | number[] | string[] | boolean | undefined) => {
     setCurrentFilters((prev) => ({ ...prev, [key]: value }));
@@ -590,17 +622,17 @@ export default function Home() {
     (next: CurrentFilters) => {
       setFilters(next);
       setOffset(0);
-      syncToUrl(next, limit, 0, sortBy, sortDir);
+      syncToUrl(next, limit, 0, sortBy, sortDir, polygon);
     },
-    [limit, sortBy, sortDir, syncToUrl]
+    [limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
   const setPage = useCallback(
     (newOffset: number) => {
       setOffset(newOffset);
-      syncToUrl(filters, limit, newOffset, sortBy, sortDir);
+      syncToUrl(filters, limit, newOffset, sortBy, sortDir, polygon);
     },
-    [filters, limit, sortBy, sortDir, syncToUrl]
+    [filters, limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
   const onApply = useCallback(() => {
@@ -635,9 +667,9 @@ export default function Home() {
       if (opts.sortBy !== undefined) setSortBy(newSortBy);
       if (opts.sortDir !== undefined) setSortDir(newSortDir);
       setOffset(0);
-      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir);
+      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir, polygon);
     },
-    [filters, limit, sortBy, sortDir, syncToUrl]
+    [filters, limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
   const handleSortHeaderClick = useCallback(

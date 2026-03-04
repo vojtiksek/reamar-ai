@@ -15,6 +15,7 @@ import {
 } from "@/lib/filters";
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
+import { decodePolygon, isPointInPolygon } from "@/lib/geo";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -179,6 +180,7 @@ function parseProjectsSearchParams(params: URLSearchParams): {
   offset: number;
   sortBy: string;
   sortDir: string;
+  polygon?: string | null;
 } {
   const limitParam = parseInt(params.get("limit") ?? String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT;
   const limit = ROWS_PER_PAGE_OPTIONS.includes(limitParam as (typeof ROWS_PER_PAGE_OPTIONS)[number])
@@ -188,7 +190,8 @@ function parseProjectsSearchParams(params: URLSearchParams): {
   const sortBy = params.get("sort_by") ?? "avg_price_per_m2_czk";
   const sortDir = (params.get("sort_dir") === "desc" ? "desc" : "asc") as "asc" | "desc";
   const filters = parseFiltersFromSearchParams(params);
-  return { filters, limit, offset, sortBy, sortDir };
+  const polygon = params.get("poly");
+  return { filters, limit, offset, sortBy, sortDir, polygon };
 }
 
 function toProjectsSearchParams(
@@ -196,7 +199,8 @@ function toProjectsSearchParams(
   limit: number,
   offset: number,
   sortBy: string,
-  sortDir: string
+  sortDir: string,
+  polygon?: string | null
 ): URLSearchParams {
   const params = new URLSearchParams();
   params.set("limit", String(limit));
@@ -205,6 +209,9 @@ function toProjectsSearchParams(
   params.set("sort_dir", sortDir);
   const fp = filtersToSearchParams(filters);
   fp.forEach((v, k) => params.set(k, v));
+  if (polygon && polygon.trim() !== "") {
+    params.set("poly", polygon);
+  }
   return params;
 }
 
@@ -233,6 +240,7 @@ export default function ProjectsPage() {
   const [offset, setOffset] = useState(initial.offset);
   const [sortBy, setSortBy] = useState<string>(initial.sortBy);
   const [sortDir, setSortDir] = useState<"asc" | "desc">(initial.sortDir as "asc" | "desc");
+  const [polygon, setPolygon] = useState<string | null>(initial.polygon ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingCell, setEditingCell] = useState<{ projectId: number; field: string } | null>(null);
@@ -242,8 +250,8 @@ export default function ProjectsPage() {
   const rowClickTimeoutRef = useRef<number | null>(null);
 
   const syncToUrl = useCallback(
-    (f: CurrentFilters, lim: number, off: number, sb: string, sd: string) => {
-      const p = toProjectsSearchParams(f, lim, off, sb, sd);
+    (f: CurrentFilters, lim: number, off: number, sb: string, sd: string, poly: string | null) => {
+      const p = toProjectsSearchParams(f, lim, off, sb, sd, poly ?? undefined);
       const qs = p.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
@@ -257,6 +265,7 @@ export default function ProjectsPage() {
     setOffset(parsed.offset);
     setSortBy(parsed.sortBy);
     setSortDir(parsed.sortDir as "asc" | "desc");
+    setPolygon(parsed.polygon ?? null);
   }, [searchParams]);
 
   const supportedFilterKeys = useMemo(
@@ -356,12 +365,27 @@ export default function ProjectsPage() {
           : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
         const totalValue =
           json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
-        setProjects(rows);
-        setTotal(totalValue);
+
+        // Pokud je v URL polygon (poly), aplikuj ho jako klientský filtr na GPS.
+        let filtered = rows;
+        if (polygon && polygon.trim() !== "") {
+          const polyPoints = decodePolygon(polygon);
+          if (polyPoints.length >= 3) {
+            filtered = rows.filter((row) => {
+              const lat = row.gps_latitude as number | undefined;
+              const lng = row.gps_longitude as number | undefined;
+              if (lat == null || lng == null) return false;
+              return isPointInPolygon(lat, lng, polyPoints);
+            });
+          }
+        }
+
+        setProjects(filtered);
+        setTotal(filtered.length);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, sortBy, sortDir, supportedFilterKeys]);
+  }, [filters, safeLimit, offset, sortBy, sortDir, supportedFilterKeys, polygon]);
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
@@ -422,20 +446,20 @@ export default function ProjectsPage() {
 
   const onApply = useCallback(() => {
     setFilters(currentFilters);
-    syncToUrl(currentFilters, limit, 0, sortBy, sortDir);
+    syncToUrl(currentFilters, limit, 0, sortBy, sortDir, polygon);
     setOffset(0);
     closeDrawer();
-  }, [currentFilters, limit, sortBy, sortDir, syncToUrl, closeDrawer]);
+  }, [currentFilters, limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
 
   const onReset = useCallback(() => setCurrentFilters({}), []);
 
   const onResetAll = useCallback(() => {
     setFilters({});
     setCurrentFilters({});
-    syncToUrl({}, limit, 0, sortBy, sortDir);
+    syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, syncToUrl, closeDrawer]);
+  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
 
   const onChangeFilter = useCallback(
     (key: string, value: number | number[] | string[] | boolean | undefined) => {
@@ -447,9 +471,9 @@ export default function ProjectsPage() {
   const setPage = useCallback(
     (newOffset: number) => {
       setOffset(newOffset);
-      syncToUrl(filters, limit, newOffset, sortBy, sortDir);
+      syncToUrl(filters, limit, newOffset, sortBy, sortDir, polygon);
     },
-    [filters, limit, sortBy, sortDir, syncToUrl]
+    [filters, limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
   const setLimitAndSort = useCallback(
@@ -461,9 +485,9 @@ export default function ProjectsPage() {
       if (opts.sortBy !== undefined) setSortBy(newSortBy);
       if (opts.sortDir !== undefined) setSortDir(newSortDir);
       setOffset(0);
-      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir);
+      syncToUrl(filters, newLimit, 0, newSortBy, newSortDir, polygon);
     },
-    [filters, limit, sortBy, sortDir, syncToUrl]
+    [filters, limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
   const handleSortHeaderClick = useCallback(

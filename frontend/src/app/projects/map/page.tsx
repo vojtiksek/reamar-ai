@@ -1,10 +1,12 @@
 "use client";
 
 import { API_BASE } from "@/lib/api";
+import { decodePolygon, encodePolygon, isPointInPolygon, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import type { LatLngExpression } from "leaflet";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
 type ProjectMapItem = {
   id: number;
@@ -29,10 +31,19 @@ const ProjectsLeafletMap = dynamic(() => import("./ProjectsLeafletMap"), {
 });
 
 export default function ProjectsMapPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [projects, setProjects] = useState<ProjectMapItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [onlyAvailable, setOnlyAvailable] = useState(false);
+  const [polygon, setPolygon] = useState<LatLng[]>(() =>
+    decodePolygon(searchParams?.get("poly") ?? undefined)
+  );
+  const [drawing, setDrawing] = useState(false);
+  const [draftPolygon, setDraftPolygon] = useState<LatLng[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -78,13 +89,23 @@ export default function ProjectsMapPage() {
   }, []);
 
   const visibleProjects = useMemo(() => {
-    if (!onlyAvailable) return projects;
-    return projects.filter((p) => {
-      const available = p.units_available ?? 0;
-      const reserved = p.units_reserved ?? 0;
-      return available + reserved > 0;
-    });
-  }, [projects, onlyAvailable]);
+    let base = projects;
+    if (onlyAvailable) {
+      base = base.filter((p) => {
+        const available = p.units_available ?? 0;
+        const reserved = p.units_reserved ?? 0;
+        return available + reserved > 0;
+      });
+    }
+    const activePoly = polygon;
+    if (activePoly.length >= 3) {
+      base = base.filter((p) => {
+        if (p.gps_latitude == null || p.gps_longitude == null) return false;
+        return isPointInPolygon(p.gps_latitude, p.gps_longitude, activePoly);
+      });
+    }
+    return base;
+  }, [projects, onlyAvailable, polygon]);
 
   const center: LatLngExpression = useMemo(() => {
     const source = visibleProjects.length > 0 ? visibleProjects : projects;
@@ -97,6 +118,22 @@ export default function ProjectsMapPage() {
     return [latSum / source.length, lonSum / source.length] as LatLngExpression;
   }, [projects, visibleProjects]);
 
+  const syncPolygonToUrl = (poly: LatLng[] | null) => {
+    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    if (poly && poly.length >= 3) {
+      params.set("poly", encodePolygon(poly));
+    } else {
+      params.delete("poly");
+    }
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  const handleMapClick = (lat: number, lng: number) => {
+    if (!drawing) return;
+    setDraftPolygon((prev) => [...prev, { lat, lng }]);
+  };
+
   return (
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm">
@@ -104,13 +141,21 @@ export default function ProjectsMapPage() {
           <h1 className="text-lg font-semibold text-gray-900">Reamar – mapa projektů</h1>
           <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
             <Link
-              href="/units"
+              href={
+                searchParams?.get("poly")
+                  ? `/units?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
+                  : "/units"
+              }
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Jednotky
             </Link>
             <Link
-              href="/projects"
+              href={
+                searchParams?.get("poly")
+                  ? `/projects?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
+                  : "/projects"
+              }
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Projekty – tabulka
@@ -124,6 +169,54 @@ export default function ProjectsMapPage() {
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                if (!drawing) {
+                  setDraftPolygon([]);
+                  setDrawing(true);
+                } else {
+                  setDrawing(false);
+                  setDraftPolygon([]);
+                }
+              }}
+              className={
+                "rounded-full border px-3 py-1 font-medium transition " +
+                (drawing
+                  ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+                  : "border-gray-300 bg-white text-gray-700 hover:bg-gray-50")
+              }
+            >
+              Výběr oblasti
+            </button>
+            {polygon.length >= 3 && !drawing && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPolygon([]);
+                  setDraftPolygon([]);
+                  syncPolygonToUrl(null);
+                }}
+                className="text-xs text-gray-600 underline decoration-dotted underline-offset-2 hover:text-gray-900"
+              >
+                Zrušit oblast
+              </button>
+            )}
+            {drawing && draftPolygon.length >= 3 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPolygon(draftPolygon);
+                  setDrawing(false);
+                  syncPolygonToUrl(draftPolygon);
+                }}
+                className="text-xs font-medium text-emerald-700 hover:text-emerald-900"
+              >
+                Uložit oblast
+              </button>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => setOnlyAvailable((v) => !v)}
@@ -197,7 +290,14 @@ export default function ProjectsMapPage() {
               Načítání mapy…
             </div>
           )}
-          <ProjectsLeafletMap projects={visibleProjects} center={center} />
+          <ProjectsLeafletMap
+            projects={visibleProjects}
+            center={center}
+            polygon={polygon}
+            draftPolygon={draftPolygon}
+            drawing={drawing}
+            onMapClick={handleMapClick}
+          />
         </section>
       </main>
     </div>
