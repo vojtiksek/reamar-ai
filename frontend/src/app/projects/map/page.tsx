@@ -138,7 +138,7 @@ export default function ProjectsMapPage() {
     <div className="flex h-screen flex-col overflow-hidden">
       <header className="flex items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm">
         <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold text-gray-900">Reamar – mapa projektů</h1>
+          <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
           <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
             <Link
               href={
