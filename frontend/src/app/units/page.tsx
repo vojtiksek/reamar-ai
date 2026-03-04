@@ -134,6 +134,7 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.name": "project",
   "project.municipality": "municipality",
   "project.district": "district",
+  "project.project_url": "project_url",
 
   // Project aggregates cached per project
   "project.total_units": "total_units",
@@ -163,6 +164,27 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
 };
 
 function getValue(unit: Unit, accessor: string, catalogKey?: string): unknown {
+  // Special case: derive project_url from unit URL when requested in units view.
+  if (catalogKey === "project_url" || accessor === "project.project_url") {
+    const raw =
+      ((unit as any).url as string | undefined) ??
+      (unit.data?.unit_url as string | undefined);
+    if (!raw) return undefined;
+    const s = String(raw);
+    try {
+      // Try robust URL parsing first
+      const u = new URL(s);
+      return `${u.protocol}//${u.host}`;
+    } catch {
+      // Fallback for common .cz/ pattern (e.g. https://www.domanavinici.cz/projekty/...)
+      const czIndex = s.indexOf(".cz/");
+      if (czIndex !== -1) {
+        return s.slice(0, czIndex + 3); // include ".cz"
+      }
+      return s;
+    }
+  }
+
   const fromData =
     catalogKey && unit.data && Object.prototype.hasOwnProperty.call(unit.data, catalogKey)
       ? unit.data[catalogKey]
