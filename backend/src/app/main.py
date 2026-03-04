@@ -1093,10 +1093,34 @@ def list_projects(
     total = db.execute(count_stmt).scalar_one()
     stmt = stmt.offset(offset).limit(limit)
     rows = db.execute(stmt).all()
-    items = []
+    items: list[dict[str, Any]] = []
+
+    # Načti cached project_aggregates pro všechny projekty na této stránce,
+    # abychom pro přehled /projects používali stejné hodnoty jako units list.
+    from .models import ProjectAggregates  # local import to avoid circular
+
+    project_ids = [row[0].id for row in rows]
+    agg_by_project_id: dict[int, ProjectAggregates] = {}
+    if project_ids:
+        agg_rows = (
+            db.execute(
+                select(ProjectAggregates).where(ProjectAggregates.project_id.in_(project_ids))
+            )
+            .scalars()
+            .all()
+        )
+        agg_by_project_id = {agg.project_id: agg for agg in agg_rows}
+
     for row in rows:
         project = row[0]
-        items.append(_project_row_to_item(project, row))
+        item = _project_row_to_item(project, row)
+        agg = agg_by_project_id.get(project.id)
+        if agg is not None:
+            # Přepiš ceny stání/garáže v přehledu projeků hodnotami z project_aggregates,
+            # aby odpovídaly tomu, co vidíme v units tabulce.
+            item["min_parking_indoor_price_czk"] = agg.min_parking_indoor_price_czk
+            item["min_parking_outdoor_price_czk"] = agg.min_parking_outdoor_price_czk
+        items.append(item)
     return ProjectsListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
