@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any
 
 from decimal import Decimal
@@ -134,6 +134,7 @@ class LocalPriceDiffComparable(BaseModel):
     distance_m: float
     availability_status: str | None = None
     available: bool
+    renovation: bool | None = None
 
 
 class LocalPriceDiffDebugResponse(BaseModel):
@@ -146,6 +147,7 @@ class LocalPriceDiffDebugResponse(BaseModel):
     unit_price_per_m2_czk: float | None = None
     ref_avg_price_per_m2_czk: float | None = None
     diff_percent: float | None = None
+    unit_renovation: bool | None = None  # Rekonstrukce posuzované jednotky (porovnáváme jen se stejným typem)
     comparables: list[LocalPriceDiffComparable] = []
 
 
@@ -306,6 +308,18 @@ def get_unit_local_price_diff_debug(
         if group is None:
             continue
 
+        renovation_val = data.get("renovation") if isinstance(data, dict) else getattr(u, "renovation", None)
+        if renovation_val is not None and not isinstance(renovation_val, bool):
+            try:
+                renovation_val = bool(renovation_val)
+            except (TypeError, ValueError):
+                renovation_val = None
+
+        status_raw = data.get("availability_status") or getattr(u, "availability_status", None) or ""
+        status = str(status_raw).strip().lower()
+        on_market = bool(data.get("available", False)) or status in {"available", "reserved"}
+        last_seen_val = getattr(u, "last_seen", None)
+
         info: dict[str, Any] = {
             "unit": u,
             "id": u.id,
@@ -315,6 +329,9 @@ def get_unit_local_price_diff_debug(
             "price_pm2": price_pm2_f,
             "area": area_f,
             "group": group,
+            "renovation": renovation_val,
+            "on_market": on_market,
+            "last_seen": last_seen_val,
             "availability_status": data.get("availability_status"),
             "available": bool(data.get("available", False)),
             "project_name": (data.get("project") or {}).get("name") if isinstance(data.get("project"), dict) else getattr(u.project, "name", None),
@@ -362,6 +379,14 @@ def get_unit_local_price_diff_debug(
     for other in infos:
         if other["id"] == target["id"]:
             continue
+        # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
+        if other.get("renovation") != target.get("renovation"):
+            continue
+        # Prodané jednotky (SOLD) zahrnujeme jen pokud byly last_seen nejvýše 90 dní od dneška.
+        if not other.get("on_market"):
+            ls = other.get("last_seen")
+            if ls is None or (date.today() - ls).days > 90:
+                continue
         d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
         if d > radius_m:
             continue
@@ -439,6 +464,7 @@ def get_unit_local_price_diff_debug(
                 distance_m=dist,
                 availability_status=other.get("availability_status"),
                 available=bool(other.get("available", False)),
+                renovation=other.get("renovation"),
             )
         )
 
@@ -452,6 +478,7 @@ def get_unit_local_price_diff_debug(
         unit_price_per_m2_czk=price_pm2,
         ref_avg_price_per_m2_czk=ref_avg,
         diff_percent=diff_percent,
+        unit_renovation=target.get("renovation"),
         comparables=comparables,
     )
 

@@ -344,6 +344,14 @@ def recompute_local_price_diffs(db: Session) -> None:
         if group is None:
             continue
 
+        # Rekonstrukce: porovnávame jen jednotky se stejným stavem (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
+        renovation_val = data.get("renovation") if isinstance(data, dict) else getattr(u, "renovation", None)
+        if renovation_val is not None and not isinstance(renovation_val, bool):
+            try:
+                renovation_val = bool(renovation_val)
+            except (TypeError, ValueError):
+                renovation_val = None
+
         # Zjisti, zda je jednotka aktuálně "na trhu".
         # Bereme jednotky, které jsou dostupné (available) NEBO mají stav "available"/"reserved".
         # Prodané ("sold") nechceme, aby neovlivňovaly průměr.
@@ -367,6 +375,8 @@ def recompute_local_price_diffs(db: Session) -> None:
                 "area": area_f,
                 "group": group,
                 "on_market": on_market,
+                "renovation": renovation_val,
+                "last_seen": getattr(u, "last_seen", None),
             }
         )
 
@@ -451,6 +461,14 @@ def recompute_local_price_diffs(db: Session) -> None:
                     for other in cell_infos:
                         if other["id"] == info["id"]:
                             continue
+                        # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
+                        if other.get("renovation") != info.get("renovation"):
+                            continue
+                        # Prodané jednotky (SOLD) zahrnujeme jen pokud byly last_seen nejvýše 90 dní od dneška.
+                        if not other.get("on_market"):
+                            ls = other.get("last_seen")
+                            if ls is None or (date.today() - ls).days > 90:
+                                continue
                         # Do průměru bereme všechny jednotky v bucketu (včetně prodaných), aby
                         # dvě stejné jednotky ve stejném projektu měly stejný ref_avg a tedy
                         # stejnou odchylku. (Pouze „on_market“ by u prodané vs dostupné dvojčete
