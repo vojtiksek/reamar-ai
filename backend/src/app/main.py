@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from decimal import Decimal
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -964,6 +965,8 @@ def _project_agg_subquery():
             func.max(Unit.payment_construction).label("max_payment_construction"),
             func.min(Unit.payment_occupancy).label("min_payment_occupancy"),
             func.max(Unit.payment_occupancy).label("max_payment_occupancy"),
+            # Sample unit URL (for deriving project_url)
+            func.min(Unit.url).label("unit_url_sample"),
             layouts,
         )
         .group_by(Unit.project_id)
@@ -1042,6 +1045,28 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     if isinstance(pay_occupancy, Decimal):
         pay_occupancy = float(pay_occupancy)
     out["payment_occupancy"] = pay_occupancy
+
+    # Derive project_url from either explicit Project.project_url or a sample unit URL.
+    if not out.get("project_url"):
+        raw_url = agg.get("unit_url_sample") or getattr(project, "project_url", None)
+        project_url: str | None = None
+        if raw_url:
+            s = str(raw_url)
+            try:
+                parsed = urlparse(s)
+                if parsed.scheme and parsed.netloc:
+                    project_url = f"{parsed.scheme}://{parsed.netloc}"
+                else:
+                    project_url = None
+            except Exception:
+                project_url = None
+            # Fallback for common .cz/ pattern (e.g. https://www.domanavinici.cz/projekty/...):
+            if not project_url and ".cz/" in s:
+                base = s.split(".cz/", 1)[0] + ".cz"
+                project_url = base
+        if project_url:
+            out["project_url"] = project_url
+
     out["available_ratio"] = (
         (units_available / units_total) if units_total else 0.0
     )
