@@ -244,6 +244,7 @@ ALLOWED_SORT_DIR = ("asc", "desc")
 def _build_units_query(
     *,
     available: bool | None = None,
+    availability: list[str] | None = None,
     min_price: int | None = None,
     max_price: int | None = None,
     min_price_per_m2: int | None = None,
@@ -265,6 +266,8 @@ def _build_units_query(
     base = select(Unit)
     if available is not None:
         base = base.where(Unit.available.is_(available))
+    if availability is not None and len(availability) > 0:
+        base = base.where(Unit.availability_status.in_(availability))
     if min_price is not None:
         base = base.where(Unit.price_czk >= min_price)
     if max_price is not None:
@@ -366,6 +369,7 @@ def list_units(
     limit: Annotated[int, Query(ge=1, le=1000, description="Page size (1–1000)")] = 100,
     offset: Annotated[int, Query(ge=0, description="Skip N items")] = 0,
     available: Annotated[bool | None, Query(description="Filter by available")] = None,
+    availability: Annotated[list[str] | None, Query(description="Filter by availability_status (any of)")] = None,
     min_price: Annotated[int | None, Query(ge=0)] = None,
     max_price: Annotated[int | None, Query(ge=0)] = None,
     min_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
@@ -398,6 +402,7 @@ def list_units(
 
     base = _build_units_query(
         available=available,
+        availability=availability,
         min_price=min_price,
         max_price=max_price,
         min_price_per_m2=min_price_per_m2,
@@ -622,6 +627,7 @@ def get_projects_overview(
 
     base = _build_units_query(
         available=available,
+        availability=None,
         min_price=min_price,
         max_price=max_price,
         min_price_per_m2=min_price_per_m2,

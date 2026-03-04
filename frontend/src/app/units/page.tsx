@@ -385,23 +385,9 @@ export default function Home() {
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: FiltersResponse) => {
         const groups = data?.groups ?? [];
-        setFilterGroups(
-          groups.map((g) => ({
-            ...g,
-            filters: g.filters.map((f) =>
-              f.key === "availability" && f.type === "enum"
-                ? {
-                    ...f,
-                    key: "available",
-                    type: "boolean" as const,
-                    alias: "Dostupné",
-                    options: [true, false],
-                    backend_supported: true,
-                  }
-                : f
-            ),
-          }))
-        );
+        // Necháme backendový enum filter "availability" tak, jak je,
+        // aby bylo možné kombinovat hodnoty (available + reserved).
+        setFilterGroups(groups);
       })
       .catch(() => setFilterGroups([]));
   }, []);
