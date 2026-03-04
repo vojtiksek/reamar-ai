@@ -546,6 +546,12 @@ export default function ProjectsPage() {
             >
               Projekty
             </Link>
+            <Link
+              href="/projects/map"
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+            >
+              Mapa
+            </Link>
           </div>
           <button
             type="button"
