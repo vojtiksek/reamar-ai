@@ -342,15 +342,18 @@ def recompute_local_price_diffs(db: Session) -> None:
         if group is None:
             continue
 
-        # Zjisti, zda je jednotka aktuálně "na trhu" – použijeme ji jako srovnávací
-        # jen pokud je available nebo reserved (ne sold).
-        status_raw = (
-            (data.get("availability_status") or u.availability_status or "")
-            if isinstance(data, dict)
-            else (u.availability_status or "")
-        )
+        # Zjisti, zda je jednotka aktuálně "na trhu".
+        # Bereme jednotky, které jsou dostupné (available) NEBO mají stav "available"/"reserved".
+        # Prodané ("sold") nechceme, aby neovlivňovaly průměr.
+        if isinstance(data, dict):
+            avail_flag = data.get("available")
+            status_raw = data.get("availability_status") or u.availability_status or ""
+        else:
+            avail_flag = u.available
+            status_raw = u.availability_status or ""
         status = str(status_raw).strip().lower()
-        on_market = status in {"available", "reserved"}
+        is_available_flag = bool(avail_flag)
+        on_market = is_available_flag or status in {"available", "reserved"}
 
         infos.append(
             {
