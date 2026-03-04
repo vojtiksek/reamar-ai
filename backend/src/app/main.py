@@ -309,6 +309,12 @@ def _build_units_query(
     availability: list[str] | None = None,
     min_price: int | None = None,
     max_price: int | None = None,
+    min_price_change: float | None = None,
+    max_price_change: float | None = None,
+    min_original_price: int | None = None,
+    max_original_price: int | None = None,
+    min_original_price_per_m2: int | None = None,
+    max_original_price_per_m2: int | None = None,
     min_price_per_m2: int | None = None,
     max_price_per_m2: int | None = None,
     layout: list[str] | None = None,
@@ -323,6 +329,33 @@ def _build_units_query(
     smart_home: bool | None = None,
     min_floor_area: float | None = None,
     max_floor_area: float | None = None,
+    min_total_area: float | None = None,
+    max_total_area: float | None = None,
+    min_exterior_area: float | None = None,
+    max_exterior_area: float | None = None,
+    min_balcony_area: float | None = None,
+    max_balcony_area: float | None = None,
+    min_terrace_area: float | None = None,
+    max_terrace_area: float | None = None,
+    min_garden_area: float | None = None,
+    max_garden_area: float | None = None,
+    min_days_on_market: int | None = None,
+    max_days_on_market: int | None = None,
+    min_floor: int | None = None,
+    max_floor: int | None = None,
+    min_floors: int | None = None,
+    max_floors: int | None = None,
+    orientation: list[str] | None = None,
+    category: list[str] | None = None,
+    overall_quality: list[str] | None = None,
+    partition_walls: list[str] | None = None,
+    city: list[str] | None = None,
+    cadastral_area_iga: list[str] | None = None,
+    municipal_district_iga: list[str] | None = None,
+    administrative_district_iga: list[str] | None = None,
+    region_iga: list[str] | None = None,
+    developer: list[str] | None = None,
+    building: list[str] | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None. No join needed (all on Unit)."""
     base = select(Unit)
@@ -334,6 +367,18 @@ def _build_units_query(
         base = base.where(Unit.price_czk >= min_price)
     if max_price is not None:
         base = base.where(Unit.price_czk <= max_price)
+    if min_price_change is not None:
+        base = base.where(Unit.price_change >= min_price_change)
+    if max_price_change is not None:
+        base = base.where(Unit.price_change <= max_price_change)
+    if min_original_price is not None:
+        base = base.where(Unit.original_price_czk >= min_original_price)
+    if max_original_price is not None:
+        base = base.where(Unit.original_price_czk <= max_original_price)
+    if min_original_price_per_m2 is not None:
+        base = base.where(Unit.original_price_per_m2_czk >= min_original_price_per_m2)
+    if max_original_price_per_m2 is not None:
+        base = base.where(Unit.original_price_per_m2_czk <= max_original_price_per_m2)
     if min_price_per_m2 is not None:
         base = base.where(Unit.price_per_m2_czk >= min_price_per_m2)
     if max_price_per_m2 is not None:
@@ -362,6 +407,60 @@ def _build_units_query(
         base = base.where(Unit.floor_area_m2 >= min_floor_area)
     if max_floor_area is not None:
         base = base.where(Unit.floor_area_m2 <= max_floor_area)
+    if min_total_area is not None:
+        base = base.where(Unit.total_area_m2 >= min_total_area)
+    if max_total_area is not None:
+        base = base.where(Unit.total_area_m2 <= max_total_area)
+    if min_exterior_area is not None:
+        base = base.where(Unit.exterior_area_m2 >= min_exterior_area)
+    if max_exterior_area is not None:
+        base = base.where(Unit.exterior_area_m2 <= max_exterior_area)
+    if min_balcony_area is not None:
+        base = base.where(Unit.balcony_area_m2 >= min_balcony_area)
+    if max_balcony_area is not None:
+        base = base.where(Unit.balcony_area_m2 <= max_balcony_area)
+    if min_terrace_area is not None:
+        base = base.where(Unit.terrace_area_m2 >= min_terrace_area)
+    if max_terrace_area is not None:
+        base = base.where(Unit.terrace_area_m2 <= max_terrace_area)
+    if min_garden_area is not None:
+        base = base.where(Unit.garden_area_m2 >= min_garden_area)
+    if max_garden_area is not None:
+        base = base.where(Unit.garden_area_m2 <= max_garden_area)
+    if min_days_on_market is not None:
+        base = base.where(Unit.days_on_market >= min_days_on_market)
+    if max_days_on_market is not None:
+        base = base.where(Unit.days_on_market <= max_days_on_market)
+    if min_floor is not None:
+        base = base.where(Unit.floor >= min_floor)
+    if max_floor is not None:
+        base = base.where(Unit.floor <= max_floor)
+    if min_floors is not None:
+        base = base.where(Unit.floors >= min_floors)
+    if max_floors is not None:
+        base = base.where(Unit.floors <= max_floors)
+    if orientation is not None and len(orientation) > 0:
+        base = base.where(Unit.orientation.in_(orientation))
+    if category is not None and len(category) > 0:
+        base = base.where(Unit.category.in_(category))
+    if overall_quality is not None and len(overall_quality) > 0:
+        base = base.where(Unit.overall_quality.in_(overall_quality))
+    if partition_walls is not None and len(partition_walls) > 0:
+        base = base.where(Unit.partition_walls.in_(partition_walls))
+    if city is not None and len(city) > 0:
+        base = base.where(Unit.city.in_(city))
+    if cadastral_area_iga is not None and len(cadastral_area_iga) > 0:
+        base = base.where(Unit.cadastral_area_iga.in_(cadastral_area_iga))
+    if municipal_district_iga is not None and len(municipal_district_iga) > 0:
+        base = base.where(Unit.municipal_district_iga.in_(municipal_district_iga))
+    if administrative_district_iga is not None and len(administrative_district_iga) > 0:
+        base = base.where(Unit.administrative_district_iga.in_(administrative_district_iga))
+    if region_iga is not None and len(region_iga) > 0:
+        base = base.where(Unit.region_iga.in_(region_iga))
+    if developer is not None and len(developer) > 0:
+        base = base.where(Unit.developer.in_(developer))
+    if building is not None and len(building) > 0:
+        base = base.where(Unit.building.in_(building))
     return base
 
 
@@ -434,10 +533,17 @@ def list_units(
     availability: Annotated[list[str] | None, Query(description="Filter by availability_status (any of)")] = None,
     min_price: Annotated[int | None, Query(ge=0)] = None,
     max_price: Annotated[int | None, Query(ge=0)] = None,
+    min_price_change: Annotated[float | None, Query(description="Filter by price_change >= value")] = None,
+    max_price_change: Annotated[float | None, Query(description="Filter by price_change <= value")] = None,
+    min_original_price: Annotated[int | None, Query(ge=0)] = None,
+    max_original_price: Annotated[int | None, Query(ge=0)] = None,
+    min_original_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
+    max_original_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
     min_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
     max_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
     layout: Annotated[list[str] | None, Query(description="Filter by layout (any of)")] = None,
     district: Annotated[list[str] | None, Query(description="Filter by district (any of)")] = None,
+    municipality: Annotated[list[str] | None, Query(description="Filter by municipality (any of)")] = None,
     heating: Annotated[list[str] | None, Query(description="Filter by heating (any of)")] = None,
     windows: Annotated[list[str] | None, Query(description="Filter by windows (any of)")] = None,
     permit_regular: Annotated[bool | None, Query(description="Filter by permit_regular")] = None,
@@ -447,6 +553,35 @@ def list_units(
     smart_home: Annotated[bool | None, Query(description="Filter by smart_home")] = None,
     min_floor_area: Annotated[float | None, Query(ge=0)] = None,
     max_floor_area: Annotated[float | None, Query(ge=0)] = None,
+    min_total_area: Annotated[float | None, Query(ge=0)] = None,
+    max_total_area: Annotated[float | None, Query(ge=0)] = None,
+    min_exterior_area: Annotated[float | None, Query(ge=0)] = None,
+    max_exterior_area: Annotated[float | None, Query(ge=0)] = None,
+    min_balcony_area: Annotated[float | None, Query(ge=0)] = None,
+    max_balcony_area: Annotated[float | None, Query(ge=0)] = None,
+    min_terrace_area: Annotated[float | None, Query(ge=0)] = None,
+    max_terrace_area: Annotated[float | None, Query(ge=0)] = None,
+    min_garden_area: Annotated[float | None, Query(ge=0)] = None,
+    max_garden_area: Annotated[float | None, Query(ge=0)] = None,
+    min_days_on_market: Annotated[int | None, Query(ge=0)] = None,
+    max_days_on_market: Annotated[int | None, Query(ge=0)] = None,
+    min_floor: Annotated[int | None, Query()] = None,
+    max_floor: Annotated[int | None, Query()] = None,
+    min_floors: Annotated[int | None, Query()] = None,
+    max_floors: Annotated[int | None, Query()] = None,
+    orientation: Annotated[list[str] | None, Query(description="Filter by orientation (any of)")] = None,
+    category: Annotated[list[str] | None, Query(description="Filter by category (any of)")] = None,
+    overall_quality: Annotated[list[str] | None, Query(description="Filter by overall_quality (any of)")] = None,
+    partition_walls: Annotated[list[str] | None, Query(description="Filter by partition_walls (any of)")] = None,
+    city: Annotated[list[str] | None, Query(description="Filter by city (any of)")] = None,
+    cadastral_area_iga: Annotated[list[str] | None, Query(description="Filter by cadastral_area_iga (any of)")] = None,
+    municipal_district_iga: Annotated[list[str] | None, Query(description="Filter by municipal_district_iga (any of)")] = None,
+    administrative_district_iga: Annotated[
+        list[str] | None, Query(description="Filter by administrative_district_iga (any of)")
+    ] = None,
+    region_iga: Annotated[list[str] | None, Query(description="Filter by region_iga (any of)")] = None,
+    developer: Annotated[list[str] | None, Query(description="Filter by developer (any of)")] = None,
+    building: Annotated[list[str] | None, Query(description="Filter by building (any of)")] = None,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -467,10 +602,17 @@ def list_units(
         availability=availability,
         min_price=min_price,
         max_price=max_price,
+        min_price_change=min_price_change,
+        max_price_change=max_price_change,
+        min_original_price=min_original_price,
+        max_original_price=max_original_price,
+        min_original_price_per_m2=min_original_price_per_m2,
+        max_original_price_per_m2=max_original_price_per_m2,
         min_price_per_m2=min_price_per_m2,
         max_price_per_m2=max_price_per_m2,
         layout=layout,
         district=district,
+        municipality=municipality,
         heating=heating,
         windows=windows,
         permit_regular=permit_regular,
@@ -480,6 +622,33 @@ def list_units(
         smart_home=smart_home,
         min_floor_area=min_floor_area,
         max_floor_area=max_floor_area,
+        min_total_area=min_total_area,
+        max_total_area=max_total_area,
+        min_exterior_area=min_exterior_area,
+        max_exterior_area=max_exterior_area,
+        min_balcony_area=min_balcony_area,
+        max_balcony_area=max_balcony_area,
+        min_terrace_area=min_terrace_area,
+        max_terrace_area=max_terrace_area,
+        min_garden_area=min_garden_area,
+        max_garden_area=max_garden_area,
+        min_days_on_market=min_days_on_market,
+        max_days_on_market=max_days_on_market,
+        min_floor=min_floor,
+        max_floor=max_floor,
+        min_floors=min_floors,
+        max_floors=max_floors,
+        orientation=orientation,
+        category=category,
+        overall_quality=overall_quality,
+        partition_walls=partition_walls,
+        city=city,
+        cadastral_area_iga=cadastral_area_iga,
+        municipal_district_iga=municipal_district_iga,
+        administrative_district_iga=administrative_district_iga,
+        region_iga=region_iga,
+        developer=developer,
+        building=building,
     )
     base_subq = base.subquery()
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
