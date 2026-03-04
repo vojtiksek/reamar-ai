@@ -563,34 +563,6 @@ export default function Home() {
 
   const closeDrawer = useCallback(() => setDrawerOpen(false), []);
 
-  const onApply = useCallback(() => {
-    setFilters(currentFilters);
-    syncToUrl(currentFilters, limit, 0, sortBy, sortDir);
-    setOffset(0);
-    closeDrawer();
-    if (process.env.NODE_ENV === "development") {
-      const qs = buildUnitsQuery(
-        currentFilters,
-        supportedFilterKeys,
-        { limit: safeLimit, offset: 0 },
-        { sort_by: validSortBy, sort_dir: validSortDir }
-      );
-      // eslint-disable-next-line no-console
-      console.log("GET /units fetch URL:", `${API_BASE}/units?${qs}`);
-    }
-  }, [
-    currentFilters,
-    limit,
-    sortBy,
-    sortDir,
-    supportedFilterKeys,
-    safeLimit,
-    validSortBy,
-    validSortDir,
-    syncToUrl,
-    closeDrawer,
-  ]);
-
   const onReset = useCallback(() => setCurrentFilters({}), []);
 
   const onResetAll = useCallback(() => {
@@ -605,6 +577,15 @@ export default function Home() {
     setCurrentFilters((prev) => ({ ...prev, [key]: value }));
   }, []);
 
+  const applyFilters = useCallback(
+    (next: CurrentFilters) => {
+      setFilters(next);
+      setOffset(0);
+      syncToUrl(next, limit, 0, sortBy, sortDir);
+    },
+    [limit, sortBy, sortDir, syncToUrl]
+  );
+
   const setPage = useCallback(
     (newOffset: number) => {
       setOffset(newOffset);
@@ -612,6 +593,29 @@ export default function Home() {
     },
     [filters, limit, sortBy, sortDir, syncToUrl]
   );
+
+  const onApply = useCallback(() => {
+    applyFilters(currentFilters);
+    closeDrawer();
+    if (process.env.NODE_ENV === "development") {
+      const qs = buildUnitsQuery(
+        currentFilters,
+        supportedFilterKeys,
+        { limit: safeLimit, offset: 0 },
+        { sort_by: validSortBy, sort_dir: validSortDir }
+      );
+      // eslint-disable-next-line no-console
+      console.log("GET /units fetch URL:", `${API_BASE}/units?${qs}`);
+    }
+  }, [
+    currentFilters,
+    supportedFilterKeys,
+    safeLimit,
+    validSortBy,
+    validSortDir,
+    applyFilters,
+    closeDrawer,
+  ]);
 
   const setLimitAndSort = useCallback(
     (opts: { limit?: number; sortBy?: string; sortDir?: string }) => {
@@ -874,7 +878,8 @@ export default function Home() {
         {countActiveFilters(filters) > 0 && (
           <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-gray-700">
             {(() => {
-              const badges: string[] = [];
+              type FilterBadge = { id: string; label: string; clearKeys: string[] };
+              const badges: FilterBadge[] = [];
               const rangeBases = new Set<string>();
               for (const [k, v] of Object.entries(filters)) {
                 if (v === undefined) continue;
@@ -897,11 +902,23 @@ export default function Home() {
                     }
                     return String(raw);
                   });
-                  badges.push(`${label}: ${formattedValues.join(", ")}`);
+                  badges.push({
+                    id: `${k}:${formattedValues.join(",")}`,
+                    label: `${label}: ${formattedValues.join(", ")}`,
+                    clearKeys: [k],
+                  });
                 } else if (typeof v === "boolean") {
-                  badges.push(`${label}: ${v ? "Ano" : "Ne"}`);
+                  badges.push({
+                    id: `${k}:${v ? "1" : "0"}`,
+                    label: `${label}: ${v ? "Ano" : "Ne"}`,
+                    clearKeys: [k],
+                  });
                 } else if (typeof v === "number" && !Number.isNaN(v)) {
-                  badges.push(`${label}: ${v}`);
+                  badges.push({
+                    id: `${k}:${v}`,
+                    label: `${label}: ${v}`,
+                    clearKeys: [k],
+                  });
                 }
               }
               for (const base of rangeBases) {
@@ -922,15 +939,31 @@ export default function Home() {
                 if (max != null && !Number.isNaN(max)) {
                   value += value ? ` do ${max}` : `do ${max}`;
                 }
-                badges.push(`${label}: ${value}`);
+                badges.push({
+                  id: `${base}:${value}`,
+                  label: `${label}: ${value}`,
+                  clearKeys: [`${base}_min`, `${base}_max`],
+                });
               }
               return badges.map((b) => (
-                <span
-                  key={b}
-                  className="rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5"
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => {
+                    const next: CurrentFilters = { ...filters };
+                    for (const ck of b.clearKeys) {
+                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                      delete (next as any)[ck];
+                    }
+                    applyFilters(next);
+                  }}
+                  className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
                 >
-                  {b}
-                </span>
+                  <span>{b.label}</span>
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
+                    ×
+                  </span>
+                </button>
               ));
             })()}
           </div>
