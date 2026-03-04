@@ -1293,6 +1293,9 @@ def _project_agg_subquery():
             func.max(Unit.payment_construction).label("max_payment_construction"),
             func.min(Unit.payment_occupancy).label("min_payment_occupancy"),
             func.max(Unit.payment_occupancy).label("max_payment_occupancy"),
+            # Fallback GPS pro projekty – průměrná poloha jednotek v projektu
+            func.avg(Unit.gps_latitude).label("project_gps_latitude"),
+            func.avg(Unit.gps_longitude).label("project_gps_longitude"),
             # Sample unit URL (for deriving project_url)
             func.min(Unit.url).label("unit_url_sample"),
             layouts,
@@ -1322,6 +1325,15 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
 
     # Computed from aggregate row (use row._mapping or positional)
     agg = row._mapping if hasattr(row, "_mapping") else {}
+
+    # Fallback GPS: pokud projekt sám nemá gps_latitude/longitude,
+    # použij průměrnou polohu jednotek z agregátu.
+    lat_agg = agg.get("project_gps_latitude")
+    lon_agg = agg.get("project_gps_longitude")
+    if out.get("gps_latitude") is None and lat_agg is not None:
+        out["gps_latitude"] = float(lat_agg) if isinstance(lat_agg, Decimal) else lat_agg
+    if out.get("gps_longitude") is None and lon_agg is not None:
+        out["gps_longitude"] = float(lon_agg) if isinstance(lon_agg, Decimal) else lon_agg
     units_total = agg.get("units_total") or 0
     units_available = int(agg.get("units_available") or 0)
     out["units_total"] = units_total
