@@ -121,6 +121,9 @@ class UnitsListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+    average_price_czk: float | None = None
+    average_price_per_m2_czk: float | None = None
+    available_count: int | None = None
 
 
 class ProjectsOverviewResponse(BaseModel):
@@ -419,7 +422,20 @@ def list_units(
         min_floor_area=min_floor_area,
         max_floor_area=max_floor_area,
     )
-    total = db.execute(select(func.count()).select_from(base.subquery())).scalar_one()
+    base_subq = base.subquery()
+    total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
+
+    # Globální agregace pro všechny jednotky odpovídající filtrům (bez limit/offset).
+    summary_row = db.execute(
+        select(
+            func.avg(base_subq.c.price_czk),
+            func.avg(base_subq.c.price_per_m2_czk),
+            func.sum(case((base_subq.c.available.is_(True), 1), else_=0)),
+        )
+    ).first()
+    avg_price_czk = float(summary_row[0]) if summary_row and summary_row[0] is not None else None
+    avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
+    available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
 
     sort_column = {
         "price_per_m2_czk": Unit.price_per_m2_czk,
@@ -520,7 +536,15 @@ def list_units(
 
         items.append(UnitResponse.model_validate(d))
 
-    return UnitsListResponse(items=items, total=total, limit=limit, offset=offset)
+    return UnitsListResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+        average_price_czk=avg_price_czk,
+        average_price_per_m2_czk=avg_price_per_m2_czk,
+        available_count=available_count,
+    )
 
 
 # Sort keys: catalog keys (project entity) + aggregate keys returned by overview

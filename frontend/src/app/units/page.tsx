@@ -40,6 +40,9 @@ type UnitsListResponse = {
   total: number;
   limit: number;
   offset: number;
+  average_price_czk?: number | null;
+  average_price_per_m2_czk?: number | null;
+  available_count?: number | null;
 };
 
 type ColumnDef = {
@@ -285,6 +288,12 @@ export default function Home() {
   const [serverColumns, setServerColumns] = useState<ColumnDef[] | null>(null);
   const [clientSortBy, setClientSortBy] = useState<string | null>(null);
   const [clientSortDir, setClientSortDir] = useState<"asc" | "desc">("asc");
+  const [summaryOverride, setSummaryOverride] = useState<{
+    total: number;
+    averagePrice: number | null;
+    averagePricePerM2: number | null;
+    availableCount: number;
+  } | null>(null);
 
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
@@ -417,6 +426,12 @@ export default function Home() {
       .then((data: UnitsListResponse) => {
         setUnits(data.items ?? []);
         setTotal(data.total ?? 0);
+        setSummaryOverride({
+          total: data.total ?? 0,
+          averagePrice: data.average_price_czk ?? null,
+          averagePricePerM2: data.average_price_per_m2_czk ?? null,
+          availableCount: data.available_count ?? 0,
+        });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
@@ -521,7 +536,7 @@ export default function Home() {
     [sortBy, sortDir, setLimitAndSort]
   );
 
-  const summary = computeSummaryFromUnits(units, total);
+  const summary = summaryOverride ?? computeSummaryFromUnits(units, total);
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
