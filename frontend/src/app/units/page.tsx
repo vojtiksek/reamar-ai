@@ -14,7 +14,7 @@ import {
 } from "@/lib/filters";
 import { formatPercent, formatValue } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
-import { decodePolygon, isPointInPolygon } from "@/lib/geo";
+import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -555,40 +555,30 @@ export default function Home() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const qs = buildUnitsQuery(
+    let qs = buildUnitsQuery(
       filters,
       supportedFilterKeys,
       { limit: safeLimit, offset },
       { sort_by: validSortBy, sort_dir: validSortDir }
     );
+    // Pokud máme v URL polygon, pošleme jeho obdélníkový obal na backend
+    // jako min/max latitude/longitude, aby se filtr aplikoval globálně před paginačním limitem.
+    if (polygon && polygon.trim() !== "") {
+      const points = decodePolygon(polygon);
+      const bounds = getPolygonBounds(points);
+      if (bounds) {
+        const { minLat, maxLat, minLng, maxLng } = bounds;
+        qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+      }
+    }
     fetch(`${API_BASE}/units?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: UnitsListResponse) => {
-        let items = data.items ?? [];
-
-        // Pokud je polygon v URL, aplikuj klientský filtr na GPS projektu.
-        if (polygon && polygon.trim() !== "") {
-          const polyPoints = decodePolygon(polygon);
-          if (polyPoints.length >= 3) {
-            items = items.filter((u) => {
-              const proj = u.project as any;
-              const data = (u as any).data as Record<string, unknown> | undefined;
-              const lat =
-                (data?.gps_latitude as number | undefined) ??
-                (proj?.gps_latitude as number | undefined);
-              const lng =
-                (data?.gps_longitude as number | undefined) ??
-                (proj?.gps_longitude as number | undefined);
-              if (lat == null || lng == null) return false;
-              return isPointInPolygon(lat, lng, polyPoints);
-            });
-          }
-        }
-
+        const items = data.items ?? [];
         setUnits(items);
-        setTotal(items.length);
+        setTotal(data.total ?? items.length);
         setSummaryOverride({
-          total: items.length,
+          total: data.total ?? items.length,
           averagePrice: data.average_price_czk ?? null,
           averagePricePerM2: data.average_price_per_m2_czk ?? null,
           availableCount: data.available_count ?? 0,

@@ -369,6 +369,10 @@ def _build_units_query(
     developer: list[str] | None = None,
     building: list[str] | None = None,
     project_names: list[str] | None = None,
+    min_latitude: float | None = None,
+    max_latitude: float | None = None,
+    min_longitude: float | None = None,
+    max_longitude: float | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None.
     Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
@@ -492,6 +496,14 @@ def _build_units_query(
         base = base.join(Project, Project.id == Unit.project_id).where(
             Project.name.in_([str(p) for p in project_names if p])
         )
+    if min_latitude is not None:
+        base = base.where(Unit.gps_latitude >= min_latitude)
+    if max_latitude is not None:
+        base = base.where(Unit.gps_latitude <= max_latitude)
+    if min_longitude is not None:
+        base = base.where(Unit.gps_longitude >= min_longitude)
+    if max_longitude is not None:
+        base = base.where(Unit.gps_longitude <= max_longitude)
     return base
 
 
@@ -614,6 +626,10 @@ def list_units(
     developer: Annotated[list[str] | None, Query(description="Filter by developer (any of)")] = None,
     building: Annotated[list[str] | None, Query(description="Filter by building (any of)")] = None,
     project: Annotated[list[str] | None, Query(description="Filter by project name (any of)")] = None,
+    min_latitude: Annotated[float | None, Query(description="Filter by Unit.gps_latitude >= value")] = None,
+    max_latitude: Annotated[float | None, Query(description="Filter by Unit.gps_latitude <= value")] = None,
+    min_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude >= value")] = None,
+    max_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude <= value")] = None,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -682,6 +698,10 @@ def list_units(
         developer=developer,
         building=building,
         project_names=project,
+        min_latitude=min_latitude,
+        max_latitude=max_latitude,
+        min_longitude=min_longitude,
+        max_longitude=max_longitude,
     )
     base_subq = base.subquery()
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
@@ -1468,6 +1488,10 @@ def list_projects(
     offset: Annotated[int, Query(ge=0)] = 0,
     sort_by: Annotated[str, Query(description="Sort column key (catalog or computed)")] = "avg_price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="asc or desc")] = "asc",
+    min_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude >= value")] = None,
+    max_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude <= value")] = None,
+    min_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude >= value")] = None,
+    max_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude <= value")] = None,
 ) -> ProjectsListResponse:
     allowed_sort = get_projects_sort_keys()
     if sort_by not in allowed_sort:
@@ -1488,6 +1512,14 @@ def list_projects(
                 Project.address.ilike(qq),
             )
         )
+    if min_latitude is not None:
+        stmt = stmt.where(Project.gps_latitude >= min_latitude)
+    if max_latitude is not None:
+        stmt = stmt.where(Project.gps_latitude <= max_latitude)
+    if min_longitude is not None:
+        stmt = stmt.where(Project.gps_longitude >= min_longitude)
+    if max_longitude is not None:
+        stmt = stmt.where(Project.gps_longitude <= max_longitude)
     order = _projects_order_clause(agg_subq, sort_by, sort_dir)
     if order is not None:
         stmt = stmt.order_by(order, Project.id.asc())

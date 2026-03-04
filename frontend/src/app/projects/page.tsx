@@ -15,7 +15,7 @@ import {
 } from "@/lib/filters";
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
-import { decodePolygon, isPointInPolygon } from "@/lib/geo";
+import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -351,12 +351,22 @@ export default function ProjectsPage() {
   useEffect(() => {
     setLoading(true);
     setError(null);
-    const qs = buildUnitsQuery(
+    let qs = buildUnitsQuery(
       filters,
       supportedFilterKeys,
       { limit: safeLimit, offset },
       { sort_by: sortBy, sort_dir: sortDir }
     );
+    // Pokud je v URL polygon (poly), pošli jeho obdélníkový obal na backend,
+    // aby se geografický filtr aplikoval globálně před limitem/offsetem.
+    if (polygon && polygon.trim() !== "") {
+      const points = decodePolygon(polygon);
+      const bounds = getPolygonBounds(points);
+      if (bounds) {
+        const { minLat, maxLat, minLng, maxLng } = bounds;
+        qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+      }
+    }
     fetch(`${API_BASE}/projects?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
@@ -365,23 +375,8 @@ export default function ProjectsPage() {
           : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
         const totalValue =
           json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
-
-        // Pokud je v URL polygon (poly), aplikuj ho jako klientský filtr na GPS.
-        let filtered = rows;
-        if (polygon && polygon.trim() !== "") {
-          const polyPoints = decodePolygon(polygon);
-          if (polyPoints.length >= 3) {
-            filtered = rows.filter((row) => {
-              const lat = row.gps_latitude as number | undefined;
-              const lng = row.gps_longitude as number | undefined;
-              if (lat == null || lng == null) return false;
-              return isPointInPolygon(lat, lng, polyPoints);
-            });
-          }
-        }
-
-        setProjects(filtered);
-        setTotal(filtered.length);
+        setProjects(rows);
+        setTotal(totalValue);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));

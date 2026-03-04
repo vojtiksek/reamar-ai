@@ -39,3 +39,22 @@ export function isPointInPolygon(lat: number, lng: number, polygon: LatLng[]): b
   return inside;
 }
 
+export function getPolygonBounds(polygon: LatLng[]) {
+  if (!polygon || polygon.length === 0) return null;
+  let minLat = Infinity;
+  let maxLat = -Infinity;
+  let minLng = Infinity;
+  let maxLng = -Infinity;
+  for (const p of polygon) {
+    if (p.lat < minLat) minLat = p.lat;
+    if (p.lat > maxLat) maxLat = p.lat;
+    if (p.lng < minLng) minLng = p.lng;
+    if (p.lng > maxLng) maxLng = p.lng;
+  }
+  if (!Number.isFinite(minLat) || !Number.isFinite(maxLat) || !Number.isFinite(minLng) || !Number.isFinite(maxLng)) {
+    return null;
+  }
+  return { minLat, maxLat, minLng, maxLng };
+}
+
+
