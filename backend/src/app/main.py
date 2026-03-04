@@ -847,62 +847,6 @@ def get_projects_overview(
 
 
 @app.get(
-    "/projects",
-    response_model=ProjectsOverviewResponse,
-    summary="List projects (alias for GET /projects/overview)",
-    description="Same as GET /projects/overview. Returns paginated projects with project entity fields and aggregates.",
-)
-def list_projects(
-    db: DbSession,
-    limit: Annotated[int, Query(description="Page size (100, 300, or 500)")] = 100,
-    offset: Annotated[int, Query(ge=0)] = 0,
-    sort_by: Annotated[str, Query(description="Sort column (catalog or aggregate key)")] = "avg_price_per_m2_czk",
-    sort_dir: Annotated[str, Query(description="asc or desc")] = "asc",
-    available: Annotated[bool | None, Query()] = None,
-    min_price: Annotated[int | None, Query(ge=0)] = None,
-    max_price: Annotated[int | None, Query(ge=0)] = None,
-    min_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
-    max_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
-    layout: Annotated[list[str] | None, Query()] = None,
-    district: Annotated[list[str] | None, Query()] = None,
-    municipality: Annotated[list[str] | None, Query()] = None,
-    heating: Annotated[list[str] | None, Query()] = None,
-    windows: Annotated[list[str] | None, Query()] = None,
-    permit_regular: Annotated[bool | None, Query()] = None,
-    renovation: Annotated[bool | None, Query()] = None,
-    air_conditioning: Annotated[bool | None, Query()] = None,
-    cooling_ceilings: Annotated[bool | None, Query()] = None,
-    smart_home: Annotated[bool | None, Query()] = None,
-    min_floor_area: Annotated[float | None, Query(ge=0)] = None,
-    max_floor_area: Annotated[float | None, Query(ge=0)] = None,
-) -> ProjectsOverviewResponse:
-    return get_projects_overview(
-        db=db,
-        limit=limit,
-        offset=offset,
-        sort_by=sort_by,
-        sort_dir=sort_dir,
-        available=available,
-        min_price=min_price,
-        max_price=max_price,
-        min_price_per_m2=min_price_per_m2,
-        max_price_per_m2=max_price_per_m2,
-        layout=layout,
-        district=district,
-        municipality=municipality,
-        heating=heating,
-        windows=windows,
-        permit_regular=permit_regular,
-        renovation=renovation,
-        air_conditioning=air_conditioning,
-        cooling_ceilings=cooling_ceilings,
-        smart_home=smart_home,
-        min_floor_area=min_floor_area,
-        max_floor_area=max_floor_area,
-    )
-
-
-@app.get(
     "/projects/filters",
     summary="Project list filter metadata",
     description="Filter definitions for project list (same unit-level filters as GET /filters; applied when aggregating units by project).",
