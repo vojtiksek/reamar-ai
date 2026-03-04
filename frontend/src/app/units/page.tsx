@@ -871,6 +871,58 @@ export default function Home() {
             {showFrom}–{showTo} z {total}
           </span>
         </div>
+        {countActiveFilters(filters) > 0 && (
+          <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-gray-700">
+            {(() => {
+              const badges: string[] = [];
+              const rangeBases = new Set<string>();
+              for (const [k, v] of Object.entries(filters)) {
+                if (v === undefined) continue;
+                if (k.endsWith("_min") || k.endsWith("_max")) {
+                  rangeBases.add(k.replace(/_(min|max)$/, ""));
+                  continue;
+                }
+                const spec = aliasByKey.get(k);
+                const label = spec?.alias || k;
+                if (Array.isArray(v) && v.length > 0) {
+                  badges.push(`${label}: ${v.join(", ")}`);
+                } else if (typeof v === "boolean") {
+                  badges.push(`${label}: ${v ? "Ano" : "Ne"}`);
+                } else if (typeof v === "number" && !Number.isNaN(v)) {
+                  badges.push(`${label}: ${v}`);
+                }
+              }
+              for (const base of rangeBases) {
+                const min = filters[`${base}_min`] as number | undefined;
+                const max = filters[`${base}_max`] as number | undefined;
+                if (
+                  (min === undefined || Number.isNaN(min as number)) &&
+                  (max === undefined || Number.isNaN(max as number))
+                ) {
+                  continue;
+                }
+                const spec = aliasByKey.get(base);
+                const label = spec?.alias || base;
+                let value = "";
+                if (min != null && !Number.isNaN(min)) {
+                  value += `od ${min}`;
+                }
+                if (max != null && !Number.isNaN(max)) {
+                  value += value ? ` do ${max}` : `do ${max}`;
+                }
+                badges.push(`${label}: ${value}`);
+              }
+              return badges.map((b) => (
+                <span
+                  key={b}
+                  className="rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5"
+                >
+                  {b}
+                </span>
+              ));
+            })()}
+          </div>
+        )}
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -956,13 +1008,19 @@ export default function Home() {
                       </td>
                     </tr>
                   ) : (
-                    units.map((u: Unit) => (
-                      <tr
-                        key={u.external_id}
-                        className="cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
-                        onClick={(e) => handleRowClick(e, u)}
-                      >
-                        {visibleColumns.map(
+                    units.map((u: Unit) => {
+                      const isSold =
+                        (u as any).availability_status === "sold" ||
+                        (u as any).availability_status === "SOLD";
+                      return (
+                        <tr
+                          key={u.external_id}
+                          className={`cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100 ${
+                            isSold ? "bg-red-50/70" : ""
+                          }`}
+                          onClick={(e) => handleRowClick(e, u)}
+                        >
+                          {visibleColumns.map(
                           ({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
                             const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
                             const raw = getValue(u, accessor, catalogKey);
@@ -1060,7 +1118,8 @@ export default function Home() {
                           }
                         )}
                       </tr>
-                    ))
+                    );
+                  })
                   )}
                 </tbody>
               </table>
