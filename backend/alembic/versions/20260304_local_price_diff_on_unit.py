@@ -1,6 +1,6 @@
 """Add local price diff columns to units.
 
-Revision ID: 20260304_local_price_diff_on_unit
+Revision ID: 20260304_local_price_diff
 Revises: 1a2b3c4d5e6f
 Create Date: 2026-03-04
 """
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision = "20260304_local_price_diff_on_unit"
+revision = "20260304_local_price_diff"
 down_revision = "1a2b3c4d5e6f"
 branch_labels = None
 depends_on = None
