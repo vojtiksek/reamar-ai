@@ -885,7 +885,19 @@ export default function Home() {
                 const spec = aliasByKey.get(k);
                 const label = spec?.alias || k;
                 if (Array.isArray(v) && v.length > 0) {
-                  badges.push(`${label}: ${v.join(", ")}`);
+                  const formattedValues = v.map((raw) => {
+                    // Dispozice: layout_1 -> 1kk, layout_1_5 -> 1,5kk
+                    if (k === "layout") {
+                      const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
+                      if (m) {
+                        const whole = m[1];
+                        const frac = m[2];
+                        return frac ? `${whole},${frac}kk` : `${whole}kk`;
+                      }
+                    }
+                    return String(raw);
+                  });
+                  badges.push(`${label}: ${formattedValues.join(", ")}`);
                 } else if (typeof v === "boolean") {
                   badges.push(`${label}: ${v ? "Ano" : "Ne"}`);
                 } else if (typeof v === "number" && !Number.isNaN(v)) {
@@ -1009,9 +1021,13 @@ export default function Home() {
                     </tr>
                   ) : (
                     units.map((u: Unit) => {
-                      const isSold =
-                        (u as any).availability_status === "sold" ||
-                        (u as any).availability_status === "SOLD";
+                      const statusRaw =
+                        (u as any).availability_status ??
+                        (u as any).availability ??
+                        (u as any).data?.availability ??
+                        (u as any).data?.availability_status;
+                      const status = typeof statusRaw === "string" ? statusRaw.toLowerCase() : "";
+                      const isSold = status === "sold";
                       return (
                         <tr
                           key={u.external_id}
