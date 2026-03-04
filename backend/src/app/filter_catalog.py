@@ -69,7 +69,9 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "payment_construction": ("Unit", "payment_construction"),
     "payment_occupancy": ("Unit", "payment_occupancy"),
     "building": ("Unit", "building"),
+    # URL jednotky – v katalogu je jako unit_url, v DB jako Unit.url
     "url": ("Unit", "url"),
+    "unit_url": ("Unit", "url"),
     "address": ("Unit", "address"),
     "city": ("Unit", "city"),
     "municipality": ("Unit", "municipality"),
