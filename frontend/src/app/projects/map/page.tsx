@@ -32,7 +32,8 @@ export default function ProjectsMapPage() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    fetch(`${API_BASE}/projects?limit=1000`)
+    // Backend aktuálně podporuje limity 100 / 300 / 500, proto použijeme 500.
+    fetch(`${API_BASE}/projects?limit=500`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: ProjectsResponse) => {
         if (cancelled) return;
