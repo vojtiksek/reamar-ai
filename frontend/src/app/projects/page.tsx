@@ -559,19 +559,31 @@ export default function ProjectsPage() {
           <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
           <div className="relative z-10 flex shrink-0 items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
             <Link
-              href="/units"
+              href={
+                searchParams?.get("poly")
+                  ? `/units?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
+                  : "/units"
+              }
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Jednotky
             </Link>
             <Link
-              href="/projects"
+              href={
+                searchParams?.get("poly")
+                  ? `/projects?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
+                  : "/projects"
+              }
               className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
             >
               Projekty
             </Link>
             <Link
-              href="/projects/map"
+              href={
+                searchParams?.get("poly")
+                  ? `/projects/map?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
+                  : "/projects/map"
+              }
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Mapa

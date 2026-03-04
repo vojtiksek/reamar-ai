@@ -572,12 +572,13 @@ export default function Home() {
           if (polyPoints.length >= 3) {
             items = items.filter((u) => {
               const proj = u.project as any;
-              const lat = (proj?.gps_latitude ?? (u as any).project?.gps_latitude) as
-                | number
-                | undefined;
-              const lng = (proj?.gps_longitude ?? (u as any).project?.gps_longitude) as
-                | number
-                | undefined;
+              const data = (u as any).data as Record<string, unknown> | undefined;
+              const lat =
+                (data?.gps_latitude as number | undefined) ??
+                (proj?.gps_latitude as number | undefined);
+              const lng =
+                (data?.gps_longitude as number | undefined) ??
+                (proj?.gps_longitude as number | undefined);
               if (lat == null || lng == null) return false;
               return isPointInPolygon(lat, lng, polyPoints);
             });
@@ -896,6 +897,18 @@ export default function Home() {
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Projekty
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const params = new URLSearchParams(searchParams?.toString() ?? "");
+                const poly = params.get("poly");
+                const href = poly ? `/projects/map?poly=${encodeURIComponent(poly)}` : "/projects/map";
+                router.push(href);
+              }}
+              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+            >
+              Mapa
             </button>
           </div>
           <button
