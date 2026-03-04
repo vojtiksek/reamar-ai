@@ -341,6 +341,17 @@ def recompute_local_price_diffs(db: Session) -> None:
         group = _layout_group(str(layout))
         if group is None:
             continue
+
+        # Zjisti, zda je jednotka aktuálně "na trhu" – použijeme ji jako srovnávací
+        # jen pokud je available nebo reserved (ne sold).
+        status_raw = (
+            (data.get("availability_status") or u.availability_status or "")
+            if isinstance(data, dict)
+            else (u.availability_status or "")
+        )
+        status = str(status_raw).strip().lower()
+        on_market = status in {"available", "reserved"}
+
         infos.append(
             {
                 "unit": u,
@@ -350,11 +361,35 @@ def recompute_local_price_diffs(db: Session) -> None:
                 "price_pm2": price_pm2_f,
                 "area": area_f,
                 "group": group,
+                "on_market": on_market,
             }
         )
 
     if not infos:
         return
+
+    # Build a simple spatial index (grid) in lat/lon to avoid O(N^2) neighbour search.
+    # Cell size ~250 m; still use exact haversine for final radius check, so results stay identical.
+    avg_lat = sum(info["lat"] for info in infos) / len(infos)
+    meters_per_deg_lat = 111_320.0
+    meters_per_deg_lng = 111_320.0 * math.cos(math.radians(avg_lat))
+    if meters_per_deg_lng <= 0:
+        meters_per_deg_lng = 111_320.0
+    cell_size_m = 250.0
+    cell_deg_lat = cell_size_m / meters_per_deg_lat
+    cell_deg_lng = cell_size_m / meters_per_deg_lng
+
+    def _cell_coords(lat: float, lon: float) -> tuple[int, int]:
+        return (
+            int(math.floor(lat / cell_deg_lat)),
+            int(math.floor(lon / cell_deg_lng)),
+        )
+
+    grid: dict[tuple[int, int], list[dict[str, Any]]] = {}
+    for info in infos:
+        cx, cy = _cell_coords(info["lat"], info["lon"])
+        info["cell"] = (cx, cy)
+        grid.setdefault((cx, cy), []).append(info)
 
     def in_area_bucket(group: str, area: float, target_group: str) -> bool:
         """Check if unit with (group, area) belongs to bucket for target_group."""
@@ -395,23 +430,40 @@ def recompute_local_price_diffs(db: Session) -> None:
             bucket_3_prices: list[float] = []
             bucket_4_prices: list[float] = []
 
-            for other in infos:
-                if other["id"] == info["id"]:
-                    continue
-                d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
-                if d > radius:
-                    continue
-                g2 = other["group"]
-                a2 = other["area"]
-                p2 = other["price_pm2"]
-                if in_area_bucket(g2, a2, "1kk"):
-                    bucket_1_prices.append(p2)
-                if in_area_bucket(g2, a2, "2kk"):
-                    bucket_2_prices.append(p2)
-                if in_area_bucket(g2, a2, "3kk"):
-                    bucket_3_prices.append(p2)
-                if in_area_bucket(g2, a2, "4kk"):
-                    bucket_4_prices.append(p2)
+            # Determine how many grid cells around the current cell we need
+            # to cover the given radius in both directions.
+            max_dlat = radius / meters_per_deg_lat
+            max_dlon = radius / meters_per_deg_lng
+            max_cx_offset = int(math.ceil(max_dlat / cell_deg_lat))
+            max_cy_offset = int(math.ceil(max_dlon / cell_deg_lng))
+            cx, cy = info["cell"]
+
+            for dx in range(-max_cx_offset, max_cx_offset + 1):
+                for dy in range(-max_cy_offset, max_cy_offset + 1):
+                    cell_infos = grid.get((cx + dx, cy + dy))
+                    if not cell_infos:
+                        continue
+                    for other in cell_infos:
+                        if other["id"] == info["id"]:
+                            continue
+                        # Do srovnávacího trhu bereme jen jednotky, které jsou aktuálně
+                        # na trhu (available nebo reserved). Prodané jednotky neovlivňují průměr.
+                        if not other.get("on_market", False):
+                            continue
+                        d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
+                        if d > radius:
+                            continue
+                        g2 = other["group"]
+                        a2 = other["area"]
+                        p2 = other["price_pm2"]
+                        if in_area_bucket(g2, a2, "1kk"):
+                            bucket_1_prices.append(p2)
+                        if in_area_bucket(g2, a2, "2kk"):
+                            bucket_2_prices.append(p2)
+                        if in_area_bucket(g2, a2, "3kk"):
+                            bucket_3_prices.append(p2)
+                        if in_area_bucket(g2, a2, "4kk"):
+                            bucket_4_prices.append(p2)
 
             ref_avg: float | None = None
             if group == "1kk":
