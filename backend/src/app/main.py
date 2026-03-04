@@ -207,6 +207,7 @@ def recompute_units_local_price_diffs(db: DbSession) -> dict[str, Any]:
     from .aggregates import recompute_local_price_diffs
 
     recompute_local_price_diffs(db)
+    db.commit()
     return {"status": "ok"}
 
 
