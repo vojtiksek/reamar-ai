@@ -286,8 +286,6 @@ export default function Home() {
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsConfig, setColumnsConfig] = useState<ColumnConfig[] | null>(null);
   const [serverColumns, setServerColumns] = useState<ColumnDef[] | null>(null);
-  const [clientSortBy, setClientSortBy] = useState<string | null>(null);
-  const [clientSortDir, setClientSortDir] = useState<"asc" | "desc">("asc");
   const [summaryOverride, setSummaryOverride] = useState<{
     total: number;
     averagePrice: number | null;
@@ -410,9 +408,6 @@ export default function Home() {
   const validSortDir = SORT_DIR_OPTIONS.includes(sortDir as "asc" | "desc") ? sortDir : DEFAULT_SORT_DIR;
 
   useEffect(() => {
-    // When we trigger a backend fetch, clear any client-side sort
-    setClientSortBy(null);
-    setClientSortDir("asc");
     setLoading(true);
     setError(null);
     const qs = buildUnitsQuery(
@@ -513,25 +508,16 @@ export default function Home() {
       const backendField = BACKEND_SORT_FIELDS.find(
         (f) => accessor === f || accessor.endsWith(`.${f}`)
       );
-
-      if (backendField) {
-        // Backend-supported sort: use server-side sorting and clear client sort
-        setClientSortBy(null);
-        setClientSortDir("asc");
-        if (backendField !== sortBy) {
-          setLimitAndSort({ sortBy: backendField, sortDir: "asc" });
-        } else {
-          setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
-        }
+      if (!backendField) {
+        // Sloupec neumí globální řazení na backendu – klik ignorujeme,
+        // a tím pádem nikdy neřadíme jen aktuální stránku.
         return;
       }
-
-      // Client-side sort for all other columns
-      setClientSortBy(columnKey);
-      setClientSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
-
-      // NOTE: We keep sortBy/sortDir unchanged so backend query stays as-is;
-      // only the current page rows are re-ordered in-memory.
+      if (backendField !== sortBy) {
+        setLimitAndSort({ sortBy: backendField, sortDir: "asc" });
+      } else {
+        setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
+      }
     },
     [sortBy, sortDir, setLimitAndSort]
   );
@@ -541,47 +527,6 @@ export default function Home() {
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
-
-  const displayedUnits = useMemo(() => {
-    if (!clientSortBy) return units;
-    const col = serverColumns?.find((c) => c.key === clientSortBy);
-    if (!col) return units;
-    const accessor = col.accessor || col.key;
-    const dt = col.data_type;
-
-    const getRaw = (u: Unit): unknown => {
-      const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[col.key] ?? col.key;
-      return getValue(u, accessor, catalogKey);
-    };
-
-    const sorted = [...units].sort((a, b) => {
-      const va = getRaw(a);
-      const vb = getRaw(b);
-
-      // Treat null/undefined as "last"
-      const aNull = va === null || va === undefined;
-      const bNull = vb === null || vb === undefined;
-      if (aNull && bNull) return 0;
-      if (aNull) return 1;
-      if (bNull) return -1;
-
-      if (dt === "number") {
-        const na = Number(va);
-        const nb = Number(vb);
-        if (Number.isNaN(na) && Number.isNaN(nb)) return 0;
-        if (Number.isNaN(na)) return 1;
-        if (Number.isNaN(nb)) return -1;
-        return na - nb;
-      }
-
-      const sa = String(va);
-      const sb = String(vb);
-      return sa.localeCompare(sb, "cs", { sensitivity: "base" });
-    });
-
-    if (clientSortDir === "desc") sorted.reverse();
-    return sorted;
-  }, [units, clientSortBy, clientSortDir, serverColumns]);
 
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
@@ -593,6 +538,7 @@ export default function Home() {
           label: c.label,
           visible: true,
         }));
+      const backendSortable = new Set<string>(BACKEND_SORT_FIELDS);
       return baseConfig
         .filter((c) => c.visible)
         .map((c) => {
@@ -612,6 +558,8 @@ export default function Home() {
             label: c.label || col.label,
             accessor,
             align,
+            // Povolit klikatelné řazení jen pro sloupce, které umí backend sortovat globálně.
+            sortable: backendSortable.has(accessor) || backendSortable.has(col.key),
           };
           return withAlign;
         })
