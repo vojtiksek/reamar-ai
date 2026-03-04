@@ -58,14 +58,50 @@ type ColumnDef = {
 
 const DEFAULT_LIMIT = 100;
 const ROWS_PER_PAGE_OPTIONS = [100, 300, 500] as const;
+// Všechna pole, která umíme na backendu řadit globálně (musí sedět s ALLOWED_SORT_BY v backendu).
 const SORT_BY_OPTIONS = [
+  // Unit-level fields
   "price_per_m2_czk",
   "price_czk",
   "ride_to_center_min",
   "public_transport_to_center_min",
   "floor_area_m2",
+  "total_area_m2",
+  "exterior_area_m2",
+  "balcony_area_m2",
+  "terrace_area_m2",
+  "garden_area_m2",
+  "days_on_market",
   "first_seen",
   "last_seen",
+  "updated_at",
+  "payment_contract",
+  "smart_home",
+  "permit_regular",
+  "municipality",
+  "district",
+  // Project-level aggregates (ProjectAggregates injected into unit.data)
+  "total_units",
+  "available_units",
+  "availability_ratio",
+  "avg_price_czk",
+  "min_price_czk",
+  "max_price_czk",
+  "avg_price_per_m2_czk",
+  "avg_floor_area_m2",
+  "min_parking_indoor_price_czk",
+  "max_parking_indoor_price_czk",
+  "min_parking_outdoor_price_czk",
+  "max_parking_outdoor_price_czk",
+  "project_first_seen",
+  "project_last_seen",
+  "max_days_on_market",
+  "min_payment_contract",
+  "max_payment_contract",
+  "min_payment_construction",
+  "max_payment_construction",
+  "min_payment_occupancy",
+  "max_payment_occupancy",
 ] as const;
 const SORT_DIR_OPTIONS = ["asc", "desc"] as const;
 const DEFAULT_SORT_BY = "price_per_m2_czk";
