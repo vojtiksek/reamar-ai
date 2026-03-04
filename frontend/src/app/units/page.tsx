@@ -1059,14 +1059,22 @@ export default function Home() {
                         (u as any).availability ??
                         (u as any).data?.availability ??
                         (u as any).data?.availability_status;
-                      const status = typeof statusRaw === "string" ? statusRaw.toLowerCase() : "";
+                      const status =
+                        typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
                       const isSold = status === "sold";
+                      const isReserved = status === "reserved";
+                      const baseRowClass = "cursor-pointer hover:bg-gray-100";
+                      const stripeClass =
+                        isSold || isReserved ? "" : "odd:bg-white even:bg-gray-50/60";
+                      const statusClass = isSold
+                        ? "bg-red-100"
+                        : isReserved
+                        ? "bg-yellow-100"
+                        : "";
                       return (
                         <tr
                           key={u.external_id}
-                          className={`cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100 ${
-                            isSold ? "bg-red-50/70" : ""
-                          }`}
+                          className={`${baseRowClass} ${stripeClass} ${statusClass}`}
                           onClick={(e) => handleRowClick(e, u)}
                         >
                           {visibleColumns.map(
