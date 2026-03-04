@@ -85,6 +85,7 @@ const FALLBACK_TABLE_COLUMNS: { key: string; label: string; accessor: string; al
 ];
 
 const BACKEND_SORT_FIELDS = [
+  // Unit-level fields
   "price_per_m2_czk",
   "price_czk",
   "ride_to_center_min",
@@ -93,6 +94,33 @@ const BACKEND_SORT_FIELDS = [
   "first_seen",
   "last_seen",
   "updated_at",
+  "payment_contract",
+  "smart_home",
+  "permit_regular",
+  "municipality",
+  "district",
+  // Project-level aggregates (ProjectAggregates injected into unit.data)
+  "total_units",
+  "available_units",
+  "availability_ratio",
+  "avg_price_czk",
+  "min_price_czk",
+  "max_price_czk",
+  "avg_price_per_m2_czk",
+  "avg_floor_area_m2",
+  "min_parking_indoor_price_czk",
+  "max_parking_indoor_price_czk",
+  "min_parking_outdoor_price_czk",
+  "max_parking_outdoor_price_czk",
+  "project_first_seen",
+  "project_last_seen",
+  "max_days_on_market",
+  "min_payment_contract",
+  "max_payment_contract",
+  "min_payment_construction",
+  "max_payment_construction",
+  "min_payment_occupancy",
+  "max_payment_occupancy",
 ] as const;
 
 type ColumnConfig = {
@@ -786,42 +814,40 @@ export default function Home() {
               <table className="data-grid-table">
                 <thead className="bg-gray-50">
                   <tr>
-                {visibleColumns.map(({ key, label, accessor, align, sortable, data_type }, columnIndex) => {
-                    const backendField = BACKEND_SORT_FIELDS.find(
-                      (f) => accessor === f || accessor.endsWith(`.${f}`)
-                    );
-                    const isBackendSortable = !!backendField;
-                    const isClientActive = clientSortBy === key;
-                    const isBackendActive = backendField === sortBy && !clientSortBy;
-                    const isActive = isClientActive || isBackendActive;
-                      const isStickyFirst = columnIndex === 0;
-                      return (
-                        <th
-                          key={key}
-                          onClick={() => handleSortHeaderClick(key, accessor, data_type)}
-                          className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 ${
-                            align === "right" ? "text-right" : "text-left"
-                          } ${sortable ? "cursor-pointer select-none hover:bg-gray-100" : ""} ${
-                            isActive ? "bg-gray-100" : ""
-                          } ${isStickyFirst ? "left-0 z-20" : ""}`}
-                        >
-                          <span className="inline-flex items-center gap-1">
-                            {label}
-                            {isActive && (
-                              <span className="text-gray-600">
-                                {clientSortBy
-                                  ? clientSortDir === "asc"
-                                    ? "▲"
-                                    : "▼"
-                                  : sortDir === "asc"
-                                  ? "▲"
-                                  : "▼"}
-                              </span>
-                            )}
-                          </span>
-                        </th>
-                      );
-                    })}
+                    {visibleColumns.map(
+                      ({ key, label, accessor, align, sortable, data_type }, columnIndex) => {
+                        const backendField = BACKEND_SORT_FIELDS.find(
+                          (f) => accessor === f || accessor.endsWith(`.${f}`)
+                        );
+                        const isBackendSortable = !!backendField;
+                        const isActive = isBackendSortable && backendField === sortBy;
+                        const isStickyFirst = columnIndex === 0;
+                        return (
+                          <th
+                            key={key}
+                            onClick={() => handleSortHeaderClick(key, accessor, data_type)}
+                            className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 ${
+                              align === "right" ? "text-right" : "text-left"
+                            } ${
+                              sortable && isBackendSortable
+                                ? "cursor-pointer select-none hover:bg-gray-100"
+                                : ""
+                            } ${isActive ? "bg-gray-100" : ""} ${
+                              isStickyFirst ? "left-0 z-20" : ""
+                            }`}
+                          >
+                            <span className="inline-flex items-center gap-1">
+                              {label}
+                              {isActive && (
+                                <span className="text-gray-600">
+                                  {sortDir === "asc" ? "▲" : "▼"}
+                                </span>
+                              )}
+                            </span>
+                          </th>
+                        );
+                      }
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 bg-white">
@@ -835,7 +861,7 @@ export default function Home() {
                       </td>
                     </tr>
                   ) : (
-                    displayedUnits.map((u) => (
+                    units.map((u: Unit) => (
                       <tr
                         key={u.external_id}
                         className="cursor-pointer odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"

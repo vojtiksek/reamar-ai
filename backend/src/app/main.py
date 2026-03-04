@@ -227,6 +227,7 @@ def get_projects_columns() -> list[dict]:
 
 
 ALLOWED_SORT_BY = (
+    # Unit-level sortable fields
     "price_per_m2_czk",
     "price_czk",
     "ride_to_center_min",
@@ -240,6 +241,28 @@ ALLOWED_SORT_BY = (
     "permit_regular",
     "municipality",
     "district",
+    # Project-level aggregate fields injected into unit.data (via ProjectAggregates)
+    "total_units",
+    "available_units",
+    "availability_ratio",
+    "avg_price_czk",
+    "min_price_czk",
+    "max_price_czk",
+    "avg_price_per_m2_czk",
+    "avg_floor_area_m2",
+    "min_parking_indoor_price_czk",
+    "max_parking_indoor_price_czk",
+    "min_parking_outdoor_price_czk",
+    "max_parking_outdoor_price_czk",
+    "project_first_seen",
+    "project_last_seen",
+    "max_days_on_market",
+    "min_payment_contract",
+    "max_payment_contract",
+    "min_payment_construction",
+    "max_payment_construction",
+    "min_payment_occupancy",
+    "max_payment_occupancy",
 )
 ALLOWED_SORT_DIR = ("asc", "desc")
 
@@ -437,7 +460,8 @@ def list_units(
     avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
     available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
 
-    sort_column = {
+    # Řazení: část polí je přímo na Unit, část jsou projektové agregáty (ProjectAggregates).
+    unit_sort_columns: dict[str, Any] = {
         "price_per_m2_czk": Unit.price_per_m2_czk,
         "price_czk": Unit.price_czk,
         "ride_to_center_min": Unit.ride_to_center_min,
@@ -451,15 +475,56 @@ def list_units(
         "permit_regular": Unit.permit_regular,
         "municipality": Unit.municipality,
         "district": Unit.district,
-    }[sort_by]
+    }
+
     order_fn = asc if sort_dir == "asc" else desc
-    order_clause = order_fn(sort_column).nulls_last()
-    stmt = (
-        base.options(selectinload(Unit.project))
-        .order_by(order_clause, Unit.external_id.asc())
-        .offset(offset)
-        .limit(limit)
-    )
+
+    if sort_by in unit_sort_columns:
+        sort_column = unit_sort_columns[sort_by]
+        order_clause = order_fn(sort_column).nulls_last()
+        stmt = (
+            base.options(selectinload(Unit.project))
+            .order_by(order_clause, Unit.external_id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
+    else:
+        # Projektové agregáty – join na ProjectAggregates a řazení podle jejich sloupců.
+        from .models import ProjectAggregates  # local import to avoid circular
+
+        agg_sort_columns: dict[str, Any] = {
+            "total_units": ProjectAggregates.total_units,
+            "available_units": ProjectAggregates.available_units,
+            "availability_ratio": ProjectAggregates.availability_ratio,
+            "avg_price_czk": ProjectAggregates.avg_price_czk,
+            "min_price_czk": ProjectAggregates.min_price_czk,
+            "max_price_czk": ProjectAggregates.max_price_czk,
+            "avg_price_per_m2_czk": ProjectAggregates.avg_price_per_m2_czk,
+            "avg_floor_area_m2": ProjectAggregates.avg_floor_area_m2,
+            "min_parking_indoor_price_czk": ProjectAggregates.min_parking_indoor_price_czk,
+            "max_parking_indoor_price_czk": ProjectAggregates.max_parking_indoor_price_czk,
+            "min_parking_outdoor_price_czk": ProjectAggregates.min_parking_outdoor_price_czk,
+            "max_parking_outdoor_price_czk": ProjectAggregates.max_parking_outdoor_price_czk,
+            "project_first_seen": ProjectAggregates.project_first_seen,
+            "project_last_seen": ProjectAggregates.project_last_seen,
+            "max_days_on_market": ProjectAggregates.max_days_on_market,
+            "min_payment_contract": ProjectAggregates.min_payment_contract,
+            "max_payment_contract": ProjectAggregates.max_payment_contract,
+            "min_payment_construction": ProjectAggregates.min_payment_construction,
+            "max_payment_construction": ProjectAggregates.max_payment_construction,
+            "min_payment_occupancy": ProjectAggregates.min_payment_occupancy,
+            "max_payment_occupancy": ProjectAggregates.max_payment_occupancy,
+        }
+
+        sort_column = agg_sort_columns[sort_by]
+        order_clause = order_fn(sort_column).nulls_last()
+        stmt = (
+            base.outerjoin(ProjectAggregates, ProjectAggregates.project_id == Unit.project_id)
+            .options(selectinload(Unit.project))
+            .order_by(order_clause, Unit.external_id.asc())
+            .offset(offset)
+            .limit(limit)
+        )
     units = db.execute(stmt).scalars().all()
 
     if not units:
