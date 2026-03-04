@@ -12,7 +12,7 @@ import {
   filtersToSearchParams,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
-import { formatValue } from "@/lib/format";
+import { formatPercent, formatValue } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -44,6 +44,8 @@ type UnitsListResponse = {
   average_price_per_m2_czk?: number | null;
   available_count?: number | null;
 };
+
+type LocalDiffRadius = "none" | "500" | "1000" | "2000";
 
 type ColumnDef = {
   key: string;
@@ -288,6 +290,10 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.max_payment_construction": "max_payment_construction",
   "project.min_payment_occupancy": "min_payment_occupancy",
   "project.max_payment_occupancy": "max_payment_occupancy",
+  // Lokální cenová odchylka (percent)
+  local_price_diff_500m: "local_price_diff_500m",
+  local_price_diff_1000m: "local_price_diff_1000m",
+  local_price_diff_2000m: "local_price_diff_2000m",
 };
 
 function getValue(unit: Unit, accessor: string, catalogKey?: string): unknown {
@@ -416,6 +422,9 @@ export default function Home() {
     averagePricePerM2: number | null;
     availableCount: number;
   } | null>(null);
+
+  const [localDiffRadius, setLocalDiffRadius] = useState<LocalDiffRadius>("none");
+  const [recomputingLocalDiffs, setRecomputingLocalDiffs] = useState(false);
 
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
@@ -667,7 +676,7 @@ export default function Home() {
           visible: true,
         }));
       const backendSortable = new Set<string>(BACKEND_SORT_FIELDS);
-      return baseConfig
+      let cols = baseConfig
         .filter((c) => c.visible)
         .map((c) => {
           const col = byKey.get(c.key);
@@ -692,6 +701,33 @@ export default function Home() {
           return withAlign;
         })
         .filter(Boolean) as Array<ColumnDef & { align: "left" | "right" }>;
+
+      // Dynamicky přidáme sloupec pro lokální cenovou odchylku podle zvoleného radiusu.
+      const radiusKey =
+        localDiffRadius === "500"
+          ? "local_price_diff_500m"
+          : localDiffRadius === "1000"
+          ? "local_price_diff_1000m"
+          : localDiffRadius === "2000"
+          ? "local_price_diff_2000m"
+          : null;
+      if (radiusKey) {
+        const base = serverColumns.find((c) => c.key === radiusKey);
+        if (base) {
+          cols = [
+            ...cols,
+            {
+              ...base,
+              key: radiusKey,
+              label: base.label || "Odchylka od trhu",
+              accessor: base.accessor || radiusKey,
+              align: "right" as const,
+              sortable: backendSortable.has(base.accessor || base.key),
+            },
+          ];
+        }
+      }
+      return cols;
     }
     // Fallback to static columns when /columns is not available
     return FALLBACK_TABLE_COLUMNS.map((c) => ({
@@ -874,6 +910,70 @@ export default function Home() {
           <span className="text-xs text-gray-600">
             {showFrom}–{showTo} z {total}
           </span>
+          <div className="ml-4 flex items-center gap-1.5 text-xs">
+            <span className="text-gray-600">Cena vs. trh:</span>
+            {(["none", "500", "1000", "2000"] as LocalDiffRadius[]).map((r) => {
+              const label =
+                r === "none" ? "Vyp" : r === "500" ? "500 m" : r === "1000" ? "1 km" : "2 km";
+              const isActive = localDiffRadius === r;
+              return (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => setLocalDiffRadius(r)}
+                  className={`rounded border px-2 py-0.5 ${
+                    isActive
+                      ? "border-black bg-black text-white"
+                      : "border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  setRecomputingLocalDiffs(true);
+                  const res = await fetch(`${API_BASE}/units/local-price-diffs/recompute`, {
+                    method: "POST",
+                  });
+                  if (!res.ok) {
+                    throw new Error(`HTTP ${res.status}`);
+                  }
+                  // Po úspěšném přepočtu znovu načteme aktuální stránku.
+                  const qs = buildUnitsQuery(
+                    filters,
+                    supportedFilterKeys,
+                    { limit: safeLimit, offset },
+                    { sort_by: validSortBy, sort_dir: validSortDir }
+                  );
+                  const data: UnitsListResponse = await fetch(
+                    `${API_BASE}/units?${qs}`
+                  ).then((r) => r.json());
+                  setUnits(data.items ?? []);
+                  setTotal(data.total ?? 0);
+                  setSummaryOverride({
+                    total: data.total ?? 0,
+                    averagePrice: data.average_price_czk ?? null,
+                    averagePricePerM2: data.average_price_per_m2_czk ?? null,
+                    availableCount: data.available_count ?? 0,
+                  });
+                } catch (e) {
+                  // eslint-disable-next-line no-console
+                  console.error("Recompute local diffs failed", e);
+                  setError("Přepočet lokální ceny selhal.");
+                } finally {
+                  setRecomputingLocalDiffs(false);
+                }
+              }}
+              disabled={recomputingLocalDiffs || loading}
+              className="ml-2 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {recomputingLocalDiffs ? "Přepočítávám…" : "Přepočítat"}
+            </button>
+          </div>
         </div>
         {countActiveFilters(filters) > 0 && (
           <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-gray-700">
@@ -1084,12 +1184,32 @@ export default function Home() {
                           ({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
                             const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
                             const raw = getValue(u, accessor, catalogKey);
-                            const formatted = formatValue(raw, {
+                            let formatted = formatValue(raw, {
                               display_format: df ?? data_type,
                               key,
                             });
                             const isAvailableCol = key === "available";
                             const isStickyFirst = columnIndex === 0;
+                            const isLocalDiffCol =
+                              (localDiffRadius === "500" && key === "local_price_diff_500m") ||
+                              (localDiffRadius === "1000" && key === "local_price_diff_1000m") ||
+                              (localDiffRadius === "2000" && key === "local_price_diff_2000m");
+                            let localDiffClass = "";
+                            if (isLocalDiffCol) {
+                              const n =
+                                typeof raw === "number"
+                                  ? raw
+                                  : raw != null
+                                  ? Number(raw)
+                                  : Number.NaN;
+                              if (!Number.isNaN(n)) {
+                                const absText = formatPercent(Math.abs(n));
+                                const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+                                formatted = `${sign}${absText}`;
+                                if (n > 0) localDiffClass = "text-red-600 font-semibold";
+                                else if (n < 0) localDiffClass = "text-green-600 font-semibold";
+                              }
+                            }
                             const externalId = getExternalIdForRow(u);
                             const isEditable =
                               key === "available" || key === "price_czk" || key === "price_per_m2_czk";
@@ -1110,6 +1230,8 @@ export default function Home() {
                                       ? "text-green-600"
                                       : "text-red-600"
                                     : ""
+                                } ${
+                                  localDiffClass
                                 } ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${
                                   isEditable ? "cursor-pointer" : ""
                                 }`}
