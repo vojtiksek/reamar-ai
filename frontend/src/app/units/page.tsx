@@ -1066,15 +1066,18 @@ export default function Home() {
                       const baseRowClass = "cursor-pointer hover:bg-gray-100";
                       const stripeClass =
                         isSold || isReserved ? "" : "odd:bg-white even:bg-gray-50/60";
-                      const statusClass = isSold
-                        ? "bg-red-100"
-                        : isReserved
-                        ? "bg-yellow-100"
-                        : "";
+                      const statusClass = "";
+                      const rowStyle =
+                        isSold || isReserved
+                          ? {
+                              backgroundColor: isSold ? "#fecaca" : "#fef3c7", // tailwind-ish: red-200 / amber-100
+                            }
+                          : undefined;
                       return (
                         <tr
                           key={u.external_id}
                           className={`${baseRowClass} ${stripeClass} ${statusClass}`}
+                          style={rowStyle}
                           onClick={(e) => handleRowClick(e, u)}
                         >
                           {visibleColumns.map(
