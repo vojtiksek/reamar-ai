@@ -918,16 +918,15 @@ export default function Home() {
                         const isBackendSortable = !!backendField;
                         const isActive = isBackendSortable && backendField === sortBy;
                         const isStickyFirst = columnIndex === 0;
+                        const canSort = isBackendSortable;
                         return (
                           <th
                             key={key}
-                            onClick={() => handleSortHeaderClick(key, accessor, data_type)}
+                            onClick={canSort ? () => handleSortHeaderClick(key, accessor, data_type) : undefined}
                             className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 ${
                               align === "right" ? "text-right" : "text-left"
                             } ${
-                              sortable && isBackendSortable
-                                ? "cursor-pointer select-none hover:bg-gray-100"
-                                : ""
+                              canSort ? "cursor-pointer select-none hover:bg-gray-100" : ""
                             } ${isActive ? "bg-gray-100" : ""} ${
                               isStickyFirst ? "left-0 z-20" : ""
                             }`}
