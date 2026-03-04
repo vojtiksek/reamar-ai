@@ -440,7 +440,18 @@ def _build_units_query(
     if max_floors is not None:
         base = base.where(Unit.floors <= max_floors)
     if orientation is not None and len(orientation) > 0:
-        base = base.where(Unit.orientation.in_(orientation))
+        # Orientace: hodnoty jako "E", "N", "S", "W" nebo kombinace "E,N,S".
+        # Filtr má význam "alespoň jedna z vybraných světových stran".
+        clauses = []
+        for d in orientation:
+            if not d:
+                continue
+            token = str(d).strip().upper()
+            if not token:
+                continue
+            clauses.append(Unit.orientation.ilike(f"%{token}%"))
+        if clauses:
+            base = base.where(or_(*clauses))
     if category is not None and len(category) > 0:
         base = base.where(Unit.category.in_(category))
     if overall_quality is not None and len(overall_quality) > 0:

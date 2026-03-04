@@ -13,6 +13,17 @@ type Props = {
   onApply: () => void;
 };
 
+function formatFilterValueLabel(spec: FilterSpec, val: string): string {
+  // Dispozice: layout_1 -> "1kk", layout_2 -> "2kk", …
+  if (spec.key === "layout") {
+    const m = /^layout_(\d+)$/.exec(String(val));
+    if (m) {
+      return `${m[1]}kk`;
+    }
+  }
+  return String(val);
+}
+
 function stepFromDecimals(decimals: number | null): string {
   if (decimals == null) return "any";
   const step = Math.pow(10, -(decimals ?? 0));
@@ -138,7 +149,8 @@ function FilterField({
   if (spec.type === "enum") {
     const selected = (currentFilters[spec.key] as string[] | undefined) ?? [];
     const selectedSet = new Set(selected.map(String));
-    const options = (spec.options ?? []) as string[];
+    const options =
+      spec.key === "orientation" ? (["E", "N", "S", "W"] as string[]) : ((spec.options ?? []) as string[]);
     return (
       <div className="space-y-2">
         <span className="block text-sm font-medium text-gray-700">
@@ -162,7 +174,7 @@ function FilterField({
                   className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
                 />
                 <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
-                  {val}
+                  {formatFilterValueLabel(spec, val)}
                 </label>
               </li>
             );
