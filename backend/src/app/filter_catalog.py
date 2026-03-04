@@ -225,7 +225,9 @@ def get_filter_groups(db: Session) -> dict:
             continue
         if filter_type == "boolean":
             out["options"] = [True, False]
-        elif filter_type == "enum":
+        elif filter_type in ("enum", "enum_search"):
+            # Pro enum i enum_search vracíme seznam možných hodnot,
+            # aby UI mohlo nabídnout našeptávání i vícenásobný výběr.
             entity_db, attr = CATALOG_TO_DB[key]
             out["options"] = _get_enum_options(db, entity_db, attr)
         groups[group_name].append(out)

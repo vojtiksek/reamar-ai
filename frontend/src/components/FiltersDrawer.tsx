@@ -16,9 +16,15 @@ type Props = {
 function formatFilterValueLabel(spec: FilterSpec, val: string): string {
   // Dispozice: layout_1 -> "1kk", layout_2 -> "2kk", …
   if (spec.key === "layout") {
-    const m = /^layout_(\d+)$/.exec(String(val));
+    const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(val));
     if (m) {
-      return `${m[1]}kk`;
+      const whole = m[1];
+      const frac = m[2];
+      if (frac) {
+        // layout_1_5 -> "1,5kk"
+        return `${whole},${frac}kk`;
+      }
+      return `${whole}kk`;
     }
   }
   return String(val);
@@ -270,6 +276,18 @@ function EnumSearchField({
         type="text"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !disabled) {
+            e.preventDefault();
+            const first = filtered[0];
+            if (!first) return;
+            const val = String(first);
+            if (!selectedSet.has(val)) {
+              onChange(spec.key, [...selected, val]);
+            }
+            setSearch("");
+          }
+        }}
         placeholder="Hledat…"
         disabled={disabled}
         className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
@@ -282,7 +300,7 @@ function EnumSearchField({
               key={val}
               className="inline-flex items-center gap-1 rounded-full bg-gray-200 py-0.5 pl-2 pr-1 text-sm font-medium text-gray-800"
             >
-              {val}
+              {formatFilterValueLabel(spec, val)}
               <button
                 type="button"
                 onClick={() => removeChip(val)}
@@ -315,7 +333,7 @@ function EnumSearchField({
                 className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
               />
               <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
-                {val}
+                {formatFilterValueLabel(spec, val)}
               </label>
             </li>
           );
