@@ -1242,6 +1242,9 @@ def get_projects_filters(db: DbSession):
 def _project_agg_subquery():
     """Subquery: project_id + all computed aggregates from Unit. Group by project_id."""
     units_available = func.sum(case((Unit.available.is_(True), 1), else_=0)).label("units_available")
+    units_reserved = func.sum(
+        case((func.lower(Unit.availability_status) == "reserved", 1), else_=0)
+    ).label("units_reserved")
     units_priced = func.sum(case((Unit.price_czk.isnot(None), 1), else_=0)).label("units_priced")
     median_pm2 = func.percentile_cont(0.5).within_group(Unit.price_per_m2_czk.asc()).label(
         "median_price_per_m2_czk"
@@ -1258,6 +1261,7 @@ def _project_agg_subquery():
             Unit.project_id,
             func.count(Unit.id).label("units_total"),
             units_available,
+            units_reserved,
             units_priced,
             func.min(Unit.price_czk).label("min_price_czk"),
             func.avg(Unit.price_czk).label("avg_price_czk"),
@@ -1336,8 +1340,10 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         out["gps_longitude"] = float(lon_agg) if isinstance(lon_agg, Decimal) else lon_agg
     units_total = agg.get("units_total") or 0
     units_available = int(agg.get("units_available") or 0)
+    units_reserved = int(agg.get("units_reserved") or 0)
     out["units_total"] = units_total
     out["units_available"] = units_available
+    out["units_reserved"] = units_reserved
     out["units_priced"] = int(agg.get("units_priced") or 0)
 
     # Core aggregate metrics
