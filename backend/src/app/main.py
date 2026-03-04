@@ -26,7 +26,7 @@ from .overrides import (
     unit_to_response_dict,
     apply_project_overrides_to_item,
 )
-from .aggregates import recompute_project_aggregates
+from .aggregates import recompute_project_aggregates, _haversine_m, _layout_group
 from .project_catalog import (
     COMPUTED_COLUMN_KEYS,
     PROJECT_CATALOG_TO_ATTR,
@@ -126,6 +126,29 @@ class UnitsListResponse(BaseModel):
     available_count: int | None = None
 
 
+class LocalPriceDiffComparable(BaseModel):
+    external_id: str
+    project_name: str | None = None
+    price_per_m2_czk: float | None = None
+    floor_area_m2: float | None = None
+    distance_m: float
+    availability_status: str | None = None
+    available: bool
+
+
+class LocalPriceDiffDebugResponse(BaseModel):
+    unit_external_id: str
+    radius_m: float
+    group: str | None = None
+    bucket_label: str | None = None
+    bucket_min_area_m2: float | None = None
+    bucket_max_area_m2: float | None = None
+    unit_price_per_m2_czk: float | None = None
+    ref_avg_price_per_m2_czk: float | None = None
+    diff_percent: float | None = None
+    comparables: list[LocalPriceDiffComparable] = []
+
+
 class ProjectsOverviewResponse(BaseModel):
     """Projects list: flat dict per item (catalog keys + aggregate keys)."""
     items: list[dict[str, Any]]
@@ -209,6 +232,228 @@ def recompute_units_local_price_diffs(db: DbSession) -> dict[str, Any]:
     recompute_local_price_diffs(db)
     db.commit()
     return {"status": "ok"}
+
+
+@app.get(
+    "/units/{external_id}/local-price-diff-debug",
+    response_model=LocalPriceDiffDebugResponse,
+    summary="Debug: show comparables used for local price diff",
+)
+def get_unit_local_price_diff_debug(
+    db: DbSession,
+    external_id: str,
+    radius_m: Annotated[
+        float,
+        Query(
+            description="Radius in metres (500, 1000, 2000)",
+        ),
+    ] = 500.0,
+) -> LocalPriceDiffDebugResponse:
+    if radius_m not in (500.0, 1000.0, 2000.0):
+        raise HTTPException(status_code=422, detail="radius_m must be one of 500, 1000, 2000")
+
+    # Load all units with GPS + price_per_m2 + floor_area, including project, and apply overrides
+    units = (
+        db.execute(
+            select(Unit)
+            .options(selectinload(Unit.project))
+            .where(
+                Unit.gps_latitude.isnot(None),
+                Unit.gps_longitude.isnot(None),
+                Unit.price_per_m2_czk.isnot(None),
+                Unit.floor_area_m2.isnot(None),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not units:
+        raise HTTPException(status_code=404, detail="No units with GPS/price data found")
+
+    unit_ids = [u.id for u in units]
+    override_rows = (
+        db.execute(
+            select(UnitOverride).where(
+                UnitOverride.unit_id.in_(unit_ids),
+                UnitOverride.field.in_(OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    override_map = build_override_map(override_rows)
+
+    infos: list[dict[str, Any]] = []
+    target: dict[str, Any] | None = None
+
+    for u in units:
+        lat = u.gps_latitude
+        lon = u.gps_longitude
+        if lat is None or lon is None:
+            continue
+        data = unit_to_response_dict(u, override_map)
+        price_pm2 = data.get("price_per_m2_czk")
+        area = data.get("floor_area_m2")
+        layout = data.get("layout")
+        if price_pm2 is None or area is None or layout is None:
+            continue
+        try:
+            price_pm2_f = float(price_pm2)
+            area_f = float(area)
+        except (TypeError, ValueError):
+            continue
+        group = _layout_group(str(layout))
+        if group is None:
+            continue
+
+        info: dict[str, Any] = {
+            "unit": u,
+            "id": u.id,
+            "external_id": u.external_id,
+            "lat": float(lat),
+            "lon": float(lon),
+            "price_pm2": price_pm2_f,
+            "area": area_f,
+            "group": group,
+            "availability_status": data.get("availability_status"),
+            "available": bool(data.get("available", False)),
+            "project_name": (data.get("project") or {}).get("name") if isinstance(data.get("project"), dict) else getattr(u.project, "name", None),
+        }
+        infos.append(info)
+        if u.external_id == external_id:
+            target = info
+
+    if target is None:
+        raise HTTPException(status_code=404, detail="Unit not found or missing data for local diff")
+
+    def in_area_bucket(group: str, area: float, target_group: str) -> bool:
+        if group != target_group:
+            return False
+        if target_group == "1kk":
+            return 20.0 <= area <= 35.0
+        if target_group == "2kk":
+            return 40.0 <= area <= 60.0
+        if target_group == "3kk":
+            return 60.0 <= area <= 80.0
+        if target_group == "4kk":
+            return 80.0 <= area <= 120.0
+        return False
+
+    def avg(values: list[float]) -> float | None:
+        if not values:
+            return None
+        return float(sum(values) / len(values))
+
+    lat1 = target["lat"]
+    lon1 = target["lon"]
+    group = target["group"]
+    price_pm2 = target["price_pm2"]
+
+    bucket_1_prices: list[float] = []
+    bucket_2_prices: list[float] = []
+    bucket_3_prices: list[float] = []
+    bucket_4_prices: list[float] = []
+
+    bucket_1_infos: list[tuple[dict[str, Any], float]] = []
+    bucket_2_infos: list[tuple[dict[str, Any], float]] = []
+    bucket_3_infos: list[tuple[dict[str, Any], float]] = []
+    bucket_4_infos: list[tuple[dict[str, Any], float]] = []
+
+    for other in infos:
+        if other["id"] == target["id"]:
+            continue
+        d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
+        if d > radius_m:
+            continue
+        g2 = other["group"]
+        a2 = other["area"]
+        p2 = other["price_pm2"]
+        if in_area_bucket(g2, a2, "1kk"):
+            bucket_1_prices.append(p2)
+            bucket_1_infos.append((other, d))
+        if in_area_bucket(g2, a2, "2kk"):
+            bucket_2_prices.append(p2)
+            bucket_2_infos.append((other, d))
+        if in_area_bucket(g2, a2, "3kk"):
+            bucket_3_prices.append(p2)
+            bucket_3_infos.append((other, d))
+        if in_area_bucket(g2, a2, "4kk"):
+            bucket_4_prices.append(p2)
+            bucket_4_infos.append((other, d))
+
+    ref_avg: float | None = None
+    comparables_raw: list[tuple[dict[str, Any], float]] = []
+
+    if group == "1kk":
+        ref_avg = avg(bucket_1_prices)
+        comparables_raw = bucket_1_infos
+    elif group == "2kk":
+        ref_avg = avg(bucket_2_prices)
+        comparables_raw = bucket_2_infos
+    elif group == "3kk":
+        ref_avg = avg(bucket_3_prices)
+        comparables_raw = bucket_3_infos
+    elif group == "4kk":
+        ref_avg = avg(bucket_4_prices)
+        comparables_raw = bucket_4_infos
+    elif group == "1.5kk":
+        ref1 = avg(bucket_1_prices)
+        ref2 = avg(bucket_2_prices)
+        if ref1 is not None and ref2 is not None:
+            ref_avg = (ref1 + ref2) / 2.0
+        elif ref1 is not None:
+            ref_avg = ref1
+        elif ref2 is not None:
+            ref_avg = ref2
+        comparables_raw = bucket_1_infos + bucket_2_infos
+
+    diff_percent: float | None
+    if ref_avg is None or ref_avg <= 0:
+        diff_percent = None
+    else:
+        diff_percent = (price_pm2 - ref_avg) / ref_avg * 100.0
+
+    def bucket_bounds_for_group(gr: str | None) -> tuple[float | None, float | None, str | None]:
+        if gr == "1kk":
+            return 20.0, 35.0, "1kk (20–35 m²)"
+        if gr == "2kk":
+            return 40.0, 60.0, "2kk (40–60 m²)"
+        if gr == "3kk":
+            return 60.0, 80.0, "3kk (60–80 m²)"
+        if gr == "4kk":
+            return 80.0, 120.0, "4kk (80–120 m²)"
+        if gr == "1.5kk":
+            return 20.0, 60.0, "1,5kk (1kk 20–35 m² + 2kk 40–60 m²)"
+        return None, None, None
+
+    min_area, max_area, bucket_label = bucket_bounds_for_group(group)
+
+    comparables: list[LocalPriceDiffComparable] = []
+    for other, dist in comparables_raw:
+        comparables.append(
+            LocalPriceDiffComparable(
+                external_id=other["external_id"],
+                project_name=other.get("project_name"),
+                price_per_m2_czk=other["price_pm2"],
+                floor_area_m2=other["area"],
+                distance_m=dist,
+                availability_status=other.get("availability_status"),
+                available=bool(other.get("available", False)),
+            )
+        )
+
+    return LocalPriceDiffDebugResponse(
+        unit_external_id=external_id,
+        radius_m=radius_m,
+        group=group,
+        bucket_label=bucket_label,
+        bucket_min_area_m2=min_area,
+        bucket_max_area_m2=max_area,
+        unit_price_per_m2_czk=price_pm2,
+        ref_avg_price_per_m2_czk=ref_avg,
+        diff_percent=diff_percent,
+        comparables=comparables,
+    )
 
 
 @app.get("/filters")

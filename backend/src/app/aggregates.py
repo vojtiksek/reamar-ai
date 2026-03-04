@@ -282,7 +282,9 @@ def recompute_local_price_diffs(db: Session) -> None:
 
     For each unit with GPS + price_per_m2 + floor_area + layout bucket, we compute
     percentage difference between its price_per_m2 and the average price_per_m2 of
-    comparable units in a radius of 500m / 1km / 2km.
+    comparable units in a radius of 500m / 1km / 2km. Do průměru se berou všechny
+    jednotky v bucketu (včetně prodaných), aby dvě stejné jednotky měly stejnou
+    odchylku (konzistence znaménka).
 
     Comparable = same layout bucket + area range:
     - 1kk: layout group '1kk' AND 20–35 m²
@@ -449,10 +451,10 @@ def recompute_local_price_diffs(db: Session) -> None:
                     for other in cell_infos:
                         if other["id"] == info["id"]:
                             continue
-                        # Do srovnávacího trhu bereme jen jednotky, které jsou aktuálně
-                        # na trhu (available nebo reserved). Prodané jednotky neovlivňují průměr.
-                        if not other.get("on_market", False):
-                            continue
+                        # Do průměru bereme všechny jednotky v bucketu (včetně prodaných), aby
+                        # dvě stejné jednotky ve stejném projektu měly stejný ref_avg a tedy
+                        # stejnou odchylku. (Pouze „on_market“ by u prodané vs dostupné dvojčete
+                        # dávalo opačná znaménka.)
                         d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
                         if d > radius:
                             continue

@@ -928,6 +928,7 @@ export default function Home() {
             Reset
           </button>
         </div>
+
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-1.5 text-sm">
             <span className="font-medium text-gray-700">Řádků</span>
@@ -1327,6 +1328,27 @@ export default function Home() {
                                       }
                                     }}
                                   />
+                                ) : isLocalDiffCol && formatted !== null && formatted !== undefined ? (
+                                  <button
+                                    type="button"
+                                    data-no-row-nav
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const extId = getExternalIdForRow(u);
+                                      if (!extId) return;
+                                      const radius =
+                                        localDiffRadius === "500"
+                                          ? 500
+                                          : localDiffRadius === "1000"
+                                            ? 1000
+                                            : 2000;
+                                      const url = `/units/debug-compare?external_id=${encodeURIComponent(extId)}&radius_m=${radius}`;
+                                      window.open(url, "_blank", "noopener,noreferrer");
+                                    }}
+                                    className={`underline decoration-dotted underline-offset-2 ${localDiffClass}`}
+                                  >
+                                    {formatted}
+                                  </button>
                                 ) : (
                                   formatted
                                 )}
