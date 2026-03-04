@@ -70,6 +70,10 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
 
   // Žaluzie – ponecháme původní hodnoty z dat (preparation/true/false)
   if (column.key === "exterior_blinds") {
+    const numVal = Number(value);
+    if (!Number.isNaN(numVal)) {
+      return numVal === 1 ? "true" : "false";
+    }
     return String(value);
   }
 

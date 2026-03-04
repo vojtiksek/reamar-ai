@@ -87,6 +87,10 @@ export function formatByDisplayFormat(
 
   // Žaluzie – necháme původní hodnoty z dat (preparation/true/false)
   if (catalogKey === "exterior_blinds") {
+    const num = Number(value);
+    if (!Number.isNaN(num)) {
+      return num === 1 ? "true" : "false";
+    }
     return String(value);
   }
 
