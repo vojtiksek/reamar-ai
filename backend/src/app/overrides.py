@@ -248,6 +248,9 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
                 value = _get(attr, base_val)
             else:
                 value = base_val
+            # Speciální case: Žaluzie – použijeme původní text z importu, pokud je k dispozici.
+            if column == "exterior_blinds" and hasattr(base, "exterior_blinds_raw") and base.exterior_blinds_raw is not None:
+                value = base.exterior_blinds_raw
             value = _dec(value)
         else:  # "Project"
             proj: Project | None = base.project

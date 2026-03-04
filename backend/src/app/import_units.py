@@ -420,7 +420,9 @@ def apply_unit_data(
     if not only_if_present or unit_data.get("cooling_ceilings") is not None:
         unit.cooling_ceilings = normalize_bool(unit_data.get("cooling_ceilings"))
     if not only_if_present or unit_data.get("exterior_blinds") is not None:
-        unit.exterior_blinds = normalize_bool(unit_data.get("exterior_blinds"))
+        raw_exterior_blinds = unit_data.get("exterior_blinds")
+        unit.exterior_blinds = normalize_bool(raw_exterior_blinds)
+        unit.exterior_blinds_raw = None if raw_exterior_blinds is None else str(raw_exterior_blinds)
     if not only_if_present or unit_data.get("smart_home") is not None:
         unit.smart_home = normalize_bool(unit_data.get("smart_home"))
     if not only_if_present or unit_data.get("category") is not None:
