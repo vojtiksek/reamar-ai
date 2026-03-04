@@ -105,6 +105,13 @@ export function formatByDisplayFormat(
       return formatMinutes(Number(value));
     case "percent":
       return formatPercent(Number(value));
+    case "boolean": {
+      const raw = String(value ?? "").toLowerCase();
+      const isTrue =
+        value === true ||
+        ["true", "1", "yes", "ano"].includes(raw);
+      return isTrue ? "ANO" : "NE";
+    }
     case "integer": {
       const n = Number(value);
       return Number.isNaN(n) ? String(value) : `${Math.round(n)}`;
