@@ -136,6 +136,8 @@ const API_LIST_PARAMS = new Set([
   "municipality",
   "heating",
   "windows",
+  // Stav jednotky (available / reserved / sold / ...), může mít více hodnot najednou.
+  "availability",
 ]);
 
 export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFilters {
