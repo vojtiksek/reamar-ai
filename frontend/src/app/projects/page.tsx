@@ -68,6 +68,11 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return isTrue ? "rekonstrukce" : "novostavba";
   }
 
+  // Žaluzie – ponecháme původní hodnoty z dat (preparation/true/false)
+  if (column.key === "exterior_blinds") {
+    return String(value);
+  }
+
   // Obecné booleany: ANO/NE (klimatizace, chlazení stropem, žaluzie, smart home, ...)
   if (column.data_type === "bool" || typeof value === "boolean") {
     const raw = String(value ?? "").toLowerCase();

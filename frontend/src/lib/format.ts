@@ -76,13 +76,18 @@ export function formatByDisplayFormat(
 ): string {
   if (value == null || value === "") return "—";
 
-  // Speciální slovník pro rekonstrukci (projekt/jenotka)
+  // Speciální slovník pro rekonstrukci (projekt/jednotka)
   if (catalogKey === "renovation") {
     const raw = String(value ?? "").toLowerCase();
     const isTrue =
       value === true ||
       ["true", "1", "yes", "ano"].includes(raw);
     return isTrue ? "rekonstrukce" : "novostavba";
+  }
+
+  // Žaluzie – necháme původní hodnoty z dat (preparation/true/false)
+  if (catalogKey === "exterior_blinds") {
+    return String(value);
   }
 
   if (typeof value === "boolean") return value ? "ANO" : "NE";
