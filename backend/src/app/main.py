@@ -1037,9 +1037,9 @@ def _projects_order_clause(agg_subq, sort_by: str, sort_dir: str):
     if sort_by not in allowed:
         return None
     dir_asc = sort_dir.strip().lower() != "desc"
-    # Speciální case: řazení podle odkazu na projekt – používáme sample URL z agregátu nebo ruční Project.project_url.
+    # Speciální case: řazení podle odkazu na projekt – používáme sample URL z agregátu.
     if sort_by == "project_url":
-        col = func.coalesce(agg_subq.c.unit_url_sample, Project.project_url)
+        col = agg_subq.c.unit_url_sample
     elif sort_by in COMPUTED_COLUMN_KEYS:
         col = agg_subq.c[sort_by]
     else:
