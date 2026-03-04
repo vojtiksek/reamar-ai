@@ -2,10 +2,9 @@
 
 import { API_BASE } from "@/lib/api";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
-import "leaflet/dist/leaflet.css";
 
 type ProjectMapItem = {
   id: number;
@@ -23,6 +22,10 @@ type ProjectsResponse = {
   total: number;
 };
 
+const ProjectsLeafletMap = dynamic(() => import("./ProjectsLeafletMap"), {
+  ssr: false,
+});
+
 export default function ProjectsMapPage() {
   const [projects, setProjects] = useState<ProjectMapItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -30,25 +33,42 @@ export default function ProjectsMapPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    // Backend aktuálně podporuje limity 100 / 300 / 500, proto použijeme 500.
-    fetch(`${API_BASE}/projects?limit=500`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: ProjectsResponse) => {
+    async function loadAll() {
+      setLoading(true);
+      setError(null);
+      try {
+        const limit = 500;
+        let offset = 0;
+        let all: ProjectMapItem[] = [];
+        let total = Infinity;
+        while (!cancelled && offset < total) {
+          const res = await fetch(
+            `${API_BASE}/projects?limit=${limit}&offset=${offset}`
+          );
+          if (!res.ok) {
+            throw new Error(res.statusText || `HTTP ${res.status}`);
+          }
+          const data: ProjectsResponse = await res.json();
+          const items = data.items ?? [];
+          all = all.concat(items);
+          total = data.total ?? items.length;
+          if (items.length < limit) break;
+          offset += limit;
+        }
         if (cancelled) return;
-        const withGps = (data.items ?? []).filter(
+        const withGps = all.filter(
           (p) => p.gps_latitude != null && p.gps_longitude != null
         );
         setProjects(withGps);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Chyba načítání projektů");
-      })
-      .finally(() => {
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Chyba načítání projektů");
+        }
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    }
+    void loadAll();
     return () => {
       cancelled = true;
     };
@@ -149,52 +169,7 @@ export default function ProjectsMapPage() {
               Načítání mapy…
             </div>
           )}
-          <MapContainer
-            center={center}
-            zoom={12}
-            className="h-full w-full"
-            scrollWheelZoom
-          >
-            <TileLayer
-              attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-              url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            />
-            {projects.map((p) =>
-              p.gps_latitude != null && p.gps_longitude != null ? (
-                <Marker
-                  key={p.id}
-                  position={[p.gps_latitude as number, p.gps_longitude as number]}
-                >
-                  <Popup>
-                    <div className="space-y-1 text-xs">
-                      <div className="font-semibold text-gray-900">
-                        {p.project ?? "Projekt bez názvu"}
-                      </div>
-                      <div className="text-gray-700">
-                        {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
-                      </div>
-                      {p.avg_price_per_m2_czk != null && (
-                        <div className="text-gray-800">
-                          Průměrná cena m²:{" "}
-                          {new Intl.NumberFormat("cs-CZ", {
-                            maximumFractionDigits: 0,
-                            minimumFractionDigits: 0,
-                          }).format(p.avg_price_per_m2_czk)}{" "}
-                          Kč/m²
-                        </div>
-                      )}
-                      <Link
-                        href={`/projects/${p.id}`}
-                        className="inline-block text-blue-600 hover:underline"
-                      >
-                        Detail projektu
-                      </Link>
-                    </div>
-                  </Popup>
-                </Marker>
-              ) : null
-            )}
-          </MapContainer>
+          <ProjectsLeafletMap projects={projects} center={center} />
         </section>
       </main>
     </div>
