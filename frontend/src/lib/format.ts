@@ -22,7 +22,8 @@ const CZK_PER_M2 = new Intl.NumberFormat("cs-CZ", {
 
 export function formatCurrencyPerM2(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${CZK_PER_M2.format(Math.round(value))} Kč/m²`;
+  // Stejná prezentace jako u celkové ceny – jen částka a "Kč".
+  return `${CZK_PER_M2.format(Math.round(value))} Kč`;
 }
 
 export function formatAreaM2(value: number | null | undefined): string {
@@ -32,7 +33,8 @@ export function formatAreaM2(value: number | null | undefined): string {
 
 export function formatMinutes(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${Number(value).toFixed(1)} min`;
+  // Bez desetinných míst – jen celé minuty.
+  return `${Math.round(Number(value))} min`;
 }
 
 /**
@@ -73,6 +75,15 @@ export function formatByDisplayFormat(
   catalogKey?: string
 ): string {
   if (value == null || value === "") return "—";
+
+  // Speciální slovník pro rekonstrukci (projekt/jenotka)
+  if (catalogKey === "renovation") {
+    const raw = String(value ?? "").toLowerCase();
+    const isTrue =
+      value === true ||
+      ["true", "1", "yes", "ano"].includes(raw);
+    return isTrue ? "rekonstrukce" : "novostavba";
+  }
 
   if (typeof value === "boolean") return value ? "ANO" : "NE";
 

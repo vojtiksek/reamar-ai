@@ -56,11 +56,26 @@ const DEFAULT_VISIBLE_COLUMNS = 10;
 function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
   if (value == null || value === "") return "—";
 
-  // Booleans
-  if (typeof value === "boolean") return value ? "ANO" : "NE";
-
   const num = Number(value);
   const isNumber = !Number.isNaN(num);
+
+  // Rekonstrukce – vlastní texty
+  if (column.key === "renovation") {
+    const raw = String(value ?? "").toLowerCase();
+    const isTrue =
+      value === true ||
+      ["true", "1", "yes", "ano"].includes(raw);
+    return isTrue ? "rekonstrukce" : "novostavba";
+  }
+
+  // Obecné booleany: ANO/NE (klimatizace, chlazení stropem, žaluzie, smart home, ...)
+  if (column.data_type === "bool" || typeof value === "boolean") {
+    const raw = String(value ?? "").toLowerCase();
+    const isTrue =
+      value === true ||
+      ["true", "1", "yes", "ano"].includes(raw);
+    return isTrue ? "ANO" : "NE";
+  }
 
   // Layouts list
   if (column.key === "layouts_present") {
