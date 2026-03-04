@@ -356,8 +356,11 @@ def _build_units_query(
     region_iga: list[str] | None = None,
     developer: list[str] | None = None,
     building: list[str] | None = None,
+    project_names: list[str] | None = None,
 ):
-    """Build base select(Unit) with filters applied only when param is not None. No join needed (all on Unit)."""
+    """Build base select(Unit) with filters applied only when param is not None.
+    Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
+    """
     base = select(Unit)
     if available is not None:
         base = base.where(Unit.available.is_(available))
@@ -472,6 +475,11 @@ def _build_units_query(
         base = base.where(Unit.developer.in_(developer))
     if building is not None and len(building) > 0:
         base = base.where(Unit.building.in_(building))
+    if project_names is not None and len(project_names) > 0:
+        # Filtrování podle názvu projektu – join na Project a where Project.name IN (…)
+        base = base.join(Project, Project.id == Unit.project_id).where(
+            Project.name.in_([str(p) for p in project_names if p])
+        )
     return base
 
 
@@ -593,6 +601,7 @@ def list_units(
     region_iga: Annotated[list[str] | None, Query(description="Filter by region_iga (any of)")] = None,
     developer: Annotated[list[str] | None, Query(description="Filter by developer (any of)")] = None,
     building: Annotated[list[str] | None, Query(description="Filter by building (any of)")] = None,
+    project: Annotated[list[str] | None, Query(description="Filter by project name (any of)")] = None,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -660,6 +669,7 @@ def list_units(
         region_iga=region_iga,
         developer=developer,
         building=building,
+        project_names=project,
     )
     base_subq = base.subquery()
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
