@@ -1698,8 +1698,14 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         else:
             out[key] = None
 
-    # Computed from aggregate row (use row._mapping or positional)
-    agg = row._mapping if hasattr(row, "_mapping") else {}
+    # Agregovaná data: select(Project, agg_subq) vrací Row. V SQLAlchemy 2 _mapping obsahuje
+    # sloupce z obou (Project + subquery s labely units_total, units_available, ...).
+    agg = getattr(row, "_mapping", {}) or {}
+    if not agg or "units_total" not in agg:
+        if hasattr(row, "__len__") and len(row) > 1 and row[1] is not None:
+            subq = getattr(row[1], "_mapping", {}) or {}
+            if subq:
+                agg = subq
 
     # Fallback GPS: pokud projekt sám nemá gps_latitude/longitude,
     # použij průměrnou polohu jednotek z agregátu.

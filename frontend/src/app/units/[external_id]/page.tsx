@@ -1,9 +1,16 @@
 "use client";
 
-import { formatAreaM2, formatCurrencyCzk, formatLayout } from "@/lib/format";
+import {
+  formatAreaM2,
+  formatCurrencyCzk,
+  formatLayout,
+  formatValue,
+  type FormatValueMeta,
+} from "@/lib/format";
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -19,7 +26,7 @@ import {
 type UnitDetail = {
   external_id: string;
   project_id: number;
-  project: { name: string };
+  project: { name: string; gps_latitude?: number | null; gps_longitude?: number | null; [k: string]: unknown };
   unit_name: string | null;
   layout: string | null;
   floor_area_m2: number | null;
@@ -29,6 +36,7 @@ type UnitDetail = {
   availability_status?: string | null;
   equivalent_area_m2?: number | null;
   exterior_area_m2?: number | null;
+  data?: Record<string, unknown>;
   [key: string]: unknown;
 };
 
@@ -45,7 +53,10 @@ type UnitColumn = {
   editable?: boolean | string | number | null;
   kind?: string | null;
   accessor?: string;
+  display_format?: string;
 };
+
+const UnitDetailMap = dynamic(() => import("./UnitDetailMap"), { ssr: false });
 
 type FetchState<T> = {
   data: T | null;
@@ -65,18 +76,48 @@ type DebugLog = {
   errorMessage?: string;
 };
 
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "ANO" : "NE";
-  return String(value);
-}
-
 function parseBool(value: unknown): boolean {
   if (typeof value === "boolean") return value;
   const s = String(value ?? "").toLowerCase();
   if (["true", "1", "yes", "ano", "on"].includes(s)) return true;
   if (["false", "0", "no", "ne", "off"].includes(s)) return false;
   return false;
+}
+
+function getUnitDisplayValue(unit: UnitDetail, col: UnitColumn): unknown {
+  const u = unit as Record<string, unknown>;
+  const accessor = col.accessor ?? col.key;
+  if (col.key === "project_url" || accessor === "project.project_url") {
+    const raw = (unit as { url?: string }).url ?? unit.data?.unit_url;
+    if (raw && typeof raw === "string") {
+      try {
+        const parsed = new URL(raw);
+        return `${parsed.protocol}//${parsed.host}`;
+      } catch {
+        const i = raw.indexOf(".cz/");
+        if (i !== -1) return raw.slice(0, i + 3);
+        return raw;
+      }
+    }
+    return undefined;
+  }
+  const fromData = unit.data && col.key in unit.data ? unit.data[col.key] : undefined;
+  if (fromData !== undefined) return fromData;
+  const parts = accessor.split(".");
+  let v: unknown = u;
+  for (const p of parts) {
+    if (v == null) return undefined;
+    v = (v as Record<string, unknown>)[p];
+  }
+  return v;
+}
+
+function formatDisplayValue(value: unknown, col: UnitColumn): string {
+  const meta: FormatValueMeta = {
+    display_format: col.display_format ?? col.data_type,
+    key: col.key,
+  };
+  return formatValue(value, meta);
 }
 
 export default function UnitDetailPage() {
@@ -374,190 +415,270 @@ export default function UnitDetailPage() {
     }))
     .reverse();
 
+  const allColumns = columnsState.data ?? [];
+  const hasGps =
+    (unit.project as { gps_latitude?: number | null; gps_longitude?: number | null })?.gps_latitude != null &&
+    (unit.project as { gps_latitude?: number | null; gps_longitude?: number | null })?.gps_longitude != null;
+  const gpsLat = (unit.project as { gps_latitude?: number | null })?.gps_latitude as number | undefined;
+  const gpsLng = (unit.project as { gps_longitude?: number | null })?.gps_longitude as number | undefined;
+
   return (
-    <div className="p-4">
-      <button
-        type="button"
-        onClick={() => router.back()}
-        className="mb-4 text-sm text-gray-600 underline hover:text-gray-800"
-      >
-        ← Zpět
-      </button>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <h1 className="text-xl font-semibold">{unit.unit_name ?? unit.external_id}</h1>
-        <div className="flex items-center gap-2">
-          {!editMode ? (
+    <div className="min-h-screen bg-slate-50">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleStartEdit}
-              disabled={saving}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => router.back()}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              Editovat
+              ← Zpět
             </button>
-          ) : (
-            <>
+            <h1 className="text-lg font-semibold text-slate-900">
+              {unit.unit_name ?? unit.external_id}
+            </h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {!editMode ? (
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={handleStartEdit}
                 disabled={saving}
-                className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Uložit
+                Editovat
               </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={saving}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Uložit
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={saving}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                >
+                  Zrušit
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="mx-auto max-w-6xl space-y-6 p-4">
+        {/* Hlavní přehled */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Přehled
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Projekt</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {unit.project?.name ?? "—"}
+                {unit.project_id ? (
+                  <Link
+                    href={`/projects/${unit.project_id}`}
+                    className="ml-2 text-sm text-slate-600 underline hover:text-slate-900"
+                  >
+                    Upravit projekt
+                  </Link>
+                ) : null}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Dispozice</p>
+              <p className="mt-0.5 font-medium text-slate-900">{formatLayout(unit.layout)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Podlahová plocha</p>
+              <p className="mt-0.5 font-medium text-slate-900">{formatAreaM2(unit.floor_area_m2)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Cena</p>
+              <p className="mt-0.5 font-medium text-slate-900">{formatCurrencyCzk(unit.price_czk)}</p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Cena za m²</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatCurrencyCzk(unit.price_per_m2_czk)}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Dostupnost</p>
+              <p
+                className={`mt-0.5 font-medium ${unit.available ? "text-green-600" : "text-red-600"}`}
               >
-                Zrušit
-              </button>
-            </>
+                {unit.available ? "ANO" : "NE"}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Všechna data jednotky */}
+        {allColumns.length > 0 && (
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Všechna data jednotky
+            </h2>
+            <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {allColumns.map((col) => {
+                const raw = getUnitDisplayValue(unit, col);
+                if (raw === undefined && col.key !== "project_url") return null;
+                const formatted = formatDisplayValue(raw, col);
+                return (
+                  <div key={col.key} className="min-w-0">
+                    <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
+                    <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Mapa */}
+        {hasGps && gpsLat != null && gpsLng != null && (
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Poloha
+            </h2>
+            <UnitDetailMap
+              lat={gpsLat}
+              lng={gpsLng}
+              label={[unit.project?.name, unit.unit_name ?? unit.external_id].filter(Boolean).join(" – ")}
+            />
+          </section>
+        )}
+
+        {/* Upravitelné údaje */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Upravitelné údaje
+          </h2>
+          {debugMode && (
+            <div className="mb-3 space-y-1 text-xs text-slate-500">
+              <p>
+                Sloupců: {columnsState.data?.length ?? 0}, upravitelných: {editableColumns.length}
+              </p>
+            </div>
           )}
-        </div>
-      </div>
-      <dl className="mb-6 grid gap-2 text-sm">
-        <div>
-          <dt className="font-medium text-gray-500">Projekt</dt>
-          <dd>
-            {unit.project?.name ?? "—"}
-            {unit.project_id ? (
-              <Link
-                href={`/projects/${unit.project_id}`}
-                className="ml-2 text-xs font-medium text-blue-600 hover:text-blue-800"
-              >
-                Upravit projekt
-              </Link>
-            ) : null}
-          </dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Název jednotky</dt>
-          <dd>{unit.unit_name ?? "—"}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Dispozice</dt>
-          <dd>{formatLayout(unit.layout)}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Podlahová plocha</dt>
-          <dd>{formatAreaM2(unit.floor_area_m2)}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Cena</dt>
-          <dd>{formatCurrencyCzk(unit.price_czk)}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Cena za m²</dt>
-          <dd>{formatCurrencyCzk(unit.price_per_m2_czk)}</dd>
-        </div>
-        <div>
-          <dt className="font-medium text-gray-500">Dostupnost</dt>
-          <dd className={unit.available ? "text-green-600" : "text-red-600"}>
-            {unit.available ? "ANO" : "NE"}
-          </dd>
-        </div>
-      </dl>
+          {columnsState.loading ? (
+            <p className="text-sm text-slate-600">Načítání sloupců…</p>
+          ) : editableColumns.length === 0 ? (
+            <p className="text-sm text-slate-600">Žádná upravitelná pole.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-2.5 text-left font-semibold text-slate-700">Pole</th>
+                    <th className="px-4 py-2.5 text-left font-semibold text-slate-700">Hodnota</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {editableColumns.map((col) => {
+                    const field = col.overrideField;
+                    if (!(field in unit)) return null;
+                    const currentValue = unit[field];
+                    const draftValue = draftValues[field];
 
-      <section className="mb-6 rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-        <h2 className="mb-3 text-base font-semibold text-gray-900">Upravitelné údaje</h2>
-        {debugMode && (
-          <div className="mb-3 space-y-1 text-xs text-gray-500">
-            <p>
-              Loaded columns: {columnsState.data?.length ?? 0}, editable: {editableColumns.length}
-            </p>
-            <p>Unit keys: {unit ? Object.keys(unit).slice(0, 20).join(", ") : "—"}</p>
-            <p>
-              Sample columns:{" "}
-              {columnsState.data
-                ?.slice(0, 10)
-                .map((c) => `${c.key}${unit && c.key in unit ? "✓" : "✗"}`)
-                .join(", ") || "—"}
-            </p>
+                    return (
+                      <tr key={col.key}>
+                        <td className="px-4 py-2.5 align-top font-medium text-slate-800">
+                          {col.label}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {!editMode ? (
+                            <span className="text-slate-900">
+                              {formatDisplayValue(currentValue, col)}
+                            </span>
+                          ) : col.data_type === "bool" ? (
+                            <input
+                              type="checkbox"
+                              className="h-4 w-4 rounded border-slate-300"
+                              checked={parseBool(draftValue)}
+                              onChange={(e) => handleChangeDraft(field, e.target.checked)}
+                            />
+                          ) : col.data_type === "number" ? (
+                            <input
+                              type="number"
+                              className="max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                              value={draftValue ?? ""}
+                              onChange={(e) => handleChangeDraft(field, e.target.value)}
+                            />
+                          ) : (
+                            <input
+                              type="text"
+                              className="max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                              value={(draftValue as string | undefined) ?? ""}
+                              onChange={(e) => handleChangeDraft(field, e.target.value)}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        {/* Historie ceny */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Historie ceny
+          </h2>
+          <div className="h-72 w-full">
+            {chartData.length === 0 ? (
+              <p className="text-sm text-slate-500">Žádná historie cen.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={chartData}
+                  margin={{ top: 10, right: 10, left: 10, bottom: 30 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                  <XAxis
+                    dataKey="captured_at"
+                    tick={{ fontSize: 11, fill: "#64748b" }}
+                    tickMargin={8}
+                  />
+                  <YAxis
+                    tickFormatter={(v) =>
+                      Number.isFinite(v)
+                        ? `${(Number(v) / 1_000_000).toFixed(1)} mil. Kč`
+                        : ""
+                    }
+                    tick={{ fontSize: 11, fill: "#64748b" }}
+                    width={56}
+                    tickMargin={4}
+                  />
+                  <Tooltip
+                    formatter={(v) => [formatCurrencyCzk(v as number), "Cena"]}
+                    contentStyle={{ fontSize: "12px" }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="price_czk"
+                    stroke="#2563eb"
+                    strokeWidth={2}
+                    dot={{ r: 3 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            )}
           </div>
-        )}
-        {columnsState.loading ? (
-          <p className="text-sm text-gray-600">Načítání sloupců…</p>
-        ) : editableColumns.length === 0 ? (
-          <p className="text-sm text-gray-600">Žádná upravitelná pole.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200 text-sm">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th className="px-4 py-2 text-left font-semibold text-gray-700">Pole</th>
-                  <th className="px-4 py-2 text-left font-semibold text-gray-700">Hodnota</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
-                {editableColumns.map((col) => {
-                  const key = col.key;
-                  const field = col.overrideField;
-                  if (!(field in unit)) return null;
-                  const currentValue = unit[field];
-                  const draftValue = draftValues[field];
-
-                  return (
-                    <tr key={key}>
-                      <td className="px-4 py-2 align-top text-gray-900">{col.label}</td>
-                      <td className="px-4 py-2">
-                        {!editMode ? (
-                          <span className="text-gray-900">{formatValue(currentValue)}</span>
-                        ) : col.data_type === "bool" ? (
-                          <input
-                            type="checkbox"
-                            className="h-4 w-4"
-                            checked={parseBool(draftValue)}
-                            onChange={(e) => handleChangeDraft(field, e.target.checked)}
-                          />
-                        ) : col.data_type === "number" ? (
-                          <input
-                            type="number"
-                            className="w-full max-w-xs rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-                            value={draftValue ?? ""}
-                            onChange={(e) => handleChangeDraft(field, e.target.value)}
-                          />
-                        ) : (
-                          <input
-                            type="text"
-                            className="w-full max-w-xs rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-                            value={(draftValue as string | undefined) ?? ""}
-                            onChange={(e) => handleChangeDraft(field, e.target.value)}
-                          />
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      <h2 className="mb-2 text-lg font-medium">Historie ceny</h2>
-      <div className="h-80 w-full max-w-2xl">
-        {chartData.length === 0 ? (
-          <p className="text-gray-500">Žádná historie cen.</p>
-        ) : (
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={chartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="captured_at" />
-              <YAxis tickFormatter={(v) => formatCurrencyCzk(v)} />
-              <Tooltip formatter={(v) => [formatCurrencyCzk(v as number), "Cena"]} />
-              <Line
-                type="monotone"
-                dataKey="price_czk"
-                stroke="#2563eb"
-                strokeWidth={2}
-                dot={{ r: 3 }}
-              />
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </div>
+        </section>
+      </main>
     </div>
   );
 }

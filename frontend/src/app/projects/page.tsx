@@ -118,8 +118,18 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return formatCurrencyCzk(isNumber ? num : null);
   }
 
-  // Area
+  // Počet jednotek (celá čísla)
+  if (column.key === "units_total" || column.key === "units_available" || column.key === "units_priced") {
+    if (value == null || value === "") return "—";
+    const n = Number(value);
+    return Number.isNaN(n) ? "—" : String(Math.round(n));
+  }
+
+  // Plocha v m² (včetně průměrné plochy): jedno desetinné místo
   if (column.unit && column.unit.includes("m²")) {
+    return formatAreaM2(isNumber ? num : null);
+  }
+  if (column.key === "avg_floor_area_m2" || column.key.endsWith("_area_m2") || column.key.endsWith("_m2")) {
     return formatAreaM2(isNumber ? num : null);
   }
 
@@ -182,7 +192,7 @@ function computeProjectsSummary(items: ProjectItem[], totalCount: number) {
   );
   const sumPpm2 = withPpm2.reduce((a, p) => a + Number(p.avg_price_per_m2_czk), 0);
   const sumPrice = withPrice.reduce((a, p) => a + Number(p.avg_price_czk), 0);
-  const availableCount = items.reduce((a, p) => a + (Number(p.available_units) || 0), 0);
+  const availableCount = items.reduce((a, p) => a + (Number(p.units_available) ?? 0), 0);
   return {
     total: totalCount,
     averagePricePerM2: withPpm2.length ? sumPpm2 / withPpm2.length : null,
@@ -370,13 +380,11 @@ export default function ProjectsPage() {
   }, [columns]);
 
   const effectiveSortBy = useMemo(() => {
-    if (allowedProjectSortKeys.size > 0 && !allowedProjectSortKeys.has(sortBy)) {
-      return "avg_price_per_m2_czk";
+    if (allowedProjectSortKeys.size > 0) {
+      return allowedProjectSortKeys.has(sortBy) ? sortBy : "avg_price_per_m2_czk";
     }
-    // Před načtením sloupců: známá pole jen pro jednotky (projekty je nemají)
-    const unitOnlySortKeys = new Set(["local_price_diff_1000m", "local_price_diff_2000m"]);
-    if (unitOnlySortKeys.has(sortBy)) return "avg_price_per_m2_czk";
-    return sortBy;
+    // Před načtením sloupců: posíláme jen bezpečné výchozí, aby GET /projects nevrátil 422
+    return "avg_price_per_m2_czk";
   }, [allowedProjectSortKeys, sortBy]);
 
   // Po načtení stránky s neplatným sort_by (např. z Jednotek) opravíme URL na platný sort pro projekty
