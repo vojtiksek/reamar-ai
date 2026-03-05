@@ -44,9 +44,10 @@ type UnitsListResponse = {
   average_price_czk?: number | null;
   average_price_per_m2_czk?: number | null;
   available_count?: number | null;
+   average_local_price_diff_500m?: number | null;
+   average_local_price_diff_1000m?: number | null;
+   average_local_price_diff_2000m?: number | null;
 };
-
-type LocalDiffRadius = "none" | "500" | "1000" | "2000";
 
 type ColumnDef = {
   key: string;
@@ -188,6 +189,10 @@ const BACKEND_SORT_FIELDS = [
   "payment_contract",
   "payment_construction",
   "payment_occupancy",
+  // Lokální cenová odchylka vs. trh
+  "local_price_diff_500m",
+  "local_price_diff_1000m",
+  "local_price_diff_2000m",
   "smart_home",
   "permit_regular",
   "city",
@@ -394,6 +399,9 @@ function computeSummaryFromUnits(units: Unit[], total: number) {
     averagePricePerM2: withPricePerM2.length ? sumPricePerM2 / withPricePerM2.length : null,
     availableCount: units.filter((u) => u.available).length,
     total,
+    averageLocalDiff500: null,
+    averageLocalDiff1000: null,
+    averageLocalDiff2000: null,
   };
 }
 
@@ -435,9 +443,11 @@ export default function Home() {
     averagePrice: number | null;
     averagePricePerM2: number | null;
     availableCount: number;
+    averageLocalDiff500: number | null;
+    averageLocalDiff1000: number | null;
+    averageLocalDiff2000: number | null;
   } | null>(null);
 
-  const [localDiffRadius, setLocalDiffRadius] = useState<LocalDiffRadius>("none");
   const [recomputingLocalDiffs, setRecomputingLocalDiffs] = useState(false);
 
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
@@ -585,6 +595,9 @@ export default function Home() {
           averagePrice: data.average_price_czk ?? null,
           averagePricePerM2: data.average_price_per_m2_czk ?? null,
           availableCount: data.available_count ?? 0,
+          averageLocalDiff500: data.average_local_price_diff_500m ?? null,
+          averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
+          averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
         });
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
@@ -686,6 +699,7 @@ export default function Home() {
   );
 
   const summary = summaryOverride ?? computeSummaryFromUnits(units, total);
+  const averageLocalDiff = summary.averageLocalDiff500;
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
@@ -727,32 +741,6 @@ export default function Home() {
           return withAlign;
         })
         .filter(Boolean) as Array<ColumnDef & { align: "left" | "right" }>;
-
-      // Dynamicky přidáme sloupec pro lokální cenovou odchylku podle zvoleného radiusu.
-      const radiusKey =
-        localDiffRadius === "500"
-          ? "local_price_diff_500m"
-          : localDiffRadius === "1000"
-          ? "local_price_diff_1000m"
-          : localDiffRadius === "2000"
-          ? "local_price_diff_2000m"
-          : null;
-      if (radiusKey) {
-        const base = serverColumns.find((c) => c.key === radiusKey);
-        if (base) {
-          cols = [
-            ...cols,
-            {
-              ...base,
-              key: radiusKey,
-              label: base.label || "Odchylka od trhu",
-              accessor: base.accessor || radiusKey,
-              align: "right" as const,
-              sortable: backendSortable.has(base.accessor || base.key),
-            },
-          ];
-        }
-      }
       return cols;
     }
     // Fallback to static columns when /columns is not available
@@ -886,7 +874,10 @@ export default function Home() {
             </button>
             <button
               type="button"
-              onClick={() => router.push("/projects")}
+              onClick={() => {
+                const qs = searchParams?.toString() ?? "";
+                router.push(qs ? `/projects?${qs}` : "/projects");
+              }}
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Projekty
@@ -894,10 +885,8 @@ export default function Home() {
             <button
               type="button"
               onClick={() => {
-                const params = new URLSearchParams(searchParams?.toString() ?? "");
-                const poly = params.get("poly");
-                const href = poly ? `/projects/map?poly=${encodeURIComponent(poly)}` : "/projects/map";
-                router.push(href);
+                const qs = searchParams?.toString() ?? "";
+                router.push(qs ? `/projects/map?${qs}` : "/projects/map");
               }}
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
@@ -933,46 +922,9 @@ export default function Home() {
         </div>
 
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-1.5 text-sm">
-            <span className="font-medium text-gray-700">Řádků</span>
-            <select
-              value={safeLimit}
-              onChange={(e) => setLimitAndSort({ limit: Number(e.target.value) })}
-              disabled={loading}
-              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-            >
-              {ROWS_PER_PAGE_OPTIONS.map((n) => (
-                <option key={n} value={n}>{n}</option>
-              ))}
-            </select>
-          </label>
-          <span className="text-xs text-gray-600">
-            {showFrom}–{showTo} z {total}
-          </span>
-          <div className="ml-4 flex items-center gap-1.5 text-xs">
-            <span className="text-gray-600">Cena vs. trh:</span>
-            {(["none", "500", "1000", "2000"] as LocalDiffRadius[]).map((r) => {
-              const label =
-                r === "none" ? "Vyp" : r === "500" ? "500 m" : r === "1000" ? "1 km" : "2 km";
-              const isActive = localDiffRadius === r;
-              return (
-                <button
-                  key={r}
-                  type="button"
-                  onClick={() => setLocalDiffRadius(r)}
-                  className={`rounded border px-2 py-0.5 ${
-                    isActive
-                      ? "border-black bg-black text-white"
-                      : "border-gray-300 bg-white text-gray-800 hover:bg-gray-50"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
-            <button
-              type="button"
-              onClick={async () => {
+          <button
+            type="button"
+            onClick={async () => {
                 try {
                   setRecomputingLocalDiffs(true);
                   const res = await fetch(`${API_BASE}/units/local-price-diffs/recompute`, {
@@ -998,6 +950,9 @@ export default function Home() {
                     averagePrice: data.average_price_czk ?? null,
                     averagePricePerM2: data.average_price_per_m2_czk ?? null,
                     availableCount: data.available_count ?? 0,
+                    averageLocalDiff500: data.average_local_price_diff_500m ?? null,
+                    averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
+                    averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
                   });
                 } catch (e) {
                   // eslint-disable-next-line no-console
@@ -1007,106 +962,12 @@ export default function Home() {
                   setRecomputingLocalDiffs(false);
                 }
               }}
-              disabled={recomputingLocalDiffs || loading}
-              className="ml-2 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {recomputingLocalDiffs ? "Přepočítávám…" : "Přepočítat"}
-            </button>
-          </div>
+            disabled={recomputingLocalDiffs || loading}
+            className="ml-2 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {recomputingLocalDiffs ? "Přepočítávám…" : "Přepočítat"}
+          </button>
         </div>
-        {countActiveFilters(filters) > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1 text-[11px] text-gray-700">
-            {(() => {
-              type FilterBadge = { id: string; label: string; clearKeys: string[] };
-              const badges: FilterBadge[] = [];
-              const rangeBases = new Set<string>();
-              for (const [k, v] of Object.entries(filters)) {
-                if (v === undefined) continue;
-                if (k.endsWith("_min") || k.endsWith("_max")) {
-                  rangeBases.add(k.replace(/_(min|max)$/, ""));
-                  continue;
-                }
-                const spec = aliasByKey.get(k);
-                const label = spec?.alias || k;
-                if (Array.isArray(v) && v.length > 0) {
-                  const formattedValues = v.map((raw) => {
-                    // Dispozice: layout_1 -> 1kk, layout_1_5 -> 1,5kk
-                    if (k === "layout") {
-                      const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
-                      if (m) {
-                        const whole = m[1];
-                        const frac = m[2];
-                        return frac ? `${whole},${frac}kk` : `${whole}kk`;
-                      }
-                    }
-                    return String(raw);
-                  });
-                  badges.push({
-                    id: `${k}:${formattedValues.join(",")}`,
-                    label: `${label}: ${formattedValues.join(", ")}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "boolean") {
-                  badges.push({
-                    id: `${k}:${v ? "1" : "0"}`,
-                    label: `${label}: ${v ? "Ano" : "Ne"}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "number" && !Number.isNaN(v)) {
-                  badges.push({
-                    id: `${k}:${v}`,
-                    label: `${label}: ${v}`,
-                    clearKeys: [k],
-                  });
-                }
-              }
-              for (const base of rangeBases) {
-                const min = filters[`${base}_min`] as number | undefined;
-                const max = filters[`${base}_max`] as number | undefined;
-                if (
-                  (min === undefined || Number.isNaN(min as number)) &&
-                  (max === undefined || Number.isNaN(max as number))
-                ) {
-                  continue;
-                }
-                const spec = aliasByKey.get(base);
-                const label = spec?.alias || base;
-                let value = "";
-                if (min != null && !Number.isNaN(min)) {
-                  value += `od ${min}`;
-                }
-                if (max != null && !Number.isNaN(max)) {
-                  value += value ? ` do ${max}` : `do ${max}`;
-                }
-                badges.push({
-                  id: `${base}:${value}`,
-                  label: `${label}: ${value}`,
-                  clearKeys: [`${base}_min`, `${base}_max`],
-                });
-              }
-              return badges.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => {
-                    const next: CurrentFilters = { ...filters };
-                    for (const ck of b.clearKeys) {
-                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                      delete (next as any)[ck];
-                    }
-                    applyFilters(next);
-                  }}
-                  className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
-                >
-                  <span>{b.label}</span>
-                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
-                    ×
-                  </span>
-                </button>
-              ));
-            })()}
-          </div>
-        )}
       </header>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1119,9 +980,30 @@ export default function Home() {
             averagePricePerM2={summary.averagePricePerM2}
             averagePrice={summary.averagePrice}
             availableCount={summary.availableCount}
+            averageLocalDiff={averageLocalDiff}
           />
           <div className="data-grid-wrapper">
-            <div className="flex items-center justify-end gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs sm:text-sm">
+                  <span className="font-medium text-gray-700">Řádků</span>
+                  <select
+                    value={safeLimit}
+                    onChange={(e) => setLimitAndSort({ limit: Number(e.target.value) })}
+                    disabled={loading}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs sm:text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+                  >
+                    {ROWS_PER_PAGE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-xs text-gray-600">
+                  {showFrom}–{showTo} z {total}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={() => setPage(Math.max(0, offset - safeLimit))}
@@ -1142,6 +1024,98 @@ export default function Home() {
                 Další
               </button>
             </div>
+            {countActiveFilters(filters) > 0 && (
+              <div className="flex flex-wrap gap-1 border-b border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-700">
+                {(() => {
+                  type FilterBadge = { id: string; label: string; clearKeys: string[] };
+                  const badges: FilterBadge[] = [];
+                  const rangeBases = new Set<string>();
+                  for (const [k, v] of Object.entries(filters)) {
+                    if (v === undefined) continue;
+                    if (k.endsWith("_min") || k.endsWith("_max")) {
+                      rangeBases.add(k.replace(/_(min|max)$/, ""));
+                      continue;
+                    }
+                    const spec = aliasByKey.get(k);
+                    const label = spec?.alias || k;
+                    if (Array.isArray(v) && v.length > 0) {
+                      const formattedValues = v.map((raw) => {
+                        if (k === "layout") {
+                          const m = /^layout_(\\d+)(?:_(\\d+))?$/.exec(String(raw));
+                          if (m) {
+                            const whole = m[1];
+                            const frac = m[2];
+                            return frac ? `${whole},${frac}kk` : `${whole}kk`;
+                          }
+                        }
+                        return String(raw);
+                      });
+                      badges.push({
+                        id: `${k}:${formattedValues.join(",")}`,
+                        label: `${label}: ${formattedValues.join(", ")}`,
+                        clearKeys: [k],
+                      });
+                    } else if (typeof v === "boolean") {
+                      badges.push({
+                        id: `${k}:${v ? "1" : "0"}`,
+                        label: `${label}: ${v ? "Ano" : "Ne"}`,
+                        clearKeys: [k],
+                      });
+                    } else if (typeof v === "number" && !Number.isNaN(v)) {
+                      badges.push({
+                        id: `${k}:${v}`,
+                        label: `${label}: ${v}`,
+                        clearKeys: [k],
+                      });
+                    }
+                  }
+                  for (const base of rangeBases) {
+                    const min = filters[`${base}_min`] as number | undefined;
+                    const max = filters[`${base}_max`] as number | undefined;
+                    if (
+                      (min === undefined || Number.isNaN(min as number)) &&
+                      (max === undefined || Number.isNaN(max as number))
+                    ) {
+                      continue;
+                    }
+                    const spec = aliasByKey.get(base);
+                    const label = spec?.alias || base;
+                    let value = "";
+                    if (min != null && !Number.isNaN(min)) {
+                      value += `od ${min}`;
+                    }
+                    if (max != null && !Number.isNaN(max)) {
+                      value += value ? ` do ${max}` : `do ${max}`;
+                    }
+                    badges.push({
+                      id: `${base}:${value}`,
+                      label: `${label}: ${value}`,
+                      clearKeys: [`${base}_min`, `${base}_max`],
+                    });
+                  }
+                  return badges.map((b) => (
+                    <button
+                      key={b.id}
+                      type="button"
+                      onClick={() => {
+                        const next: CurrentFilters = { ...filters };
+                        for (const ck of b.clearKeys) {
+                          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                          delete (next as any)[ck];
+                        }
+                        applyFilters(next);
+                      }}
+                      className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
+                    >
+                      <span>{b.label}</span>
+                      <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
+                        ×
+                      </span>
+                    </button>
+                  ));
+                })()}
+              </div>
+            )}
             <div className="data-grid-scroll">
               <table className="data-grid-table">
                 <thead className="bg-gray-50">
@@ -1230,9 +1204,9 @@ export default function Home() {
                             const isAvailableCol = key === "available";
                             const isStickyFirst = columnIndex === 0;
                             const isLocalDiffCol =
-                              (localDiffRadius === "500" && key === "local_price_diff_500m") ||
-                              (localDiffRadius === "1000" && key === "local_price_diff_1000m") ||
-                              (localDiffRadius === "2000" && key === "local_price_diff_2000m");
+                              key === "local_price_diff_500m" ||
+                              key === "local_price_diff_1000m" ||
+                              key === "local_price_diff_2000m";
                             let localDiffClass = "";
                             if (isLocalDiffCol) {
                               const n =
@@ -1242,9 +1216,9 @@ export default function Home() {
                                   ? Number(raw)
                                   : Number.NaN;
                               if (!Number.isNaN(n)) {
-                                const absText = formatPercent(Math.abs(n));
+                                const abs = Math.abs(n);
                                 const sign = n > 0 ? "+" : n < 0 ? "−" : "";
-                                formatted = `${sign}${absText}`;
+                                formatted = `${sign}${abs.toFixed(1)} %`;
                                 if (n > 0) localDiffClass = "text-red-600 font-semibold";
                                 else if (n < 0) localDiffClass = "text-green-600 font-semibold";
                               }
@@ -1339,13 +1313,12 @@ export default function Home() {
                                       e.stopPropagation();
                                       const extId = getExternalIdForRow(u);
                                       if (!extId) return;
-                                      const radius =
-                                        localDiffRadius === "500"
-                                          ? 500
-                                          : localDiffRadius === "1000"
-                                            ? 1000
-                                            : 2000;
-                                      const url = `/units/debug-compare?external_id=${encodeURIComponent(extId)}&radius_m=${radius}`;
+                                      let radius = 500;
+                                      if (key === "local_price_diff_1000m") radius = 1000;
+                                      else if (key === "local_price_diff_2000m") radius = 2000;
+                                      const url = `/units/debug-compare?external_id=${encodeURIComponent(
+                                        extId
+                                      )}&radius_m=${radius}`;
                                       window.open(url, "_blank", "noopener,noreferrer");
                                     }}
                                     className={`underline decoration-dotted underline-offset-2 ${localDiffClass}`}

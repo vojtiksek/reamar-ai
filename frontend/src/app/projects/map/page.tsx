@@ -140,32 +140,34 @@ export default function ProjectsMapPage() {
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
           <div className="flex items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
-            <Link
-              href={
-                searchParams?.get("poly")
-                  ? `/units?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
-                  : "/units"
-              }
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
-            >
-              Jednotky
-            </Link>
-            <Link
-              href={
-                searchParams?.get("poly")
-                  ? `/projects?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
-                  : "/projects"
-              }
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
-            >
-              Projekty
-            </Link>
-            <Link
-              href="/projects/map"
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-            >
-              Mapa
-            </Link>
+            {(() => {
+              const qs = searchParams?.toString() ?? "";
+              const unitsHref = qs ? `/units?${qs}` : "/units";
+              const projectsHref = qs ? `/projects?${qs}` : "/projects";
+              const mapHref = qs ? `/projects/map?${qs}` : "/projects/map";
+              return (
+                <>
+                  <Link
+                    href={unitsHref}
+                    className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+                  >
+                    Jednotky
+                  </Link>
+                  <Link
+                    href={projectsHref}
+                    className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+                  >
+                    Projekty
+                  </Link>
+                  <Link
+                    href={mapHref}
+                    className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+                  >
+                    Mapa
+                  </Link>
+                </>
+              );
+            })()}
           </div>
         </div>
         <div className="flex items-center gap-3 text-xs">
