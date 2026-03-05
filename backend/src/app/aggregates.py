@@ -434,7 +434,8 @@ def recompute_local_price_diffs(db: Session) -> None:
             return None
         return float(sum(values) / len(values))
 
-    radii = (500.0, 1000.0, 2000.0)
+    # 500 m už dále nepoužíváme – počítáme jen 1 km a 2 km.
+    radii = (1000.0, 2000.0)
 
     # For each unit compute diffs for each radius.
     for info in infos:
@@ -538,7 +539,8 @@ def recompute_local_price_diffs(db: Session) -> None:
             except Exception:
                 return None
 
-        u.local_price_diff_500m = _as_decimal(diffs[500.0])
+        # 500 m sloupec již nepoužíváme – vždy nulujeme.
+        u.local_price_diff_500m = None
         u.local_price_diff_1000m = _as_decimal(diffs[1000.0])
         u.local_price_diff_2000m = _as_decimal(diffs[2000.0])
 

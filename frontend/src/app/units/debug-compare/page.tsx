@@ -2,12 +2,19 @@
 
 import { API_BASE } from "@/lib/api";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
+
+const LocalDiffDebugMap = dynamic(() => import("./LocalDiffDebugMap"), {
+  ssr: false,
+});
 
 type Comparable = {
   external_id: string;
   project_name: string | null;
+  gps_latitude: number | null;
+  gps_longitude: number | null;
   price_per_m2_czk: number | null;
   floor_area_m2: number | null;
   total_price_czk: number | null;
@@ -22,6 +29,8 @@ type Comparable = {
 type DebugData = {
   unit_external_id: string;
   radius_m: number;
+  unit_gps_latitude: number | null;
+  unit_gps_longitude: number | null;
   group: string | null;
   bucket_label: string | null;
   bucket_min_area_m2: number | null;
@@ -113,6 +122,17 @@ export default function DebugComparePage() {
             </Link>
           </div>
         </div>
+
+        {!loading && !error && data && (
+          <LocalDiffDebugMap
+            center={
+              data.unit_gps_latitude != null && data.unit_gps_longitude != null
+                ? { lat: data.unit_gps_latitude, lng: data.unit_gps_longitude }
+                : null
+            }
+            comparables={data.comparables}
+          />
+        )}
 
         {loading && (
           <div className="px-4 py-12 text-center text-sm text-gray-600 sm:px-6">

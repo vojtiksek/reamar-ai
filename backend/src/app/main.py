@@ -124,7 +124,6 @@ class UnitsListResponse(BaseModel):
     average_price_czk: float | None = None
     average_price_per_m2_czk: float | None = None
     available_count: int | None = None
-    average_local_price_diff_500m: float | None = None
     average_local_price_diff_1000m: float | None = None
     average_local_price_diff_2000m: float | None = None
 
@@ -132,6 +131,8 @@ class UnitsListResponse(BaseModel):
 class LocalPriceDiffComparable(BaseModel):
     external_id: str
     project_name: str | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
     price_per_m2_czk: float | None = None
     floor_area_m2: float | None = None
     total_price_czk: float | None = None
@@ -146,6 +147,8 @@ class LocalPriceDiffComparable(BaseModel):
 class LocalPriceDiffDebugResponse(BaseModel):
     unit_external_id: str
     radius_m: float
+    unit_gps_latitude: float | None = None
+    unit_gps_longitude: float | None = None
     group: str | None = None
     bucket_label: str | None = None
     bucket_min_area_m2: float | None = None
@@ -492,6 +495,8 @@ def get_unit_local_price_diff_debug(
             LocalPriceDiffComparable(
                 external_id=other["external_id"],
                 project_name=other.get("project_name"),
+                gps_latitude=other.get("lat"),
+                gps_longitude=other.get("lon"),
                 price_per_m2_czk=other["price_pm2"],
                 floor_area_m2=other["area"],
                 total_price_czk=other.get("total_price_czk"),
@@ -507,6 +512,8 @@ def get_unit_local_price_diff_debug(
     return LocalPriceDiffDebugResponse(
         unit_external_id=external_id,
         radius_m=radius_m,
+        unit_gps_latitude=lat1,
+        unit_gps_longitude=lon1,
         group=group,
         bucket_label=bucket_label,
         bucket_min_area_m2=min_area,
@@ -598,8 +605,7 @@ ALLOWED_SORT_BY = (
     "payment_contract",
     "payment_construction",
     "payment_occupancy",
-    # Lokální cenová odchylka vs. trh
-    "local_price_diff_500m",
+    # Lokální cenová odchylka vs. trh (500 m sloupec již nepoužíváme)
     "local_price_diff_1000m",
     "local_price_diff_2000m",
     # Project-level aggregate fields injected into unit.data (via ProjectAggregates)
@@ -1025,19 +1031,7 @@ def list_units(
             func.avg(base_subq.c.price_czk),
             func.avg(base_subq.c.price_per_m2_czk),
             func.sum(case((base_subq.c.available.is_(True), 1), else_=0)),
-            # Průměrná lokální odchylka počítaná jen z jednotek na trhu
-            func.avg(
-                case(
-                    (
-                        or_(
-                            base_subq.c.available.is_(True),
-                            base_subq.c.availability_status.in_(["available", "reserved"]),
-                        ),
-                        base_subq.c.local_price_diff_500m,
-                    ),
-                    else_=None,
-                )
-            ),
+            # Průměrná lokální odchylka (počítaná jen z jednotek na trhu) – používáme 1 km a 2 km.
             func.avg(
                 case(
                     (
@@ -1067,9 +1061,8 @@ def list_units(
     avg_price_czk = float(summary_row[0]) if summary_row and summary_row[0] is not None else None
     avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
     available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
-    avg_local_500 = float(summary_row[3]) if summary_row and summary_row[3] is not None else None
-    avg_local_1000 = float(summary_row[4]) if summary_row and summary_row[4] is not None else None
-    avg_local_2000 = float(summary_row[5]) if summary_row and summary_row[5] is not None else None
+    avg_local_1000 = float(summary_row[3]) if summary_row and summary_row[3] is not None else None
+    avg_local_2000 = float(summary_row[4]) if summary_row and summary_row[4] is not None else None
 
     # Řazení: část polí je přímo na Unit, část jsou projektové atributy (Project)
     # a část jsou projektové agregáty (ProjectAggregates).
@@ -1121,8 +1114,7 @@ def list_units(
         "payment_contract": Unit.payment_contract,
         "payment_construction": Unit.payment_construction,
         "payment_occupancy": Unit.payment_occupancy,
-        # Lokální cenová odchylka vs. trh
-        "local_price_diff_500m": Unit.local_price_diff_500m,
+        # Lokální cenová odchylka vs. trh (bez 500 m)
         "local_price_diff_1000m": Unit.local_price_diff_1000m,
         "local_price_diff_2000m": Unit.local_price_diff_2000m,
     }
@@ -1275,7 +1267,6 @@ def list_units(
         average_price_czk=avg_price_czk,
         average_price_per_m2_czk=avg_price_per_m2_czk,
         available_count=available_count,
-        average_local_price_diff_500m=avg_local_500,
         average_local_price_diff_1000m=avg_local_1000,
         average_local_price_diff_2000m=avg_local_2000,
     )

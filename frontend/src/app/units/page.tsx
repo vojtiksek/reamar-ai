@@ -44,9 +44,8 @@ type UnitsListResponse = {
   average_price_czk?: number | null;
   average_price_per_m2_czk?: number | null;
   available_count?: number | null;
-   average_local_price_diff_500m?: number | null;
-   average_local_price_diff_1000m?: number | null;
-   average_local_price_diff_2000m?: number | null;
+  average_local_price_diff_1000m?: number | null;
+  average_local_price_diff_2000m?: number | null;
 };
 
 type ColumnDef = {
@@ -98,7 +97,6 @@ const SORT_BY_OPTIONS = [
   "payment_contract",
   "payment_construction",
   "payment_occupancy",
-  "local_price_diff_500m",
   "local_price_diff_1000m",
   "local_price_diff_2000m",
   "smart_home",
@@ -189,8 +187,7 @@ const BACKEND_SORT_FIELDS = [
   "payment_contract",
   "payment_construction",
   "payment_occupancy",
-  // Lokální cenová odchylka vs. trh
-  "local_price_diff_500m",
+  // Lokální cenová odchylka vs. trh (bez 500 m)
   "local_price_diff_1000m",
   "local_price_diff_2000m",
   "smart_home",
@@ -300,7 +297,6 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.min_payment_occupancy": "min_payment_occupancy",
   "project.max_payment_occupancy": "max_payment_occupancy",
   // Lokální cenová odchylka (percent)
-  local_price_diff_500m: "local_price_diff_500m",
   local_price_diff_1000m: "local_price_diff_1000m",
   local_price_diff_2000m: "local_price_diff_2000m",
 };
@@ -399,7 +395,6 @@ function computeSummaryFromUnits(units: Unit[], total: number) {
     averagePricePerM2: withPricePerM2.length ? sumPricePerM2 / withPricePerM2.length : null,
     availableCount: units.filter((u) => u.available).length,
     total,
-    averageLocalDiff500: null,
     averageLocalDiff1000: null,
     averageLocalDiff2000: null,
   };
@@ -443,7 +438,6 @@ export default function Home() {
     averagePrice: number | null;
     averagePricePerM2: number | null;
     availableCount: number;
-    averageLocalDiff500: number | null;
     averageLocalDiff1000: number | null;
     averageLocalDiff2000: number | null;
   } | null>(null);
@@ -595,7 +589,6 @@ export default function Home() {
           averagePrice: data.average_price_czk ?? null,
           averagePricePerM2: data.average_price_per_m2_czk ?? null,
           availableCount: data.available_count ?? 0,
-          averageLocalDiff500: data.average_local_price_diff_500m ?? null,
           averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
           averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
         });
@@ -699,7 +692,8 @@ export default function Home() {
   );
 
   const summary = summaryOverride ?? computeSummaryFromUnits(units, total);
-  const averageLocalDiff = summary.averageLocalDiff500;
+  // Hlavní metrika vs. trh: používáme průměr pro 1 km.
+  const averageLocalDiff = summary.averageLocalDiff1000;
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
 
@@ -950,7 +944,6 @@ export default function Home() {
                     averagePrice: data.average_price_czk ?? null,
                     averagePricePerM2: data.average_price_per_m2_czk ?? null,
                     availableCount: data.available_count ?? 0,
-                    averageLocalDiff500: data.average_local_price_diff_500m ?? null,
                     averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
                     averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
                   });
@@ -1207,7 +1200,6 @@ export default function Home() {
                             const isAvailableCol = key === "available";
                             const isStickyFirst = columnIndex === 0;
                             const isLocalDiffCol =
-                              key === "local_price_diff_500m" ||
                               key === "local_price_diff_1000m" ||
                               key === "local_price_diff_2000m";
                             let localDiffClass = "";
@@ -1316,9 +1308,8 @@ export default function Home() {
                                       e.stopPropagation();
                                       const extId = getExternalIdForRow(u);
                                       if (!extId) return;
-                                      let radius = 500;
-                                      if (key === "local_price_diff_1000m") radius = 1000;
-                                      else if (key === "local_price_diff_2000m") radius = 2000;
+                                      let radius = 1000;
+                                      if (key === "local_price_diff_2000m") radius = 2000;
                                       const url = `/units/debug-compare?external_id=${encodeURIComponent(
                                         extId
                                       )}&radius_m=${radius}`;
