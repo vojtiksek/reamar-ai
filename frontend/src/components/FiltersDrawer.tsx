@@ -51,16 +51,16 @@ export function FiltersDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/50 transition-opacity" aria-hidden onClick={onClose} />
       <div
-        className="fixed top-0 right-0 z-50 flex h-full w-[420px] max-w-[100vw] flex-col rounded-l-xl border-l border-gray-200 bg-white shadow-xl"
+        className="fixed top-0 right-0 z-50 flex h-full w-full max-w-[720px] flex-col rounded-l-2xl border-l border-slate-200 bg-white shadow-2xl"
         role="dialog"
         aria-label="Filtry"
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
-          <h2 className="text-lg font-semibold text-gray-900">Filtry</h2>
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-slate-50/70 px-6 py-4">
+          <h2 className="text-base font-semibold tracking-tight text-slate-900">Filtry</h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+            className="rounded-full p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
             aria-label="Zavřít"
           >
             <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -68,12 +68,20 @@ export function FiltersDrawer({
             </svg>
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-5">
-          <div className="space-y-8">
+        <div className="flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-5">
             {filterGroups.map((group) => (
-              <section key={group.name}>
-                <h3 className="mb-4 text-sm font-medium text-gray-700">{group.name}</h3>
-                <div className="space-y-4">
+              <section
+                key={group.name}
+                className="rounded-2xl border border-slate-200 bg-slate-50/70 px-4 py-3 shadow-sm"
+              >
+                <div className="mb-3 flex items-center gap-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    {group.name}
+                  </h3>
+                  <div className="h-px flex-1 bg-slate-200" />
+                </div>
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                   {group.filters.map((spec) => (
                     <FilterField key={spec.key} spec={spec} currentFilters={currentFilters} onChange={onChange} />
                   ))}
@@ -82,19 +90,19 @@ export function FiltersDrawer({
             ))}
           </div>
         </div>
-        <div className="shrink-0 border-t border-gray-200 bg-white px-5 py-4">
+        <div className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
           <div className="flex gap-3">
             <button
               type="button"
               onClick={onReset}
-              className="flex-1 rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+              className="flex-1 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
             >
               Reset
             </button>
             <button
               type="button"
               onClick={onApply}
-              className="flex-1 rounded-lg bg-black px-4 py-2.5 text-sm font-medium text-white hover:bg-gray-900"
+              className="flex-1 rounded-full bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-800"
             >
               Použít
             </button>
@@ -124,9 +132,10 @@ function FilterField({
     const step = stepFromDecimals(spec.decimals);
     return (
       <div className="space-y-2">
-        <label className="block text-sm font-medium text-gray-700">
-          {label}{unitLabel}
-          {disabled && <span className="ml-1 text-xs text-amber-600">(zatím nepodporováno)</span>}
+        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {label}
+          {unitLabel && <span className="ml-1 text-[11px] normal-case text-slate-500">{unitLabel}</span>}
+          {disabled && <span className="ml-1 text-[11px] text-amber-600">(zatím nepodporováno)</span>}
         </label>
         <div className="flex gap-2">
           <input
@@ -136,7 +145,7 @@ function FilterField({
             onChange={(e) => onChange(`${spec.key}_min`, e.target.value === "" ? undefined : Number(e.target.value))}
             placeholder="Min"
             disabled={disabled}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
           />
           <input
             type="number"
@@ -145,7 +154,7 @@ function FilterField({
             onChange={(e) => onChange(`${spec.key}_max`, e.target.value === "" ? undefined : Number(e.target.value))}
             placeholder="Max"
             disabled={disabled}
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
           />
         </div>
       </div>
@@ -157,35 +166,56 @@ function FilterField({
     const selectedSet = new Set(selected.map(String));
     const options =
       spec.key === "orientation" ? (["E", "N", "S", "W"] as string[]) : ((spec.options ?? []) as string[]);
+    const [open, setOpen] = useState(false);
+    const selectedLabels = options
+      .filter((val) => selectedSet.has(val))
+      .map((val) => formatFilterValueLabel(spec, val));
+    const summary =
+      selectedLabels.length === 0
+        ? "Libovolné"
+        : selectedLabels.slice(0, 3).join(", ") +
+          (selectedLabels.length > 3 ? ` +${selectedLabels.length - 3}` : "");
+
     return (
       <div className="space-y-2">
-        <span className="block text-sm font-medium text-gray-700">
+        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
           {label}
-          {disabled && <span className="ml-1 text-xs text-amber-600">(zatím nepodporováno)</span>}
+          {disabled && <span className="ml-1 text-[11px] text-amber-600">(zatím nepodporováno)</span>}
         </span>
-        <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-gray-50/50 p-2">
-          {options.map((val) => {
-            const isChecked = selectedSet.has(val);
-            return (
-              <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-gray-100/80">
-                <input
-                  type="checkbox"
-                  id={`${spec.key}-${val}`}
-                  checked={isChecked}
-                  onChange={() => {
-                    const next = isChecked ? [...selectedSet].filter((x) => x !== val) : [...selectedSet, val];
-                    onChange(spec.key, next);
-                  }}
-                  disabled={disabled}
-                  className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
-                />
-                <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
-                  {formatFilterValueLabel(spec, val)}
-                </label>
-              </li>
-            );
-          })}
-        </ul>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => !disabled && setOpen((v) => !v)}
+          className="flex w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+        >
+          <span className={selectedLabels.length === 0 ? "text-slate-400" : ""}>{summary}</span>
+          <span className="ml-2 text-xs text-slate-500">{open ? "▲" : "▼"}</span>
+        </button>
+        {open && (
+          <ul className="mt-1 max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-slate-200 bg-slate-50/60 p-2">
+            {options.map((val) => {
+              const isChecked = selectedSet.has(val);
+              return (
+                <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-100/80">
+                  <input
+                    type="checkbox"
+                    id={`${spec.key}-${val}`}
+                    checked={isChecked}
+                    onChange={() => {
+                      const next = isChecked ? [...selectedSet].filter((x) => x !== val) : [...selectedSet, val];
+                      onChange(spec.key, next);
+                    }}
+                    disabled={disabled}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-900/20 disabled:opacity-50"
+                  />
+                  <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-slate-900">
+                    {formatFilterValueLabel(spec, val)}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     );
   }
@@ -205,29 +235,41 @@ function FilterField({
     const value = currentFilters[spec.key] as boolean | undefined;
     return (
       <div className="space-y-2">
-        <span className="block text-sm font-medium text-gray-700">
+        <span className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
           {label}
-          {disabled && <span className="ml-1 text-xs text-amber-600">(zatím nepodporováno)</span>}
+          {disabled && <span className="ml-1 text-[11px] text-amber-600">(zatím nepodporováno)</span>}
         </span>
         <div className="flex gap-2">
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, undefined)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === undefined ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
+              value === undefined
+                ? "bg-slate-900 text-white hover:bg-slate-800"
+                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Libovolné
           </button>
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, true)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === true ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
+              value === true
+                ? "bg-slate-900 text-white hover:bg-slate-800"
+                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Ano
           </button>
           <button
             type="button"
             onClick={() => !disabled && onChange(spec.key, false)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium ${value === false ? "bg-black text-white hover:bg-gray-900" : "border border-gray-300 bg-white text-gray-800 hover:bg-gray-50"} ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
+              value === false
+                ? "bg-slate-900 text-white hover:bg-slate-800"
+                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
+            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
           >
             Ne
           </button>
@@ -251,6 +293,7 @@ function EnumSearchField({
   disabled: boolean;
 }) {
   const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
   const selected = (currentFilters[spec.key] as string[] | undefined) ?? [];
   const selectedSet = new Set(selected.map(String));
   const options = (spec.options ?? []) as string[];
@@ -268,77 +311,96 @@ function EnumSearchField({
 
   return (
     <div className="space-y-2">
-      <span className="block text-sm font-medium text-gray-700">
+      <span className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
         {label}
-        {disabled && <span className="ml-1 text-xs text-amber-600">(zatím nepodporováno)</span>}
+        {disabled && <span className="ml-1 text-[11px] text-amber-600">(zatím nepodporováno)</span>}
       </span>
-      <input
-        type="text"
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && !disabled) {
-            e.preventDefault();
-            const first = filtered[0];
-            if (!first) return;
-            const val = String(first);
-            if (!selectedSet.has(val)) {
-              onChange(spec.key, [...selected, val]);
-            }
-            setSearch("");
-          }
-        }}
-        placeholder="Hledat…"
+      <button
+        type="button"
         disabled={disabled}
-        className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 disabled:bg-gray-100 disabled:text-gray-600 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-        aria-label={`Vyhledat v ${label}`}
-      />
-      {selected.length > 0 && (
-        <div className="flex flex-wrap gap-1.5 rounded-md border border-gray-200 bg-gray-50/50 p-2">
-          {selected.map((val) => (
-            <span
-              key={val}
-              className="inline-flex items-center gap-1 rounded-full bg-gray-200 py-0.5 pl-2 pr-1 text-sm font-medium text-gray-800"
-            >
-              {formatFilterValueLabel(spec, val)}
-              <button
-                type="button"
-                onClick={() => removeChip(val)}
-                disabled={disabled}
-                className="rounded-full p-0.5 text-gray-600 hover:bg-gray-300 hover:text-gray-900 disabled:opacity-50"
-                aria-label={`Odebrat ${val}`}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </span>
-          ))}
+        onClick={() => !disabled && setOpen((v) => !v)}
+        className="flex w-full items-center justify-between rounded-md border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm hover:bg-slate-50 disabled:opacity-60"
+      >
+        <span className={selected.length === 0 ? "text-slate-400" : ""}>
+          {selected.length === 0
+            ? "Libovolné"
+            : selected.length === 1
+            ? formatFilterValueLabel(spec, selected[0])
+            : `${selected.length} vybrané`}
+        </span>
+        <span className="ml-2 text-xs text-slate-500">{open ? "▲" : "▼"}</span>
+      </button>
+      {open && (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !disabled) {
+                e.preventDefault();
+                const first = filtered[0];
+                if (!first) return;
+                const val = String(first);
+                if (!selectedSet.has(val)) {
+                  onChange(spec.key, [...selected, val]);
+                }
+                setSearch("");
+              }
+            }}
+            placeholder="Hledat…"
+            disabled={disabled}
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+            aria-label={`Vyhledat v ${label}`}
+          />
+          {selected.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 rounded-md border border-slate-200 bg-slate-50/60 p-2">
+              {selected.map((val) => (
+                <span
+                  key={val}
+                  className="inline-flex items-center gap-1 rounded-full bg-slate-200 py-0.5 pl-2 pr-1 text-sm font-medium text-slate-800"
+                >
+                  {formatFilterValueLabel(spec, val)}
+                  <button
+                    type="button"
+                    onClick={() => removeChip(val)}
+                    disabled={disabled}
+                    className="rounded-full p-0.5 text-slate-600 hover:bg-slate-300 hover:text-slate-900 disabled:opacity-50"
+                    aria-label={`Odebrat ${val}`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-slate-200 bg-slate-50/60 p-2">
+            {filtered.map((val) => {
+              const isChecked = selectedSet.has(val);
+              return (
+                <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-slate-100/80">
+                  <input
+                    type="checkbox"
+                    id={`${spec.key}-${val}`}
+                    checked={isChecked}
+                    onChange={() => {
+                      const next = isChecked ? [...selectedSet].filter((x) => x !== val) : [...selectedSet, val];
+                      onChange(spec.key, next);
+                    }}
+                    disabled={disabled}
+                    className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-900/20 disabled:opacity-50"
+                  />
+                  <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-slate-900">
+                    {formatFilterValueLabel(spec, val)}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
-      <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-gray-200 bg-gray-50/50 p-2">
-        {filtered.map((val) => {
-          const isChecked = selectedSet.has(val);
-          return (
-            <li key={val} className="flex items-center gap-2 rounded px-1.5 py-1 hover:bg-gray-100/80">
-              <input
-                type="checkbox"
-                id={`${spec.key}-${val}`}
-                checked={isChecked}
-                onChange={() => {
-                  const next = isChecked ? [...selectedSet].filter((x) => x !== val) : [...selectedSet, val];
-                  onChange(spec.key, next);
-                }}
-                disabled={disabled}
-                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20 disabled:opacity-50"
-              />
-              <label htmlFor={`${spec.key}-${val}`} className="cursor-pointer text-sm text-gray-900">
-                {formatFilterValueLabel(spec, val)}
-              </label>
-            </li>
-          );
-        })}
-      </ul>
     </div>
   );
 }

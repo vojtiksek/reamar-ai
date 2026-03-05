@@ -1240,7 +1240,7 @@ export default function Home() {
                                     : ""
                                 } ${
                                   localDiffClass
-                                } ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${
+                                } ${isStickyFirst ? "sticky left-0 z-10 bg-inherit" : ""} ${
                                   isEditable ? "cursor-pointer" : ""
                                 }`}
                                 onDoubleClick={() => {
