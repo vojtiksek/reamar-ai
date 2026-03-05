@@ -14,7 +14,7 @@ import {
   flattenFilterSpecsByKey,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
-import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
+import { formatAreaM2, formatCurrencyCzk, formatCurrencyPerM2, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import Link from "next/link";
@@ -97,8 +97,24 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return String(value);
   }
 
-  // Currency
-  if (column.unit === "Kč") {
+  // Ceny: vždy Kč, bez desetinných míst, s mezerou mezi tisíci (jako na jednotkách)
+  if (column.unit === "Kč" || column.unit?.includes("Kč")) {
+    return formatCurrencyCzk(isNumber ? num : null);
+  }
+  if (column.key.endsWith("_price_per_m2_czk") || column.key.includes("price_per_m2")) {
+    return formatCurrencyPerM2(isNumber ? num : null);
+  }
+  if (
+    column.key.endsWith("_price_czk") ||
+    column.key === "min_price_czk" ||
+    column.key === "avg_price_czk" ||
+    column.key === "max_price_czk"
+  ) {
+    return formatCurrencyCzk(isNumber ? num : null);
+  }
+  if (
+    column.key.includes("parking") && column.key.endsWith("_czk")
+  ) {
     return formatCurrencyCzk(isNumber ? num : null);
   }
 

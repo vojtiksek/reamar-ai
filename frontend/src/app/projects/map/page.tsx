@@ -1,7 +1,7 @@
 "use client";
 
 import { API_BASE } from "@/lib/api";
-import { decodePolygon, encodePolygon, isPointInPolygon, type LatLng } from "@/lib/geo";
+import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
@@ -55,10 +55,22 @@ export default function ProjectsMapPage() {
         let offset = 0;
         let all: ProjectMapItem[] = [];
         let total = Infinity;
+        const params = new URLSearchParams(searchParams?.toString() ?? "");
+        params.set("limit", String(limit));
+        params.set("sort_by", "avg_price_per_m2_czk");
+        params.set("sort_dir", "asc");
+        if (polygon.length >= 3) {
+          const bounds = getPolygonBounds(polygon);
+          if (bounds) {
+            params.set("min_latitude", String(bounds.minLat));
+            params.set("max_latitude", String(bounds.maxLat));
+            params.set("min_longitude", String(bounds.minLng));
+            params.set("max_longitude", String(bounds.maxLng));
+          }
+        }
         while (!cancelled && offset < total) {
-          const res = await fetch(
-            `${API_BASE}/projects?limit=${limit}&offset=${offset}`
-          );
+          params.set("offset", String(offset));
+          const res = await fetch(`${API_BASE}/projects?${params.toString()}`);
           if (!res.ok) {
             throw new Error(res.statusText || `HTTP ${res.status}`);
           }
@@ -86,7 +98,7 @@ export default function ProjectsMapPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [searchParams?.toString(), polygon]);
 
   const visibleProjects = useMemo(() => {
     let base = projects;

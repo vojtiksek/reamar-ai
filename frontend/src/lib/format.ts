@@ -3,11 +3,13 @@
  * Used in table, summary bar, and unit detail.
  */
 
+/** CZK: celá čísla, mezery mezi tisíci (1 234 567 Kč), bez desetinných míst. */
 const CZK = new Intl.NumberFormat("cs-CZ", {
   style: "currency",
   currency: "CZK",
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
+  useGrouping: true,
 });
 
 export function formatCurrencyCzk(value: number | null | undefined): string {
@@ -15,14 +17,15 @@ export function formatCurrencyCzk(value: number | null | undefined): string {
   return CZK.format(Math.round(value));
 }
 
+/** Cena za m²: stejný styl jako CZK – celá čísla, mezery mezi tisíci, bez desetinných míst. */
 const CZK_PER_M2 = new Intl.NumberFormat("cs-CZ", {
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
+  useGrouping: true,
 });
 
 export function formatCurrencyPerM2(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  // Stejná prezentace jako u celkové ceny – jen částka a "Kč".
   return `${CZK_PER_M2.format(Math.round(value))} Kč`;
 }
 
