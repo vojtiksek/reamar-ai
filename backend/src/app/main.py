@@ -131,6 +131,9 @@ class LocalPriceDiffComparable(BaseModel):
     project_name: str | None = None
     price_per_m2_czk: float | None = None
     floor_area_m2: float | None = None
+    total_price_czk: float | None = None
+    exterior_area_m2: float | None = None
+    last_seen: date | None = None
     distance_m: float
     availability_status: str | None = None
     available: bool
@@ -320,6 +323,22 @@ def get_unit_local_price_diff_debug(
         on_market = bool(data.get("available", False)) or status in {"available", "reserved"}
         last_seen_val = getattr(u, "last_seen", None)
 
+        total_price = data.get("price_czk", None)
+        if total_price is None:
+            total_price = u.price_czk
+        try:
+            total_price_f = float(total_price) if total_price is not None else None
+        except (TypeError, ValueError):
+            total_price_f = None
+
+        exterior_area = data.get("exterior_area_m2", None)
+        if exterior_area is None:
+            exterior_area = getattr(u, "exterior_area_m2", None)
+        try:
+            exterior_area_f = float(exterior_area) if exterior_area is not None else None
+        except (TypeError, ValueError):
+            exterior_area_f = None
+
         info: dict[str, Any] = {
             "unit": u,
             "id": u.id,
@@ -332,6 +351,8 @@ def get_unit_local_price_diff_debug(
             "renovation": renovation_val,
             "on_market": on_market,
             "last_seen": last_seen_val,
+            "total_price_czk": total_price_f,
+            "exterior_area_m2": exterior_area_f,
             "availability_status": data.get("availability_status"),
             "available": bool(data.get("available", False)),
             "project_name": (data.get("project") or {}).get("name") if isinstance(data.get("project"), dict) else getattr(u.project, "name", None),
@@ -461,6 +482,9 @@ def get_unit_local_price_diff_debug(
                 project_name=other.get("project_name"),
                 price_per_m2_czk=other["price_pm2"],
                 floor_area_m2=other["area"],
+                total_price_czk=other.get("total_price_czk"),
+                exterior_area_m2=other.get("exterior_area_m2"),
+                last_seen=other.get("last_seen"),
                 distance_m=dist,
                 availability_status=other.get("availability_status"),
                 available=bool(other.get("available", False)),
@@ -562,6 +586,10 @@ ALLOWED_SORT_BY = (
     "payment_contract",
     "payment_construction",
     "payment_occupancy",
+    # Lokální cenová odchylka vs. trh
+    "local_price_diff_500m",
+    "local_price_diff_1000m",
+    "local_price_diff_2000m",
     # Project-level aggregate fields injected into unit.data (via ProjectAggregates)
     "total_units",
     "available_units",
@@ -1041,6 +1069,10 @@ def list_units(
         "payment_contract": Unit.payment_contract,
         "payment_construction": Unit.payment_construction,
         "payment_occupancy": Unit.payment_occupancy,
+        # Lokální cenová odchylka vs. trh
+        "local_price_diff_500m": Unit.local_price_diff_500m,
+        "local_price_diff_1000m": Unit.local_price_diff_1000m,
+        "local_price_diff_2000m": Unit.local_price_diff_2000m,
     }
 
     # Projektové atributy (sloupce typu "Projekt", které mají accessor project.*)

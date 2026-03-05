@@ -10,6 +10,9 @@ type Comparable = {
   project_name: string | null;
   price_per_m2_czk: number | null;
   floor_area_m2: number | null;
+  total_price_czk: number | null;
+  exterior_area_m2: number | null;
+  last_seen: string | null;
   distance_m: number;
   availability_status: string | null;
   available: boolean;
@@ -198,16 +201,25 @@ export default function DebugComparePage() {
                         Projekt
                       </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
+                        Cena
+                      </th>
+                      <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Cena / m²
                       </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Plocha
                       </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
+                        Venek
+                      </th>
+                      <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Vzdálenost
                       </th>
                       <th className="px-4 py-2.5 text-left font-semibold text-gray-800">
                         Rekonstrukce
+                      </th>
+                      <th className="px-4 py-2.5 text-left font-semibold text-gray-800">
+                        Poslední výskyt
                       </th>
                       <th className="px-4 py-2.5 text-left font-semibold text-gray-800">
                         Stav
@@ -224,6 +236,11 @@ export default function DebugComparePage() {
                           {c.project_name ?? "—"}
                         </td>
                         <td className="px-4 py-2 text-right text-gray-900">
+                          {c.total_price_czk != null
+                            ? `${Math.round(c.total_price_czk).toLocaleString("cs-CZ")} Kč`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-900">
                           {c.price_per_m2_czk != null
                             ? `${Math.round(c.price_per_m2_czk).toLocaleString("cs-CZ")} Kč/m²`
                             : "—"}
@@ -231,6 +248,11 @@ export default function DebugComparePage() {
                         <td className="px-4 py-2 text-right text-gray-800">
                           {c.floor_area_m2 != null
                             ? `${c.floor_area_m2.toFixed(1)} m²`
+                            : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-800">
+                          {c.exterior_area_m2 != null
+                            ? `${c.exterior_area_m2.toFixed(1)} m²`
                             : "—"}
                         </td>
                         <td className="px-4 py-2 text-right text-gray-800">
@@ -242,6 +264,11 @@ export default function DebugComparePage() {
                             : c.renovation === false
                               ? "novostavba"
                               : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-gray-800">
+                          {c.last_seen
+                            ? new Date(c.last_seen).toLocaleDateString("cs-CZ")
+                            : "—"}
                         </td>
                         <td className="px-4 py-2 text-gray-800">
                           {c.availability_status ?? (c.available ? "dostupná" : "prodaná")}
