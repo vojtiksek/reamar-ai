@@ -242,18 +242,11 @@ function FilterField({
         <div className="flex gap-2">
           <button
             type="button"
-            onClick={() => !disabled && onChange(spec.key, undefined)}
-            className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
-              value === undefined
-                ? "bg-slate-900 text-white hover:bg-slate-800"
-                : "border border-slate-300 bg-white text-slate-800 hover:bg-slate-50"
-            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
-          >
-            Libovolné
-          </button>
-          <button
-            type="button"
-            onClick={() => !disabled && onChange(spec.key, true)}
+            onClick={() => {
+              if (disabled) return;
+              // Klik na "Ano" znovu vypne filtr, když už je vybraný.
+              onChange(spec.key, value === true ? undefined : true);
+            }}
             className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
               value === true
                 ? "bg-slate-900 text-white hover:bg-slate-800"
@@ -264,7 +257,11 @@ function FilterField({
           </button>
           <button
             type="button"
-            onClick={() => !disabled && onChange(spec.key, false)}
+            onClick={() => {
+              if (disabled) return;
+              // Klik na "Ne" znovu vypne filtr, když už je vybraný.
+              onChange(spec.key, value === false ? undefined : false);
+            }}
             className={`rounded-full px-3 py-2 text-xs sm:text-sm font-medium ${
               value === false
                 ? "bg-slate-900 text-white hover:bg-slate-800"
