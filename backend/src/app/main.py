@@ -345,6 +345,7 @@ def get_unit_local_price_diff_debug(
         info: dict[str, Any] = {
             "unit": u,
             "id": u.id,
+            "project_id": u.project_id,
             "external_id": u.external_id,
             "lat": float(lat),
             "lon": float(lon),
@@ -402,6 +403,8 @@ def get_unit_local_price_diff_debug(
 
     for other in infos:
         if other["id"] == target["id"]:
+            continue
+        # Ignorujeme jednotky ze stejného projektu – chceme srovnání s trhem v okolí,\n+        # ne s ostatními byty v témže projektu.\n+        if other.get("project_id") == target.get("project_id"):
             continue
         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
         if other.get("renovation") != target.get("renovation"):

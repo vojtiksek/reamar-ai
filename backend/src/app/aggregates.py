@@ -369,6 +369,7 @@ def recompute_local_price_diffs(db: Session) -> None:
             {
                 "unit": u,
                 "id": u.id,
+                "project_id": u.project_id,
                 "lat": float(lat),
                 "lon": float(lon),
                 "price_pm2": price_pm2_f,
@@ -460,6 +461,8 @@ def recompute_local_price_diffs(db: Session) -> None:
                         continue
                     for other in cell_infos:
                         if other["id"] == info["id"]:
+                            continue
+                        # Nebereme jednotky ze stejného projektu – jinak by projekt s mnoha\n+                        # jednotkami výrazně zkresloval lokální průměr.\n+                        if other.get("project_id") == info.get("project_id"):
                             continue
                         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
                         if other.get("renovation") != info.get("renovation"):

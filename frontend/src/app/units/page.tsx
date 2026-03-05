@@ -921,7 +921,7 @@ export default function Home() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-col items-end gap-1">
           <button
             type="button"
             onClick={async () => {
@@ -967,6 +967,98 @@ export default function Home() {
           >
             {recomputingLocalDiffs ? "Přepočítávám…" : "Přepočítat"}
           </button>
+          {countActiveFilters(filters) > 0 && (
+            <div className="flex flex-wrap gap-1 text-[11px] text-gray-700">
+              {(() => {
+                type FilterBadge = { id: string; label: string; clearKeys: string[] };
+                const badges: FilterBadge[] = [];
+                const rangeBases = new Set<string>();
+                for (const [k, v] of Object.entries(filters)) {
+                  if (v === undefined) continue;
+                  if (k.endsWith("_min") || k.endsWith("_max")) {
+                    rangeBases.add(k.replace(/_(min|max)$/, ""));
+                    continue;
+                  }
+                  const spec = aliasByKey.get(k);
+                  const label = spec?.alias || k;
+                  if (Array.isArray(v) && v.length > 0) {
+                    const formattedValues = v.map((raw) => {
+                      if (k === "layout") {
+                        const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
+                        if (m) {
+                          const whole = m[1];
+                          const frac = m[2];
+                          return frac ? `${whole},${frac}kk` : `${whole}kk`;
+                        }
+                      }
+                      return String(raw);
+                    });
+                    badges.push({
+                      id: `${k}:${formattedValues.join(",")}`,
+                      label: `${label}: ${formattedValues.join(", ")}`,
+                      clearKeys: [k],
+                    });
+                  } else if (typeof v === "boolean") {
+                    badges.push({
+                      id: `${k}:${v ? "1" : "0"}`,
+                      label: `${label}: ${v ? "Ano" : "Ne"}`,
+                      clearKeys: [k],
+                    });
+                  } else if (typeof v === "number" && !Number.isNaN(v)) {
+                    badges.push({
+                      id: `${k}:${v}`,
+                      label: `${label}: ${v}`,
+                      clearKeys: [k],
+                    });
+                  }
+                }
+                for (const base of rangeBases) {
+                  const min = filters[`${base}_min`] as number | undefined;
+                  const max = filters[`${base}_max`] as number | undefined;
+                  if (
+                    (min === undefined || Number.isNaN(min as number)) &&
+                    (max === undefined || Number.isNaN(max as number))
+                  ) {
+                    continue;
+                  }
+                  const spec = aliasByKey.get(base);
+                  const label = spec?.alias || base;
+                  let value = "";
+                  if (min != null && !Number.isNaN(min)) {
+                    value += `od ${min}`;
+                  }
+                  if (max != null && !Number.isNaN(max)) {
+                    value += value ? ` do ${max}` : `do ${max}`;
+                  }
+                  badges.push({
+                    id: `${base}:${value}`,
+                    label: `${label}: ${value}`,
+                    clearKeys: [`${base}_min`, `${base}_max`],
+                  });
+                }
+                return badges.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => {
+                      const next: CurrentFilters = { ...filters };
+                      for (const ck of b.clearKeys) {
+                        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                        delete (next as any)[ck];
+                      }
+                      applyFilters(next);
+                    }}
+                    className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
+                  >
+                    <span>{b.label}</span>
+                    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
+                      ×
+                    </span>
+                  </button>
+                ));
+              })()}
+            </div>
+          )}
         </div>
       </header>
 
@@ -1004,118 +1096,29 @@ export default function Home() {
                   {showFrom}–{showTo} z {total}
                 </span>
               </div>
-              <button
-                type="button"
-                onClick={() => setPage(Math.max(0, offset - safeLimit))}
-                disabled={offset <= 0 || loading}
-                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Předchozí
-              </button>
-              <span className="text-xs sm:text-sm text-gray-700">
-                Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage(offset + safeLimit)}
-                disabled={offset + safeLimit >= total || loading}
-                className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Další
-              </button>
-            </div>
-            {countActiveFilters(filters) > 0 && (
-              <div className="flex flex-wrap gap-1 border-b border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-700">
-                {(() => {
-                  type FilterBadge = { id: string; label: string; clearKeys: string[] };
-                  const badges: FilterBadge[] = [];
-                  const rangeBases = new Set<string>();
-                  for (const [k, v] of Object.entries(filters)) {
-                    if (v === undefined) continue;
-                    if (k.endsWith("_min") || k.endsWith("_max")) {
-                      rangeBases.add(k.replace(/_(min|max)$/, ""));
-                      continue;
-                    }
-                    const spec = aliasByKey.get(k);
-                    const label = spec?.alias || k;
-                    if (Array.isArray(v) && v.length > 0) {
-                      const formattedValues = v.map((raw) => {
-                        if (k === "layout") {
-                          const m = /^layout_(\\d+)(?:_(\\d+))?$/.exec(String(raw));
-                          if (m) {
-                            const whole = m[1];
-                            const frac = m[2];
-                            return frac ? `${whole},${frac}kk` : `${whole}kk`;
-                          }
-                        }
-                        return String(raw);
-                      });
-                      badges.push({
-                        id: `${k}:${formattedValues.join(",")}`,
-                        label: `${label}: ${formattedValues.join(", ")}`,
-                        clearKeys: [k],
-                      });
-                    } else if (typeof v === "boolean") {
-                      badges.push({
-                        id: `${k}:${v ? "1" : "0"}`,
-                        label: `${label}: ${v ? "Ano" : "Ne"}`,
-                        clearKeys: [k],
-                      });
-                    } else if (typeof v === "number" && !Number.isNaN(v)) {
-                      badges.push({
-                        id: `${k}:${v}`,
-                        label: `${label}: ${v}`,
-                        clearKeys: [k],
-                      });
-                    }
-                  }
-                  for (const base of rangeBases) {
-                    const min = filters[`${base}_min`] as number | undefined;
-                    const max = filters[`${base}_max`] as number | undefined;
-                    if (
-                      (min === undefined || Number.isNaN(min as number)) &&
-                      (max === undefined || Number.isNaN(max as number))
-                    ) {
-                      continue;
-                    }
-                    const spec = aliasByKey.get(base);
-                    const label = spec?.alias || base;
-                    let value = "";
-                    if (min != null && !Number.isNaN(min)) {
-                      value += `od ${min}`;
-                    }
-                    if (max != null && !Number.isNaN(max)) {
-                      value += value ? ` do ${max}` : `do ${max}`;
-                    }
-                    badges.push({
-                      id: `${base}:${value}`,
-                      label: `${label}: ${value}`,
-                      clearKeys: [`${base}_min`, `${base}_max`],
-                    });
-                  }
-                  return badges.map((b) => (
-                    <button
-                      key={b.id}
-                      type="button"
-                      onClick={() => {
-                        const next: CurrentFilters = { ...filters };
-                        for (const ck of b.clearKeys) {
-                          // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                          delete (next as any)[ck];
-                        }
-                        applyFilters(next);
-                      }}
-                      className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
-                    >
-                      <span>{b.label}</span>
-                      <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
-                        ×
-                      </span>
-                    </button>
-                  ));
-                })()}
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.max(0, offset - safeLimit))}
+                  disabled={offset <= 0 || loading}
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Předchozí
+                </button>
+                <span className="text-xs sm:text-sm text-gray-700">
+                  Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z{" "}
+                  {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(offset + safeLimit)}
+                  disabled={offset + safeLimit >= total || loading}
+                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Další
+                </button>
               </div>
-            )}
+            </div>
             <div className="data-grid-scroll">
               <table className="data-grid-table">
                 <thead className="bg-gray-50">
