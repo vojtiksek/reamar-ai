@@ -365,11 +365,18 @@ def recompute_local_price_diffs(db: Session) -> None:
         is_available_flag = bool(avail_flag)
         on_market = is_available_flag or status in {"available", "reserved"}
 
+        project_name = None
+        if isinstance(data, dict):
+            proj = data.get("project")
+            if isinstance(proj, dict):
+                project_name = proj.get("name")
+
         infos.append(
             {
                 "unit": u,
                 "id": u.id,
                 "project_id": u.project_id,
+                "project_name": project_name,
                 "lat": float(lat),
                 "lon": float(lon),
                 "price_pm2": price_pm2_f,
@@ -462,7 +469,14 @@ def recompute_local_price_diffs(db: Session) -> None:
                     for other in cell_infos:
                         if other["id"] == info["id"]:
                             continue
-                        # Nebereme jednotky ze stejného projektu – jinak by projekt s mnoha\n+                        # jednotkami výrazně zkresloval lokální průměr.\n+                        if other.get("project_id") == info.get("project_id"):
+                        # Nebereme jednotky ze stejného projektu – jinak by projekt s mnoha
+                        # jednotkami výrazně zkresloval lokální průměr.
+                        if other.get("project_id") == info.get("project_id"):
+                            continue
+                        # A zároveň nechceme porovnávat mezi řádky, které reprezentují stejný
+                        # marketingový projekt (stejné jméno), i když v DB mohou mít jiné ID
+                        # (např. fáze nebo budovy téhož projektu).
+                        if other.get("project_name") and info.get("project_name") and other.get("project_name") == info.get("project_name"):
                             continue
                         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
                         if other.get("renovation") != info.get("renovation"):

@@ -404,7 +404,13 @@ def get_unit_local_price_diff_debug(
     for other in infos:
         if other["id"] == target["id"]:
             continue
-        # Ignorujeme jednotky ze stejného projektu – chceme srovnání s trhem v okolí,\n+        # ne s ostatními byty v témže projektu.\n+        if other.get("project_id") == target.get("project_id"):
+        # Ignorujeme jednotky ze stejného projektu – chceme srovnání s trhem v okolí,
+        # ne s ostatními byty v témže projektu.
+        if other.get("project_id") == target.get("project_id"):
+            continue
+        # A stejně tak nechceme porovnávat mezi řádky, které mají stejné jméno projektu
+        # (marketingový projekt), i když jsou v DB jako jiné Project ID.
+        if other.get("project_name") and target.get("project_name") and other.get("project_name") == target.get("project_name"):
             continue
         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
         if other.get("renovation") != target.get("renovation"):
