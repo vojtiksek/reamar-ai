@@ -855,14 +855,14 @@ export default function Home() {
   );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-gray-200 bg-white px-4 py-2 shadow-sm">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-2 shadow-sm backdrop-blur">
         <div className="flex items-center gap-4">
-          <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
-          <div className="flex items-center rounded-lg border border-gray-300 bg-gray-50/50 p-0.5">
+          <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
+          <div className="flex items-center rounded-full border border-slate-200 bg-slate-100/70 p-0.5">
             <button
               type="button"
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+              className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
             >
               Jednotky
             </button>
@@ -872,7 +872,7 @@ export default function Home() {
                 const qs = searchParams?.toString() ?? "";
                 router.push(qs ? `/projects?${qs}` : "/projects");
               }}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Projekty
             </button>
@@ -882,7 +882,7 @@ export default function Home() {
                 const qs = searchParams?.toString() ?? "";
                 router.push(qs ? `/projects/map?${qs}` : "/projects/map");
               }}
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Mapa
             </button>
@@ -890,7 +890,7 @@ export default function Home() {
           <button
             type="button"
             onClick={openDrawer}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
             title={countActiveFilters(filters) > 0 ? `Aktivní filtry: ${countActiveFilters(filters)}` : undefined}
           >
             Filtry
@@ -901,7 +901,7 @@ export default function Home() {
           <button
             type="button"
             onClick={() => setColumnsOpen(true)}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
           >
             Sloupce
           </button>
@@ -909,7 +909,7 @@ export default function Home() {
             type="button"
             onClick={onResetAll}
             disabled={loading}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Reset
           </button>
@@ -956,7 +956,7 @@ export default function Home() {
                 }
               }}
             disabled={recomputingLocalDiffs || loading}
-            className="ml-2 rounded border border-gray-300 bg-white px-2 py-0.5 text-xs text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-0.5 text-xs font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {recomputingLocalDiffs ? "Přepočítávám…" : "Přepočítat"}
           </button>
@@ -1067,8 +1067,8 @@ export default function Home() {
             availableCount={summary.availableCount}
             averageLocalDiff={averageLocalDiff}
           />
-          <div className="data-grid-wrapper">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
+          <div className="data-grid-wrapper rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-xs sm:text-sm">
                   <span className="font-medium text-gray-700">Řádků</span>
@@ -1089,16 +1089,16 @@ export default function Home() {
                   {showFrom}–{showTo} z {total}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 text-slate-800">
                 <button
                   type="button"
                   onClick={() => setPage(Math.max(0, offset - safeLimit))}
                   disabled={offset <= 0 || loading}
-                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Předchozí
                 </button>
-                <span className="text-xs sm:text-sm text-gray-700">
+                <span className="text-xs sm:text-sm text-slate-700">
                   Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z{" "}
                   {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
                 </span>
@@ -1106,7 +1106,7 @@ export default function Home() {
                   type="button"
                   onClick={() => setPage(offset + safeLimit)}
                   disabled={offset + safeLimit >= total || loading}
-                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Další
                 </button>
@@ -1114,7 +1114,7 @@ export default function Home() {
             </div>
             <div className="data-grid-scroll">
               <table className="data-grid-table">
-                <thead className="bg-gray-50">
+                <thead className="bg-slate-50/90">
                   <tr>
                     {visibleColumns.map(
                       ({ key, label, accessor, align, sortable, data_type }, columnIndex) => {
@@ -1129,7 +1129,7 @@ export default function Home() {
                           <th
                             key={key}
                             onClick={canSort ? () => handleSortHeaderClick(key, accessor, data_type) : undefined}
-                            className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm font-semibold text-gray-700 ${
+                            className={`sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-700 ${
                               align === "right" ? "text-right" : "text-left"
                             } ${
                               canSort ? "cursor-pointer select-none hover:bg-gray-100" : ""
@@ -1151,12 +1151,12 @@ export default function Home() {
                     )}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100 bg-white">
+                <tbody className="divide-y divide-slate-100 bg-white">
                   {loading && units.length === 0 ? (
                     <tr>
                       <td
                         colSpan={visibleColumns.length}
-                        className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
+                        className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
                       >
                         Načítání…
                       </td>
@@ -1172,7 +1172,7 @@ export default function Home() {
                         typeof statusRaw === "string" ? statusRaw.trim().toLowerCase() : "";
                       const isSold = status === "sold";
                       const isReserved = status === "reserved";
-                      const baseRowClass = "cursor-pointer hover:bg-gray-100";
+                      const baseRowClass = "cursor-pointer hover:bg-slate-50";
                       const stripeClass =
                         isSold || isReserved ? "" : "odd:bg-white even:bg-gray-50/60";
                       const statusClass = "";
