@@ -9,6 +9,8 @@ type Props = {
   averagePrice: number | null;
   availableCount: number;
   averageLocalDiff: number | null;
+  /** Např. "Celkem projektů" na stránce projektů; výchozí "Celkem jednotek". */
+  totalLabel?: string;
 };
 
 function formatInteger(n: number | null): string {
@@ -22,6 +24,7 @@ export function SummaryBar({
   averagePrice,
   availableCount,
   averageLocalDiff,
+  totalLabel = "Celkem jednotek",
 }: Props) {
   const diffPositive = averageLocalDiff != null && !Number.isNaN(averageLocalDiff) && averageLocalDiff > 0;
   const diffNegative = averageLocalDiff != null && !Number.isNaN(averageLocalDiff) && averageLocalDiff < 0;
@@ -35,7 +38,7 @@ export function SummaryBar({
   return (
     <div className="grid w-full gap-3 md:grid-cols-3 lg:grid-cols-5">
       <div className="min-w-0 rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Celkem jednotek</p>
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{totalLabel}</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">{formatInteger(total)}</p>
       </div>
       <div className="min-w-0 rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 via-sky-25 to-white px-4 py-3 shadow-sm">

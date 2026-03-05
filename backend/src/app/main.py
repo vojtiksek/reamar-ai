@@ -1826,11 +1826,151 @@ def _projects_order_clause(agg_subq, sort_by: str, sort_dir: str):
     return asc(col) if dir_asc else desc(col)
 
 
+def _has_unit_filters(
+    available,
+    availability,
+    min_price,
+    max_price,
+    min_price_change,
+    max_price_change,
+    min_original_price,
+    max_original_price,
+    min_original_price_per_m2,
+    max_original_price_per_m2,
+    min_price_per_m2,
+    max_price_per_m2,
+    layout,
+    district,
+    municipality,
+    heating,
+    windows,
+    permit_regular,
+    renovation,
+    air_conditioning,
+    cooling_ceilings,
+    smart_home,
+    min_floor_area,
+    max_floor_area,
+    min_total_area,
+    max_total_area,
+    min_exterior_area,
+    max_exterior_area,
+    min_balcony_area,
+    max_balcony_area,
+    min_terrace_area,
+    max_terrace_area,
+    min_garden_area,
+    max_garden_area,
+    min_days_on_market,
+    max_days_on_market,
+    min_floor,
+    max_floor,
+    min_floors,
+    max_floors,
+    orientation,
+    category,
+    overall_quality,
+    partition_walls,
+    city,
+    cadastral_area_iga,
+    municipal_district_iga,
+    administrative_district_iga,
+    region_iga,
+    developer,
+    building,
+    project,
+    min_latitude,
+    max_latitude,
+    min_longitude,
+    max_longitude,
+):
+    """True if any unit-level filter is set (so we restrict projects to those that have matching units)."""
+    if available is not None:
+        return True
+    if availability and len(availability) > 0:
+        return True
+    if min_price is not None or max_price is not None:
+        return True
+    if min_price_change is not None or max_price_change is not None:
+        return True
+    if min_original_price is not None or max_original_price is not None:
+        return True
+    if min_original_price_per_m2 is not None or max_original_price_per_m2 is not None:
+        return True
+    if min_price_per_m2 is not None or max_price_per_m2 is not None:
+        return True
+    if layout and len(layout) > 0:
+        return True
+    if district and len(district) > 0:
+        return True
+    if municipality and len(municipality) > 0:
+        return True
+    if heating and len(heating) > 0:
+        return True
+    if windows and len(windows) > 0:
+        return True
+    if permit_regular is not None:
+        return True
+    if renovation is not None:
+        return True
+    if air_conditioning is not None:
+        return True
+    if cooling_ceilings is not None:
+        return True
+    if smart_home is not None:
+        return True
+    if min_floor_area is not None or max_floor_area is not None:
+        return True
+    if min_total_area is not None or max_total_area is not None:
+        return True
+    if min_exterior_area is not None or max_exterior_area is not None:
+        return True
+    if min_balcony_area is not None or max_balcony_area is not None:
+        return True
+    if min_terrace_area is not None or max_terrace_area is not None:
+        return True
+    if min_garden_area is not None or max_garden_area is not None:
+        return True
+    if min_days_on_market is not None or max_days_on_market is not None:
+        return True
+    if min_floor is not None or max_floor is not None:
+        return True
+    if min_floors is not None or max_floors is not None:
+        return True
+    if orientation and len(orientation) > 0:
+        return True
+    if category and len(category) > 0:
+        return True
+    if overall_quality and len(overall_quality) > 0:
+        return True
+    if partition_walls and len(partition_walls) > 0:
+        return True
+    if city and len(city) > 0:
+        return True
+    if cadastral_area_iga and len(cadastral_area_iga) > 0:
+        return True
+    if municipal_district_iga and len(municipal_district_iga) > 0:
+        return True
+    if administrative_district_iga and len(administrative_district_iga) > 0:
+        return True
+    if region_iga and len(region_iga) > 0:
+        return True
+    if developer and len(developer) > 0:
+        return True
+    if building and len(building) > 0:
+        return True
+    if project and len(project) > 0:
+        return True
+    if min_latitude is not None or max_latitude is not None or min_longitude is not None or max_longitude is not None:
+        return True
+    return False
+
+
 @app.get(
     "/projects",
     response_model=ProjectsListResponse,
     summary="List projects (catalog + computed)",
-    description="Paginated list of projects with all catalog project fields and computed aggregates. Supports q (search name/developer/address), sort_by, sort_dir, limit, offset.",
+    description="Paginated list of projects. Accepts same unit filters as GET /units; only projects that have at least one unit matching those filters are returned. Supports q (search), sort_by, sort_dir, limit, offset.",
 )
 def list_projects(
     db: DbSession,
@@ -1843,6 +1983,59 @@ def list_projects(
     max_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude <= value")] = None,
     min_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude >= value")] = None,
     max_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude <= value")] = None,
+    # Unit-level filters: only projects that have at least one unit matching these are returned
+    available: Annotated[bool | None, Query(description="Filter projects by units with available=")] = None,
+    availability: Annotated[list[str] | None, Query(description="Filter by unit availability_status (any of)")] = None,
+    min_price: Annotated[int | None, Query(ge=0)] = None,
+    max_price: Annotated[int | None, Query(ge=0)] = None,
+    min_price_change: Annotated[float | None, Query()] = None,
+    max_price_change: Annotated[float | None, Query()] = None,
+    min_original_price: Annotated[int | None, Query(ge=0)] = None,
+    max_original_price: Annotated[int | None, Query(ge=0)] = None,
+    min_original_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
+    max_original_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
+    min_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
+    max_price_per_m2: Annotated[int | None, Query(ge=0)] = None,
+    layout: Annotated[list[str] | None, Query(description="Filter by unit layout (any of)")] = None,
+    district: Annotated[list[str] | None, Query()] = None,
+    municipality: Annotated[list[str] | None, Query()] = None,
+    heating: Annotated[list[str] | None, Query()] = None,
+    windows: Annotated[list[str] | None, Query()] = None,
+    permit_regular: Annotated[bool | None, Query()] = None,
+    renovation: Annotated[bool | None, Query()] = None,
+    air_conditioning: Annotated[bool | None, Query()] = None,
+    cooling_ceilings: Annotated[bool | None, Query()] = None,
+    smart_home: Annotated[bool | None, Query()] = None,
+    min_floor_area: Annotated[float | None, Query(ge=0)] = None,
+    max_floor_area: Annotated[float | None, Query(ge=0)] = None,
+    min_total_area: Annotated[float | None, Query(ge=0)] = None,
+    max_total_area: Annotated[float | None, Query(ge=0)] = None,
+    min_exterior_area: Annotated[float | None, Query(ge=0)] = None,
+    max_exterior_area: Annotated[float | None, Query(ge=0)] = None,
+    min_balcony_area: Annotated[float | None, Query(ge=0)] = None,
+    max_balcony_area: Annotated[float | None, Query(ge=0)] = None,
+    min_terrace_area: Annotated[float | None, Query(ge=0)] = None,
+    max_terrace_area: Annotated[float | None, Query(ge=0)] = None,
+    min_garden_area: Annotated[float | None, Query(ge=0)] = None,
+    max_garden_area: Annotated[float | None, Query(ge=0)] = None,
+    min_days_on_market: Annotated[int | None, Query(ge=0)] = None,
+    max_days_on_market: Annotated[int | None, Query(ge=0)] = None,
+    min_floor: Annotated[int | None, Query()] = None,
+    max_floor: Annotated[int | None, Query()] = None,
+    min_floors: Annotated[int | None, Query()] = None,
+    max_floors: Annotated[int | None, Query()] = None,
+    orientation: Annotated[list[str] | None, Query()] = None,
+    category: Annotated[list[str] | None, Query()] = None,
+    overall_quality: Annotated[list[str] | None, Query()] = None,
+    partition_walls: Annotated[list[str] | None, Query()] = None,
+    city: Annotated[list[str] | None, Query()] = None,
+    cadastral_area_iga: Annotated[list[str] | None, Query()] = None,
+    municipal_district_iga: Annotated[list[str] | None, Query()] = None,
+    administrative_district_iga: Annotated[list[str] | None, Query()] = None,
+    region_iga: Annotated[list[str] | None, Query()] = None,
+    developer: Annotated[list[str] | None, Query()] = None,
+    building: Annotated[list[str] | None, Query()] = None,
+    project: Annotated[list[str] | None, Query(description="Filter by project name (any of)")] = None,
 ) -> ProjectsListResponse:
     allowed_sort = get_projects_sort_keys()
     if sort_by not in allowed_sort:
@@ -1871,6 +2064,91 @@ def list_projects(
         stmt = stmt.where(Project.gps_longitude >= min_longitude)
     if max_longitude is not None:
         stmt = stmt.where(Project.gps_longitude <= max_longitude)
+
+    # Pokud jsou nastaveny filtry na jednotky, zobrazíme jen projekty, které mají alespoň jednu jednotku vyhovující filtrům.
+    if _has_unit_filters(
+        available, availability,
+        min_price, max_price,
+        min_price_change, max_price_change,
+        min_original_price, max_original_price,
+        min_original_price_per_m2, max_original_price_per_m2,
+        min_price_per_m2, max_price_per_m2,
+        layout, district, municipality, heating, windows,
+        permit_regular, renovation, air_conditioning, cooling_ceilings, smart_home,
+        min_floor_area, max_floor_area,
+        min_total_area, max_total_area,
+        min_exterior_area, max_exterior_area,
+        min_balcony_area, max_balcony_area,
+        min_terrace_area, max_terrace_area,
+        min_garden_area, max_garden_area,
+        min_days_on_market, max_days_on_market,
+        min_floor, max_floor, min_floors, max_floors,
+        orientation, category, overall_quality, partition_walls,
+        city, cadastral_area_iga, municipal_district_iga, administrative_district_iga, region_iga,
+        developer, building, project,
+        min_latitude, max_latitude, min_longitude, max_longitude,
+    ):
+        units_base = _build_units_query(
+            available=available,
+            availability=availability,
+            min_price=min_price,
+            max_price=max_price,
+            min_price_change=min_price_change,
+            max_price_change=max_price_change,
+            min_original_price=min_original_price,
+            max_original_price=max_original_price,
+            min_original_price_per_m2=min_original_price_per_m2,
+            max_original_price_per_m2=max_original_price_per_m2,
+            min_price_per_m2=min_price_per_m2,
+            max_price_per_m2=max_price_per_m2,
+            layout=layout,
+            district=district,
+            municipality=municipality,
+            heating=heating,
+            windows=windows,
+            permit_regular=permit_regular,
+            renovation=renovation,
+            air_conditioning=air_conditioning,
+            cooling_ceilings=cooling_ceilings,
+            smart_home=smart_home,
+            min_floor_area=min_floor_area,
+            max_floor_area=max_floor_area,
+            min_total_area=min_total_area,
+            max_total_area=max_total_area,
+            min_exterior_area=min_exterior_area,
+            max_exterior_area=max_exterior_area,
+            min_balcony_area=min_balcony_area,
+            max_balcony_area=max_balcony_area,
+            min_terrace_area=min_terrace_area,
+            max_terrace_area=max_terrace_area,
+            min_garden_area=min_garden_area,
+            max_garden_area=max_garden_area,
+            min_days_on_market=min_days_on_market,
+            max_days_on_market=max_days_on_market,
+            min_floor=min_floor,
+            max_floor=max_floor,
+            min_floors=min_floors,
+            max_floors=max_floors,
+            orientation=orientation,
+            category=category,
+            overall_quality=overall_quality,
+            partition_walls=partition_walls,
+            city=city,
+            cadastral_area_iga=cadastral_area_iga,
+            municipal_district_iga=municipal_district_iga,
+            administrative_district_iga=administrative_district_iga,
+            region_iga=region_iga,
+            developer=developer,
+            building=building,
+            project_names=project,
+            min_latitude=min_latitude,
+            max_latitude=max_latitude,
+            min_longitude=min_longitude,
+            max_longitude=max_longitude,
+        )
+        u_sub = units_base.subquery()
+        matching_project_ids = select(u_sub.c.project_id).distinct()
+        stmt = stmt.where(Project.id.in_(matching_project_ids))
     order = _projects_order_clause(agg_subq, sort_by, sort_dir)
     if order is not None:
         stmt = stmt.order_by(order, Project.id.asc())

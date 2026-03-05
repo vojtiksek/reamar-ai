@@ -11,6 +11,7 @@ import {
   type FilterGroup,
   type FiltersResponse,
   filtersToSearchParams,
+  flattenFilterSpecsByKey,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
 import { formatAreaM2, formatCurrencyCzk, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
@@ -347,6 +348,29 @@ export default function ProjectsPage() {
     ? limit
     : DEFAULT_LIMIT;
 
+  const allowedProjectSortKeys = useMemo(() => {
+    if (!columns.length) return new Set<string>();
+    return new Set(columns.map((c) => getProjectColumnKey(c)));
+  }, [columns]);
+
+  const effectiveSortBy = useMemo(() => {
+    if (allowedProjectSortKeys.size > 0 && !allowedProjectSortKeys.has(sortBy)) {
+      return "avg_price_per_m2_czk";
+    }
+    // Před načtením sloupců: známá pole jen pro jednotky (projekty je nemají)
+    const unitOnlySortKeys = new Set(["local_price_diff_1000m", "local_price_diff_2000m"]);
+    if (unitOnlySortKeys.has(sortBy)) return "avg_price_per_m2_czk";
+    return sortBy;
+  }, [allowedProjectSortKeys, sortBy]);
+
+  // Po načtení stránky s neplatným sort_by (např. z Jednotek) opravíme URL na platný sort pro projekty
+  useEffect(() => {
+    if (effectiveSortBy !== sortBy) {
+      setSortBy(effectiveSortBy);
+      syncToUrl(filters, limit, offset, effectiveSortBy, sortDir, polygon);
+    }
+  }, [effectiveSortBy, sortBy, filters, limit, offset, sortDir, polygon, syncToUrl]);
+
   // Fetch projects list (paginated, server-side sort, with filters)
   useEffect(() => {
     setLoading(true);
@@ -355,7 +379,7 @@ export default function ProjectsPage() {
       filters,
       supportedFilterKeys,
       { limit: safeLimit, offset },
-      { sort_by: sortBy, sort_dir: sortDir }
+      { sort_by: effectiveSortBy, sort_dir: sortDir }
     );
     // Pokud je v URL polygon (poly), pošli jeho obdélníkový obal na backend,
     // aby se geografický filtr aplikoval globálně před limitem/offsetem.
@@ -380,7 +404,7 @@ export default function ProjectsPage() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, sortBy, sortDir, supportedFilterKeys, polygon]);
+  }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon]);
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
@@ -445,6 +469,16 @@ export default function ProjectsPage() {
     setOffset(0);
     closeDrawer();
   }, [currentFilters, limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
+
+  const applyFilters = useCallback(
+    (next: CurrentFilters) => {
+      setFilters(next);
+      setCurrentFilters(next);
+      setOffset(0);
+      syncToUrl(next, limit, 0, sortBy, sortDir, polygon);
+    },
+    [limit, sortBy, sortDir, polygon, syncToUrl]
+  );
 
   const onReset = useCallback(() => setCurrentFilters({}), []);
 
@@ -547,39 +581,38 @@ export default function ProjectsPage() {
     []
   );
 
+  const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
+
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm sm:gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
-          <div className="relative z-10 flex shrink-0 items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
+      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-2 shadow-sm backdrop-blur">
+        <div className="flex items-center gap-4">
+          <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
+          <div className="flex items-center rounded-full border border-slate-200 bg-slate-100/70 p-0.5">
             <Link
-              href={
-                searchParams?.get("poly")
-                  ? `/units?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
-                  : "/units"
-              }
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+              href={(() => {
+                const qs = searchParams?.toString() ?? "";
+                return qs ? `/units?${qs}` : "/units";
+              })()}
+              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Jednotky
             </Link>
             <Link
-              href={
-                searchParams?.get("poly")
-                  ? `/projects?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
-                  : "/projects"
-              }
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
+              href={(() => {
+                const qs = searchParams?.toString() ?? "";
+                return qs ? `/projects?${qs}` : "/projects";
+              })()}
+              className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
             >
               Projekty
             </Link>
             <Link
-              href={
-                searchParams?.get("poly")
-                  ? `/projects/map?poly=${encodeURIComponent(searchParams.get("poly") as string)}`
-                  : "/projects/map"
-              }
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
+              href={(() => {
+                const qs = searchParams?.toString() ?? "";
+                return qs ? `/projects/map?${qs}` : "/projects/map";
+              })()}
+              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Mapa
             </Link>
@@ -587,7 +620,7 @@ export default function ProjectsPage() {
           <button
             type="button"
             onClick={openDrawer}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
             title={
               countActiveFilters(filters) > 0
                 ? `Aktivní filtry: ${countActiveFilters(filters)}`
@@ -596,15 +629,13 @@ export default function ProjectsPage() {
           >
             Filtry
             {countActiveFilters(filters) > 0 && (
-              <span className="ml-1.5 rounded bg-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-800">
-                {countActiveFilters(filters)}
-              </span>
+              <span className="ml-1 rounded bg-gray-200 px-1.5 text-xs">{countActiveFilters(filters)}</span>
             )}
           </button>
           <button
             type="button"
             onClick={() => setColumnsOpen(true)}
-            className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
           >
             Sloupce
           </button>
@@ -612,33 +643,105 @@ export default function ProjectsPage() {
             type="button"
             onClick={onResetAll}
             disabled={loading}
-            className="shrink-0 rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Reset
           </button>
         </div>
-        <div className="mt-2 flex w-full items-center gap-3 shrink-0 sm:mt-0 sm:w-auto sm:ml-auto">
-          <label className="flex items-center gap-2 text-sm">
-            <span className="font-medium text-gray-700">Řádků</span>
-            <select
-              value={safeLimit}
-              onChange={(e) => {
-                const next = Number(e.target.value);
-                setLimitAndSort({ limit: next });
-              }}
-              disabled={loading}
-              className="rounded-lg border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-            >
-              {ROWS_PER_PAGE_OPTIONS.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          </label>
-          <span className="text-xs sm:text-sm text-gray-600">
-            {showFrom}–{showTo} z {total}
-          </span>
+
+        <div className="flex flex-col items-end gap-1">
+          {countActiveFilters(filters) > 0 && (
+            <div className="flex flex-wrap gap-1 text-[11px] text-gray-700">
+              {(() => {
+                type FilterBadge = { id: string; label: string; clearKeys: string[] };
+                const badges: FilterBadge[] = [];
+                const rangeBases = new Set<string>();
+                for (const [k, v] of Object.entries(filters)) {
+                  if (v === undefined) continue;
+                  if (k.endsWith("_min") || k.endsWith("_max")) {
+                    rangeBases.add(k.replace(/_(min|max)$/, ""));
+                    continue;
+                  }
+                  const spec = aliasByKey.get(k);
+                  const label = spec?.alias || k;
+                  if (Array.isArray(v) && v.length > 0) {
+                    const formattedValues = v.map((raw) => {
+                      if (k === "layout") {
+                        const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
+                        if (m) {
+                          const whole = m[1];
+                          const frac = m[2];
+                          return frac ? `${whole},${frac}kk` : `${whole}kk`;
+                        }
+                      }
+                      return String(raw);
+                    });
+                    badges.push({
+                      id: `${k}:${formattedValues.join(",")}`,
+                      label: `${label}: ${formattedValues.join(", ")}`,
+                      clearKeys: [k],
+                    });
+                  } else if (typeof v === "boolean") {
+                    badges.push({
+                      id: `${k}:${v ? "1" : "0"}`,
+                      label: `${label}: ${v ? "Ano" : "Ne"}`,
+                      clearKeys: [k],
+                    });
+                  } else if (typeof v === "number" && !Number.isNaN(v)) {
+                    badges.push({
+                      id: `${k}:${v}`,
+                      label: `${label}: ${v}`,
+                      clearKeys: [k],
+                    });
+                  }
+                }
+                for (const base of rangeBases) {
+                  const min = filters[`${base}_min`] as number | undefined;
+                  const max = filters[`${base}_max`] as number | undefined;
+                  if (
+                    (min === undefined || Number.isNaN(min as number)) &&
+                    (max === undefined || Number.isNaN(max as number))
+                  ) {
+                    continue;
+                  }
+                  const spec = aliasByKey.get(base);
+                  const label = spec?.alias || base;
+                  let value = "";
+                  if (min != null && !Number.isNaN(min)) {
+                    value += `od ${min}`;
+                  }
+                  if (max != null && !Number.isNaN(max)) {
+                    value += value ? ` do ${max}` : `do ${max}`;
+                  }
+                  badges.push({
+                    id: `${base}:${value}`,
+                    label: `${label}: ${value}`,
+                    clearKeys: [`${base}_min`, `${base}_max`],
+                  });
+                }
+                return badges.map((b) => (
+                  <button
+                    key={b.id}
+                    type="button"
+                    onClick={() => {
+                      const next: CurrentFilters = { ...filters };
+                      for (const ck of b.clearKeys) {
+                        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                        delete (next as Record<string, unknown>)[ck];
+                      }
+                      applyFilters(next);
+                    }}
+                    className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
+                  >
+                    <span>{b.label}</span>
+                    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
+                      ×
+                    </span>
+                  </button>
+                ));
+              })()}
+            </div>
+          )}
         </div>
       </header>
 
@@ -652,45 +755,74 @@ export default function ProjectsPage() {
             averagePricePerM2={summary.averagePricePerM2}
             averagePrice={summary.averagePrice}
             availableCount={summary.availableCount}
+            averageLocalDiff={null}
+            totalLabel="Celkem projektů"
           />
-          <div className="data-grid-wrapper shadow-sm">
-            <div className="flex items-center justify-end gap-3 border-b border-gray-200 bg-gray-50 px-3 py-2 text-xs sm:text-sm">
-              <button
-                type="button"
-                onClick={() => setPage(Math.max(0, offset - safeLimit))}
-                disabled={offset <= 0 || loading}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Předchozí
-              </button>
-              <span className="text-xs sm:text-sm text-gray-700">
-                Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z{" "}
-                {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage(offset + safeLimit)}
-                disabled={offset + safeLimit >= total || loading}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Další
-              </button>
+          <div className="data-grid-wrapper rounded-xl border border-slate-200 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
+              <div className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5 text-xs sm:text-sm">
+                  <span className="font-medium text-gray-700">Řádků</span>
+                  <select
+                    value={safeLimit}
+                    onChange={(e) => setLimitAndSort({ limit: Number(e.target.value) })}
+                    disabled={loading}
+                    className="rounded-lg border border-gray-300 bg-white px-2.5 py-1 text-xs sm:text-sm text-gray-900 disabled:opacity-50 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
+                  >
+                    {ROWS_PER_PAGE_OPTIONS.map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <span className="text-xs text-gray-600">
+                  {showFrom}–{showTo} z {total}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 text-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.max(0, offset - safeLimit))}
+                  disabled={offset <= 0 || loading}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Předchozí
+                </button>
+                <span className="text-xs sm:text-sm text-slate-700">
+                  Strana {total === 0 ? 0 : Math.floor(offset / safeLimit) + 1} z{" "}
+                  {total === 0 ? 0 : Math.ceil(total / safeLimit) || 1}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(offset + safeLimit)}
+                  disabled={offset + safeLimit >= total || loading}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Další
+                </button>
+              </div>
             </div>
             <div className="data-grid-scroll">
               <table className="data-grid-table">
-                <thead className="bg-gray-50">
+                <thead className="bg-slate-50/90">
                   <tr>
                     {visibleColumns.map((col, columnIndex) => {
                     const flatKey = getProjectColumnKey(col);
                     const isActive = flatKey === sortBy;
                     const isStickyFirst = columnIndex === 0;
+                    const alignRight =
+                      col.data_type === "number" ||
+                      (col.unit != null &&
+                        (col.unit.includes("Kč") || col.unit.includes("m²") || col.unit === "min")) ||
+                      col.key.endsWith("_min");
                     return (
                       <th
                         key={col.key}
                         onClick={() => handleSortHeaderClick(flatKey)}
-                        className={`sticky top-0 z-10 border-b border-gray-200 bg-gray-50 px-3 py-2 text-left text-xs sm:text-sm font-semibold text-gray-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
-                          isActive ? "bg-gray-100" : ""
-                        } ${isStickyFirst ? "left-0 z-20" : ""}`}
+                        className={`sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
+                          alignRight ? "text-right" : "text-left"
+                        } ${isActive ? "bg-gray-100" : ""} ${isStickyFirst ? "left-0 z-20" : ""}`}
                       >
                         <span className="inline-flex items-center gap-1">
                           {col.label}
@@ -703,12 +835,12 @@ export default function ProjectsPage() {
                   })}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100 bg-white">
+              <tbody className="divide-y divide-slate-100 bg-white">
                 {loading && projects.length === 0 ? (
                   <tr>
                     <td
                       colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
+                      className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
                     >
                       Načítání…
                     </td>
@@ -717,7 +849,7 @@ export default function ProjectsPage() {
                   <tr>
                     <td
                       colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-gray-600"
+                      className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
                     >
                       Žádné projekty k zobrazení.
                     </td>
@@ -726,7 +858,7 @@ export default function ProjectsPage() {
                   projects.map((p) => (
                     <tr
                       key={p.id as number}
-                      className="cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-gray-100"
+                      className="cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-slate-50"
                       onClick={(e) => handleRowClick(e, p.id as number)}
                     >
                       {visibleColumns.map((col, columnIndex) => {
@@ -771,9 +903,9 @@ export default function ProjectsPage() {
                         return (
                           <td
                             key={col.key}
-                            className={`px-3 py-1.5 text-xs sm:text-sm text-gray-900 ${
+                            className={`px-3 py-1.5 text-xs sm:text-sm text-slate-900 ${
                               alignRight ? "text-right" : "text-left"
-                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
+                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-inherit" : ""}`}
                             onDoubleClick={() => {
                               if (!isEditable || loading || savingOverride) return;
                               const projectId = p.id as number;
@@ -863,13 +995,13 @@ export default function ProjectsPage() {
             aria-hidden
             onClick={() => setColumnsOpen(false)}
           />
-          <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-gray-200 bg-white shadow-xl">
-            <div className="flex shrink-0 items-center justify-between border-b border-gray-200 px-5 py-4">
-              <h2 className="text-sm font-semibold text-gray-900">Sloupce</h2>
+          <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-slate-200 bg-white shadow-xl">
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+              <h2 className="text-sm font-semibold text-slate-900">Sloupce</h2>
               <button
                 type="button"
                 onClick={() => setColumnsOpen(false)}
-                className="rounded-lg p-2 text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
                 aria-label="Zavřít"
               >
                 <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -882,7 +1014,7 @@ export default function ProjectsPage() {
                 {columnsConfig.map((cfg) => (
                   <label
                     key={cfg.key}
-                    className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-gray-900 transition-colors hover:bg-gray-50"
+                    className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50"
                   >
                     <input
                       type="checkbox"
@@ -896,9 +1028,9 @@ export default function ProjectsPage() {
                             : prev
                         )
                       }
-                      className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-2 focus:ring-black/20"
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-500/20"
                     />
-                    <span className="font-medium text-gray-800">{cfg.label}</span>
+                    <span className="font-medium text-slate-800">{cfg.label}</span>
                   </label>
                 ))}
               </div>
