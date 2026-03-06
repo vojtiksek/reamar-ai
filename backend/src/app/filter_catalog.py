@@ -19,7 +19,10 @@ RANGE_FORMATS = frozenset({
 ENUM_FORMAT = "enum"
 ENUM_SEARCH_FORMAT = "enum_search"
 BOOLEAN_FORMAT = "boolean"
-OPTIONS_LIMIT = 200
+# Max. počet distinct hodnot pro enum/enum_search filtry.
+# 200 bylo málo pro projekty (dlouhé seznamy developerů/projektů),
+# rozšíříme limit, aby se do nabídky vešly i „dlouhé“ ocasy jako Klamovka Park.
+OPTIONS_LIMIT = 2000
 
 # Catalog column (CSV "column") -> (entity, db_attr). entity is "Unit" or "Project".
 # Full API schema: backend_supported=true for all columns that exist; enum options from Unit where stored.
@@ -171,7 +174,7 @@ def get_filter_specs() -> list[dict]:
 
 
 def _get_enum_options(db: Session, entity: str, attr: str) -> list[str]:
-    """Query distinct non-null values; full string values; exclude nulls; sort case-insensitive; limit 200."""
+    """Query distinct non-null values; full string values; exclude nulls; sort case-insensitive; limit OPTIONS_LIMIT."""
     if entity == "Unit":
         col = getattr(Unit, attr, None)
         if col is None:

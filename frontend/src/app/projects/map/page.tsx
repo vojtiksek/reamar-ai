@@ -297,6 +297,34 @@ export default function ProjectsMapPage() {
           </div>
         </aside>
         <section className="relative flex-1 bg-slate-50/50">
+          {/* Legenda barev podle průměrné ceny m² */}
+          <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-[11px] text-slate-700 shadow-sm">
+            <div className="mb-1 font-semibold text-xs text-slate-800">
+              Barva podle ceny m²
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-emerald-700">levnější</span>
+              <div className="h-1.5 w-24 rounded-full bg-gradient-to-r from-emerald-500 via-orange-400 to-red-600" />
+              <span className="text-[10px] text-red-700">dražší</span>
+            </div>
+            <div className="mt-1 flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-[10px] text-slate-700">nejlevnější projekty</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-orange-400" />
+              <span className="text-[10px] text-slate-700">střed cenového spektra</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-red-600" />
+              <span className="text-[10px] text-slate-700">nejdražší projekty</span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-gray-400" />
+              <span className="text-[10px] text-slate-700">bez dostupné ceny m²</span>
+            </div>
+          </div>
+
           {loading && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-sm text-slate-700">
               Načítání mapy…

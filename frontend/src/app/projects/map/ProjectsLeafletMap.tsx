@@ -56,7 +56,8 @@ function ClickCapture(props: { drawing: boolean; onClick?: (lat: number, lng: nu
 function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, onMapClick }: Props) {
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
 
-  // Vypočítat rozsah průměrných cen m² pro škálování barev (levné = studenější, drahé = červenější).
+  // Vypočítat rozsah průměrných cen m² pro škálování barev
+  // (nejlevnější = zelená, střed = oranžová, nejdražší = červená).
   const prices = projects
     .map((p) => (typeof p.avg_price_per_m2_czk === "number" ? p.avg_price_per_m2_czk : null))
     .filter((v): v is number => v != null && Number.isFinite(v));
@@ -64,21 +65,41 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
   const maxPrice = prices.length ? Math.max(...prices) : null;
 
   const priceToColor = (value: number | null | undefined): string => {
+    // Šedá pro projekty bez ceny m²
     if (!prices.length || value == null || !Number.isFinite(value)) {
-      // Výchozí modrá, když nemáme data.
-      return "#2563eb";
+      return "#9ca3af"; // gray-400
     }
     if (minPrice == null || maxPrice == null || maxPrice <= minPrice) {
-      // Jediná hodnota – zvolíme neutrální oranžovou.
-      return "#f97316";
+      // Jediná hodnota – neutrální oranžová
+      return "#f97316"; // orange-500
     }
     const tRaw = (value - minPrice) / (maxPrice - minPrice);
     const t = Math.max(0, Math.min(1, tRaw));
-    // Hue 210 (modrá) -> 0 (červená) podle ceny.
-    const hue = 210 - t * 210;
-    const saturation = 85;
-    const lightness = 50;
-    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+
+    // Interpolace: 0 → zelená, 0.5 → oranžová, 1 → červená.
+    const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
+
+    // HSL body (přibližně Tailwind):
+    // zelená:  h=140, s=70, l=45  (#22c55e)
+    // oranžová: h=30,  s=90, l=50 (#f97316)
+    // červená:  h=0,   s=80, l=50 (#dc2626)
+    let h: number;
+    let s: number;
+    let l: number;
+
+    if (t <= 0.5) {
+      const u = t / 0.5; // 0–1 mezi zelenou a oranžovou
+      h = lerp(140, 30, u);
+      s = lerp(70, 90, u);
+      l = lerp(45, 50, u);
+    } else {
+      const u = (t - 0.5) / 0.5; // 0–1 mezi oranžovou a červenou
+      h = lerp(30, 0, u);
+      s = lerp(90, 80, u);
+      l = lerp(50, 50, u);
+    }
+
+    return `hsl(${h}, ${s}%, ${l}%)`;
   };
 
   return (
