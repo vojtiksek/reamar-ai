@@ -1,6 +1,11 @@
 "use client";
 
 import { API_BASE } from "@/lib/api";
+import {
+  buildUnitsQuery,
+  parseFiltersFromSearchParams,
+  type CurrentFilters,
+} from "@/lib/filters";
 import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -55,22 +60,42 @@ export default function ProjectsMapPage() {
         let offset = 0;
         let all: ProjectMapItem[] = [];
         let total = Infinity;
-        const params = new URLSearchParams(searchParams?.toString() ?? "");
-        params.set("limit", String(limit));
-        params.set("sort_by", "avg_price_per_m2_czk");
-        params.set("sort_dir", "asc");
+
+        // Z URL si načteme aktuální filtry (stejně jako na /units a /projects)
+        // a pomocí buildUnitsQuery z nich postavíme dotaz na backend.
+        const rawParams = new URLSearchParams(searchParams?.toString() ?? "");
+        const filters: CurrentFilters = parseFiltersFromSearchParams(rawParams);
+        const supportedKeys = new Set(Object.keys(filters));
+
+        // Geofilter (obdélník okolo polygonu) přidáme zvlášť, aby se aplikoval
+        // globálně (před limitem/offsetem), ale nijak neměnil logiku ostatních filtrů.
+        const geoParams = new URLSearchParams();
         if (polygon.length >= 3) {
           const bounds = getPolygonBounds(polygon);
           if (bounds) {
-            params.set("min_latitude", String(bounds.minLat));
-            params.set("max_latitude", String(bounds.maxLat));
-            params.set("min_longitude", String(bounds.minLng));
-            params.set("max_longitude", String(bounds.maxLng));
+            geoParams.set("min_latitude", String(bounds.minLat));
+            geoParams.set("max_latitude", String(bounds.maxLat));
+            geoParams.set("min_longitude", String(bounds.minLng));
+            geoParams.set("max_longitude", String(bounds.maxLng));
           }
         }
+
         while (!cancelled && offset < total) {
-          params.set("offset", String(offset));
-          const res = await fetch(`${API_BASE}/projects?${params.toString()}`);
+          // Pro každý chunk znovu postavíme dotaz, aby:
+          // - filtry byly zapsané stejně jako pro /units (availability=…&availability=…),
+          // - backend viděl úplně stejné parametry jako list jednotek.
+          const coreQuery = buildUnitsQuery(
+            filters,
+            supportedKeys,
+            { limit, offset },
+            { sort_by: "avg_price_per_m2_czk", sort_dir: "asc" }
+          );
+          const coreParams = new URLSearchParams(coreQuery);
+          geoParams.forEach((v, k) => {
+            coreParams.set(k, v);
+          });
+
+          const res = await fetch(`${API_BASE}/projects?${coreParams.toString()}`);
           if (!res.ok) {
             throw new Error(res.statusText || `HTTP ${res.status}`);
           }
