@@ -27,13 +27,23 @@ type Props = {
   onMapClick?: (lat: number, lng: number) => void;
 };
 
-const projectMarkerIcon = L.divIcon({
-  className: "",
-  html:
-    '<div style="width:14px;height:14px;border-radius:9999px;background:#2563eb;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(15,23,42,0.4);"></div>',
-  iconSize: [18, 18],
-  iconAnchor: [9, 9],
-});
+// Cache barevně odlišených ikon podle hex/HSL barvy, ať zbytečně nevytváříme
+// nové instancie `L.divIcon` pro stejnou barvu.
+const markerIconCache = new Map<string, L.DivIcon>();
+
+function getProjectMarkerIcon(color: string): L.DivIcon {
+  const key = color || "#2563eb";
+  const cached = markerIconCache.get(key);
+  if (cached) return cached;
+  const icon = L.divIcon({
+    className: "",
+    html: `<div style="width:14px;height:14px;border-radius:9999px;background:${key};border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(15,23,42,0.4);"></div>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+  markerIconCache.set(key, icon);
+  return icon;
+}
 
 function ClickCapture(props: { drawing: boolean; onClick?: (lat: number, lng: number) => void }) {
   useMapEvent("click", (e) => {
@@ -45,6 +55,31 @@ function ClickCapture(props: { drawing: boolean; onClick?: (lat: number, lng: nu
 
 function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, onMapClick }: Props) {
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
+
+  // Vypočítat rozsah průměrných cen m² pro škálování barev (levné = studenější, drahé = červenější).
+  const prices = projects
+    .map((p) => (typeof p.avg_price_per_m2_czk === "number" ? p.avg_price_per_m2_czk : null))
+    .filter((v): v is number => v != null && Number.isFinite(v));
+  const minPrice = prices.length ? Math.min(...prices) : null;
+  const maxPrice = prices.length ? Math.max(...prices) : null;
+
+  const priceToColor = (value: number | null | undefined): string => {
+    if (!prices.length || value == null || !Number.isFinite(value)) {
+      // Výchozí modrá, když nemáme data.
+      return "#2563eb";
+    }
+    if (minPrice == null || maxPrice == null || maxPrice <= minPrice) {
+      // Jediná hodnota – zvolíme neutrální oranžovou.
+      return "#f97316";
+    }
+    const tRaw = (value - minPrice) / (maxPrice - minPrice);
+    const t = Math.max(0, Math.min(1, tRaw));
+    // Hue 210 (modrá) -> 0 (červená) podle ceny.
+    const hue = 210 - t * 210;
+    const saturation = 85;
+    const lightness = 50;
+    return `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+  };
 
   return (
     <MapContainer center={center} zoom={11} className="h-full w-full" scrollWheelZoom>
@@ -64,7 +99,7 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
           <Marker
             key={p.id}
             position={[p.gps_latitude as number, p.gps_longitude as number]}
-            icon={projectMarkerIcon}
+            icon={getProjectMarkerIcon(priceToColor(p.avg_price_per_m2_czk ?? null))}
           >
             <Popup>
               <div className="space-y-1 text-xs">

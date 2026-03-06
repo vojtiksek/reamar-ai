@@ -811,10 +811,14 @@ def _build_units_query(
     if building is not None and len(building) > 0:
         base = base.where(Unit.building.in_(building))
     if project_names is not None and len(project_names) > 0:
-        # Filtrování podle názvu projektu – join na Project a where Project.name IN (…)
-        base = base.join(Project, Project.id == Unit.project_id).where(
-            Project.name.in_([str(p) for p in project_names if p])
-        )
+        # Filtrování podle názvu projektu – join na Project a case-insensitive partial match
+        # (umožní najít projekt i při drobných rozdílech v názvu typu
+        # "Rezidence Klamovka Park" vs. "Klamovka Park").
+        names = [str(p).strip() for p in project_names if p]
+        if names:
+            clauses = [Project.name.ilike(f"%{n}%") for n in names if n]
+            if clauses:
+                base = base.join(Project, Project.id == Unit.project_id).where(or_(*clauses))
     if min_latitude is not None:
         base = base.where(Unit.gps_latitude >= min_latitude)
     if max_latitude is not None:
