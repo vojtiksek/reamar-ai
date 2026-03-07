@@ -19,7 +19,10 @@ type Comparable = {
   floor_area_m2: number | null;
   total_price_czk: number | null;
   exterior_area_m2: number | null;
+  layout: string | null;
+  floor: number | null;
   last_seen: string | null;
+  sold_date: string | null;
   distance_m: number;
   availability_status: string | null;
   available: boolean;
@@ -36,6 +39,11 @@ type DebugData = {
   bucket_min_area_m2: number | null;
   bucket_max_area_m2: number | null;
   unit_price_per_m2_czk: number | null;
+  unit_total_price_czk: number | null;
+  unit_layout: string | null;
+  unit_floor_area_m2: number | null;
+  unit_exterior_area_m2: number | null;
+  unit_floor: number | null;
   ref_avg_price_per_m2_czk: number | null;
   diff_percent: number | null;
   unit_renovation: boolean | null;
@@ -130,6 +138,15 @@ export default function DebugComparePage() {
                 ? { lat: data.unit_gps_latitude, lng: data.unit_gps_longitude }
                 : null
             }
+            unitInfo={{
+              total_price_czk: data.unit_total_price_czk ?? null,
+              layout: data.unit_layout ?? null,
+              floor_area_m2: data.unit_floor_area_m2 ?? null,
+              exterior_area_m2: data.unit_exterior_area_m2 ?? null,
+              floor: data.unit_floor ?? null,
+              price_per_m2_czk: data.unit_price_per_m2_czk ?? null,
+            }}
+            unitExternalId={data.unit_external_id}
             comparables={data.comparables}
           />
         )}
@@ -223,6 +240,9 @@ export default function DebugComparePage() {
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Cena
                       </th>
+                      <th className="px-4 py-2.5 text-left font-semibold text-gray-800">
+                        Dispozice
+                      </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Cena / m²
                       </th>
@@ -231,6 +251,9 @@ export default function DebugComparePage() {
                       </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Venek
+                      </th>
+                      <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
+                        Patro
                       </th>
                       <th className="px-4 py-2.5 text-right font-semibold text-gray-800">
                         Vzdálenost
@@ -260,6 +283,16 @@ export default function DebugComparePage() {
                             ? `${Math.round(c.total_price_czk).toLocaleString("cs-CZ")} Kč`
                             : "—"}
                         </td>
+                        <td className="px-4 py-2 text-gray-800">
+                          {c.layout != null && c.layout !== ""
+                            ? (() => {
+                                const m = /^layout_(\d+)(?:_(\d+))?$/i.exec(String(c.layout));
+                                if (m)
+                                  return m[2] ? `${m[1]},${m[2]} kk` : `${m[1]} kk`;
+                                return String(c.layout);
+                              })()
+                            : "—"}
+                        </td>
                         <td className="px-4 py-2 text-right text-gray-900">
                           {c.price_per_m2_czk != null
                             ? `${Math.round(c.price_per_m2_czk).toLocaleString("cs-CZ")} Kč/m²`
@@ -274,6 +307,9 @@ export default function DebugComparePage() {
                           {c.exterior_area_m2 != null
                             ? `${c.exterior_area_m2.toFixed(1)} m²`
                             : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-gray-800">
+                          {c.floor != null ? c.floor : "—"}
                         </td>
                         <td className="px-4 py-2 text-right text-gray-800">
                           {Math.round(c.distance_m).toLocaleString("cs-CZ")} m

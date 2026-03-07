@@ -13,14 +13,41 @@ type ComparableForMap = {
   gps_longitude: number | null;
   distance_m: number;
   price_per_m2_czk: number | null;
+  total_price_czk: number | null;
+  floor_area_m2: number | null;
+  exterior_area_m2: number | null;
+  layout: string | null;
+  floor: number | null;
+};
+
+type UnitInfo = {
+  total_price_czk: number | null;
+  layout: string | null;
+  floor_area_m2: number | null;
+  exterior_area_m2: number | null;
+  floor: number | null;
+  price_per_m2_czk: number | null;
 };
 
 type Props = {
   center: { lat: number; lng: number } | null;
+  unitInfo: UnitInfo;
+  unitExternalId: string;
   comparables: ComparableForMap[];
 };
 
-const LocalDiffDebugMap: FC<Props> = ({ center, comparables }) => {
+function formatLayout(raw: string | null | undefined): string {
+  if (raw == null || raw === "") return "—";
+  const m = /^layout_(\d+)(?:_(\d+))?$/i.exec(String(raw));
+  if (m) {
+    const whole = m[1];
+    const frac = m[2];
+    return frac ? `${whole},${frac} kk` : `${whole} kk`;
+  }
+  return String(raw);
+}
+
+const LocalDiffDebugMap: FC<Props> = ({ center, unitInfo, unitExternalId, comparables }) => {
   const hasCenter = center != null;
 
   const mapCenter: LatLngExpression = hasCenter
@@ -61,17 +88,43 @@ const LocalDiffDebugMap: FC<Props> = ({ center, comparables }) => {
       return (
         <Marker key={c.external_id} position={pos} icon={icon}>
           <Popup>
-            <div className="text-xs">
-              <div className="font-mono text-gray-900">{c.external_id}</div>
+            <div className="min-w-[180px] space-y-1 text-xs">
+              <div className="font-mono font-medium text-gray-900">{c.external_id}</div>
               <div className="text-gray-700">{c.project_name ?? "—"}</div>
-              <div className="text-gray-600">
-                {Math.round(c.distance_m).toLocaleString("cs-CZ")} m
-              </div>
+              {c.total_price_czk != null && (
+                <div>
+                  <span className="text-gray-500">Cena:</span>{" "}
+                  {Math.round(c.total_price_czk).toLocaleString("cs-CZ")} Kč
+                </div>
+              )}
+              {c.layout != null && c.layout !== "" && (
+                <div>
+                  <span className="text-gray-500">Dispozice:</span> {formatLayout(c.layout)}
+                </div>
+              )}
+              {c.floor_area_m2 != null && (
+                <div>
+                  <span className="text-gray-500">Plocha:</span> {c.floor_area_m2.toFixed(1)} m²
+                </div>
+              )}
+              {c.exterior_area_m2 != null && (
+                <div>
+                  <span className="text-gray-500">Plocha venku:</span> {c.exterior_area_m2.toFixed(1)} m²
+                </div>
+              )}
+              {c.floor != null && (
+                <div>
+                  <span className="text-gray-500">Patro:</span> {c.floor}
+                </div>
+              )}
               {c.price_per_m2_czk != null && (
                 <div className="text-gray-800">
                   {Math.round(c.price_per_m2_czk).toLocaleString("cs-CZ")} Kč/m²
                 </div>
               )}
+              <div className="text-gray-600">
+                Vzdálenost: {Math.round(c.distance_m).toLocaleString("cs-CZ")} m
+              </div>
             </div>
           </Popup>
         </Marker>
@@ -103,8 +156,40 @@ const LocalDiffDebugMap: FC<Props> = ({ center, comparables }) => {
         {hasCenter && (
           <Marker position={mapCenter} icon={centerIcon}>
             <Popup>
-              <div className="text-xs font-medium text-gray-900">
-                Posuzovaná jednotka ({center!.lat.toFixed(5)}, {center!.lng.toFixed(5)})
+              <div className="min-w-[180px] space-y-1 text-xs">
+                <div className="font-semibold text-gray-900">Posuzovaná jednotka</div>
+                <div className="font-mono text-gray-800">{unitExternalId}</div>
+                {unitInfo.total_price_czk != null && (
+                  <div>
+                    <span className="text-gray-500">Cena:</span>{" "}
+                    {Math.round(unitInfo.total_price_czk).toLocaleString("cs-CZ")} Kč
+                  </div>
+                )}
+                {unitInfo.layout != null && unitInfo.layout !== "" && (
+                  <div>
+                    <span className="text-gray-500">Dispozice:</span> {formatLayout(unitInfo.layout)}
+                  </div>
+                )}
+                {unitInfo.floor_area_m2 != null && (
+                  <div>
+                    <span className="text-gray-500">Plocha:</span> {unitInfo.floor_area_m2.toFixed(1)} m²
+                  </div>
+                )}
+                {unitInfo.exterior_area_m2 != null && (
+                  <div>
+                    <span className="text-gray-500">Plocha venku:</span> {unitInfo.exterior_area_m2.toFixed(1)} m²
+                  </div>
+                )}
+                {unitInfo.floor != null && (
+                  <div>
+                    <span className="text-gray-500">Patro:</span> {unitInfo.floor}
+                  </div>
+                )}
+                {unitInfo.price_per_m2_czk != null && (
+                  <div className="text-gray-800">
+                    {Math.round(unitInfo.price_per_m2_czk).toLocaleString("cs-CZ")} Kč/m²
+                  </div>
+                )}
               </div>
             </Popup>
           </Marker>

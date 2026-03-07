@@ -137,6 +137,8 @@ class LocalPriceDiffComparable(BaseModel):
     floor_area_m2: float | None = None
     total_price_czk: float | None = None
     exterior_area_m2: float | None = None
+    layout: str | None = None
+    floor: int | None = None
     last_seen: date | None = None
     sold_date: date | None = None
     distance_m: float
@@ -155,6 +157,11 @@ class LocalPriceDiffDebugResponse(BaseModel):
     bucket_min_area_m2: float | None = None
     bucket_max_area_m2: float | None = None
     unit_price_per_m2_czk: float | None = None
+    unit_total_price_czk: float | None = None
+    unit_layout: str | None = None
+    unit_floor_area_m2: float | None = None
+    unit_exterior_area_m2: float | None = None
+    unit_floor: int | None = None
     ref_avg_price_per_m2_czk: float | None = None
     diff_percent: float | None = None
     unit_renovation: bool | None = None  # Rekonstrukce posuzované jednotky (porovnáváme jen se stejným typem)
@@ -346,6 +353,14 @@ def get_unit_local_price_diff_debug(
         except (TypeError, ValueError):
             exterior_area_f = None
 
+        layout_val = data.get("layout") or getattr(u, "layout", None)
+        floor_val = data.get("floor") if isinstance(data.get("floor"), int) else getattr(u, "floor", None)
+        if floor_val is not None and not isinstance(floor_val, int):
+            try:
+                floor_val = int(floor_val)
+            except (TypeError, ValueError):
+                floor_val = None
+
         info: dict[str, Any] = {
             "unit": u,
             "id": u.id,
@@ -362,6 +377,8 @@ def get_unit_local_price_diff_debug(
             "sold_date": getattr(u, "sold_date", None),
             "total_price_czk": total_price_f,
             "exterior_area_m2": exterior_area_f,
+            "layout": str(layout_val) if layout_val is not None else None,
+            "floor": floor_val,
             "availability_status": data.get("availability_status"),
             "available": bool(data.get("available", False)),
             "project_name": (data.get("project") or {}).get("name") if isinstance(data.get("project"), dict) else getattr(u.project, "name", None),
@@ -506,6 +523,8 @@ def get_unit_local_price_diff_debug(
                 floor_area_m2=other["area"],
                 total_price_czk=other.get("total_price_czk"),
                 exterior_area_m2=other.get("exterior_area_m2"),
+                layout=other.get("layout"),
+                floor=other.get("floor"),
                 last_seen=other.get("last_seen"),
                 sold_date=other.get("sold_date"),
                 distance_m=dist,
@@ -525,6 +544,11 @@ def get_unit_local_price_diff_debug(
         bucket_min_area_m2=min_area,
         bucket_max_area_m2=max_area,
         unit_price_per_m2_czk=price_pm2,
+        unit_total_price_czk=target.get("total_price_czk"),
+        unit_layout=target.get("layout"),
+        unit_floor_area_m2=target.get("area"),
+        unit_exterior_area_m2=target.get("exterior_area_m2"),
+        unit_floor=target.get("floor"),
         ref_avg_price_per_m2_czk=ref_avg,
         diff_percent=diff_percent,
         unit_renovation=target.get("renovation"),
