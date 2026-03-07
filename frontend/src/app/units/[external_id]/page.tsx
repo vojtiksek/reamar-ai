@@ -87,6 +87,9 @@ function parseBool(value: unknown): boolean {
 function getUnitDisplayValue(unit: UnitDetail, col: UnitColumn): unknown {
   const u = unit as Record<string, unknown>;
   const accessor = col.accessor ?? col.key;
+  if (col.key === "unit_url") {
+    return (unit as { url?: string }).url ?? unit.data?.unit_url;
+  }
   if (col.key === "project_url" || accessor === "project.project_url") {
     const raw = (unit as { url?: string }).url ?? unit.data?.unit_url;
     if (raw && typeof raw === "string") {
@@ -522,6 +525,58 @@ export default function UnitDetailPage() {
           </div>
         </section>
 
+        {/* Odkazy na nabídku a web projektu */}
+        {(() => {
+          const unitUrl =
+            (unit as { url?: string }).url ?? (unit.data?.unit_url as string | undefined);
+          let projectUrl: string | undefined;
+          const raw = unitUrl ?? (unit.data?.unit_url as string | undefined);
+          if (raw && typeof raw === "string") {
+            try {
+              const parsed = new URL(raw);
+              projectUrl = `${parsed.protocol}//${parsed.host}`;
+            } catch {
+              const i = raw.indexOf(".cz/");
+              if (i !== -1) projectUrl = raw.slice(0, i + 3);
+            }
+          }
+          if (!unitUrl && !projectUrl) return null;
+          return (
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Odkazy
+              </h2>
+              <div className="flex flex-wrap gap-3">
+                {unitUrl && (
+                  <a
+                    href={unitUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-800 no-underline shadow-sm transition hover:bg-slate-100 hover:border-slate-300"
+                  >
+                    <span aria-hidden>↗</span>
+                    Otevřít nabídku jednotky
+                  </a>
+                )}
+                {projectUrl && (
+                  <a
+                    href={projectUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-medium text-slate-800 no-underline shadow-sm transition hover:bg-slate-100 hover:border-slate-300"
+                  >
+                    <span aria-hidden>↗</span>
+                    Otevřít web projektu
+                  </a>
+                )}
+              </div>
+              <p className="mt-3 text-xs text-slate-500">
+                Fotografie a další detaily nabídky uvidíte po otevření odkazu na nabídku jednotky.
+              </p>
+            </section>
+          );
+        })()}
+
         {/* Všechna data jednotky */}
         {allColumns.length > 0 && (
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -533,10 +588,25 @@ export default function UnitDetailPage() {
                 const raw = getUnitDisplayValue(unit, col);
                 if (raw === undefined && col.key !== "project_url") return null;
                 const formatted = formatDisplayValue(raw, col);
+                const isLink =
+                  (col.key === "unit_url" || col.key === "project_url") &&
+                  typeof raw === "string" &&
+                  /^https?:\/\//i.test(raw);
                 return (
                   <div key={col.key} className="min-w-0">
                     <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
-                    <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                    {isLink ? (
+                      <a
+                        href={raw}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
+                      >
+                        {formatted}
+                      </a>
+                    ) : (
+                      <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                    )}
                   </div>
                 );
               })}
@@ -597,9 +667,28 @@ export default function UnitDetailPage() {
                         </td>
                         <td className="px-4 py-2.5">
                           {!editMode ? (
-                            <span className="text-slate-900">
-                              {formatDisplayValue(currentValue, col)}
-                            </span>
+                            (() => {
+                              const formatted = formatDisplayValue(currentValue, col);
+                              const linkUrl =
+                                (col.key === "unit_url" || col.key === "project_url") &&
+                                getUnitDisplayValue(unit, col);
+                              if (
+                                typeof linkUrl === "string" &&
+                                /^https?:\/\//i.test(linkUrl)
+                              ) {
+                                return (
+                                  <a
+                                    href={linkUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700"
+                                  >
+                                    {formatted}
+                                  </a>
+                                );
+                              }
+                              return <span className="text-slate-900">{formatted}</span>;
+                            })()
                           ) : col.data_type === "bool" ? (
                             <input
                               type="checkbox"
