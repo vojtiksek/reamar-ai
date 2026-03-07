@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from .db import get_db
 from .models import Project, Unit, UnitPriceHistory, UnitSnapshot
-from .aggregates import recompute_project_aggregates
+from .aggregates import recompute_local_price_diffs, recompute_project_aggregates
 
 # Canonical mapping: API JSON key -> Unit DB attribute. No duplicate columns; renames only.
 # Keys not listed use _key_to_attr(key) if that column exists. Skip: unique_id, id, project, availability.
@@ -627,6 +627,8 @@ def import_units(
             # Recompute cached project aggregates for all affected projects in this import
             if touched_project_ids:
                 recompute_project_aggregates(db, sorted(touched_project_ids))
+            # Recompute local price diffs (vs. market) for all units
+            recompute_local_price_diffs(db)
             db.commit()
 
     total_elapsed = time.perf_counter() - total_start

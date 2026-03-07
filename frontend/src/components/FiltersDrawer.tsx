@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { CurrentFilters, FilterGroup, FilterSpec } from "@/lib/filters";
+import { API_BASE } from "@/lib/api";
 
 type Props = {
   open: boolean;
@@ -291,14 +292,40 @@ function EnumSearchField({
 }) {
   const [search, setSearch] = useState("");
   const [open, setOpen] = useState(false);
+  const [searchOptions, setSearchOptions] = useState<string[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
   const selected = (currentFilters[spec.key] as string[] | undefined) ?? [];
   const selectedSet = new Set(selected.map(String));
   const options = (spec.options ?? []) as string[];
+  const isProjectFilter = spec.key === "project";
+
+  useEffect(() => {
+    if (!isProjectFilter || !search.trim() || search.trim().length < 2) {
+      setSearchOptions([]);
+      return;
+    }
+    const q = search.trim();
+    const t = setTimeout(() => {
+      setSearchLoading(true);
+      fetch(`${API_BASE}/projects/search?q=${encodeURIComponent(q)}&limit=50`)
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((data: string[]) => setSearchOptions(Array.isArray(data) ? data : []))
+        .catch(() => setSearchOptions([]))
+        .finally(() => setSearchLoading(false));
+    }, 300);
+    return () => clearTimeout(t);
+  }, [isProjectFilter, search]);
+
   const filtered = useMemo(() => {
+    if (isProjectFilter && search.trim().length >= 2) {
+      const fromApi = searchOptions;
+      const selectedFirst = selected.filter((s) => fromApi.indexOf(s) === -1);
+      return [...selectedFirst, ...fromApi];
+    }
     if (!search.trim()) return options;
     const q = search.trim().toLowerCase();
     return options.filter((o) => String(o).toLowerCase().includes(q));
-  }, [options, search]);
+  }, [isProjectFilter, options, search, searchOptions, selected]);
   const label = spec.alias || spec.key;
 
   const removeChip = (val: string) => {
@@ -345,11 +372,14 @@ function EnumSearchField({
                 setSearch("");
               }
             }}
-            placeholder="Hledat…"
+            placeholder={isProjectFilter ? "Napište název projektu (min. 2 znaky)…" : "Hledat…"}
             disabled={disabled}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
             aria-label={`Vyhledat v ${label}`}
           />
+          {searchLoading && (
+            <p className="text-xs text-slate-500">Načítání…</p>
+          )}
           {selected.length > 0 && (
             <div className="flex flex-wrap gap-1.5 rounded-md border border-slate-200 bg-slate-50/60 p-2">
               {selected.map((val) => (

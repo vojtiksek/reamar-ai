@@ -563,6 +563,30 @@ def get_filters(db: DbSession):
 
 
 @app.get(
+    "/projects/search",
+    summary="Search project names (typeahead)",
+    description="Returns project names matching q (case-insensitive partial match). For use in filter typeahead.",
+)
+def search_projects(
+    db: DbSession,
+    q: Annotated[str, Query(description="Search string")] = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> list[str]:
+    if not (q or "").strip():
+        return []
+    term = f"%{(q or '').strip()}%"
+    stmt = (
+        select(Project.name)
+        .distinct()
+        .where(Project.name.ilike(term))
+        .order_by(Project.name)
+        .limit(limit)
+    )
+    rows = db.execute(stmt).scalars().all()
+    return [r for r in rows if r]
+
+
+@app.get(
     "/columns",
     summary="Column definitions for table views",
     description="Returns columns from field_catalog.csv where 'Zobrazit na webu' == ANO. view=units: unit and project columns; view=projects: project only. Ordered by web_order if present, else by label.",

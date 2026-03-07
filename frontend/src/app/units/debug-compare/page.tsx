@@ -273,7 +273,12 @@ export default function DebugComparePage() {
                     {data.comparables.map((c) => (
                       <tr key={c.external_id} className="bg-white text-gray-900">
                         <td className="px-4 py-2 font-mono text-gray-900">
-                          {c.external_id}
+                          <Link
+                            href={`/units/${encodeURIComponent(c.external_id)}`}
+                            className="text-blue-600 hover:underline"
+                          >
+                            {c.external_id}
+                          </Link>
                         </td>
                         <td className="px-4 py-2 text-gray-800">
                           {c.project_name ?? "—"}

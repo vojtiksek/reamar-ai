@@ -1,10 +1,13 @@
 "use client";
 
 import { MapContainer, Marker, Polygon, Popup, TileLayer, useMapEvent } from "react-leaflet";
+import MarkerClusterGroup from "react-leaflet-markercluster";
 import type { LatLngExpression } from "leaflet";
 import L from "leaflet";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 import type { LatLng } from "@/lib/geo";
 
 type ProjectPoint = {
@@ -115,42 +118,44 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
           pathOptions={{ color: "#2563eb", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.15 }}
         />
       )}
-      {projects.map((p) =>
-        p.gps_latitude != null && p.gps_longitude != null ? (
-          <Marker
-            key={p.id}
-            position={[p.gps_latitude as number, p.gps_longitude as number]}
-            icon={getProjectMarkerIcon(priceToColor(p.avg_price_per_m2_czk ?? null))}
-          >
-            <Popup>
-              <div className="space-y-1 text-xs">
-                <div className="font-semibold text-gray-900">
-                  {p.project ?? "Projekt bez názvu"}
-                </div>
-                <div className="text-gray-700">
-                  {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
-                </div>
-                {p.avg_price_per_m2_czk != null && (
-                  <div className="text-gray-800">
-                    Průměrná cena m²:{" "}
-                    {new Intl.NumberFormat("cs-CZ", {
-                      maximumFractionDigits: 0,
-                      minimumFractionDigits: 0,
-                    }).format(p.avg_price_per_m2_czk)}{" "}
-                    Kč/m²
+      <MarkerClusterGroup>
+        {projects
+          .filter((p) => p.gps_latitude != null && p.gps_longitude != null)
+          .map((p) => (
+            <Marker
+              key={p.id}
+              position={[p.gps_latitude as number, p.gps_longitude as number]}
+              icon={getProjectMarkerIcon(priceToColor(p.avg_price_per_m2_czk ?? null))}
+            >
+              <Popup>
+                <div className="space-y-1 text-xs">
+                  <div className="font-semibold text-gray-900">
+                    {p.project ?? "Projekt bez názvu"}
                   </div>
-                )}
-                <Link
-                  href={`/projects/${p.id}`}
-                  className="inline-block text-blue-600 hover:underline"
-                >
-                  Detail projektu
-                </Link>
-              </div>
-            </Popup>
-          </Marker>
-        ) : null
-      )}
+                  <div className="text-gray-700">
+                    {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
+                  </div>
+                  {p.avg_price_per_m2_czk != null && (
+                    <div className="text-gray-800">
+                      Průměrná cena m²:{" "}
+                      {new Intl.NumberFormat("cs-CZ", {
+                        maximumFractionDigits: 0,
+                        minimumFractionDigits: 0,
+                      }).format(p.avg_price_per_m2_czk)}{" "}
+                      Kč/m²
+                    </div>
+                  )}
+                  <Link
+                    href={`/projects/${p.id}`}
+                    className="inline-block text-blue-600 hover:underline"
+                  >
+                    Detail projektu
+                  </Link>
+                </div>
+              </Popup>
+            </Marker>
+          ))}
+      </MarkerClusterGroup>
     </MapContainer>
   );
 }

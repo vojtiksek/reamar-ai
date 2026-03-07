@@ -385,6 +385,45 @@ function toSearchParams(
   return params;
 }
 
+function escapeCsvCell(val: string): string {
+  if (/["\r\n,]/.test(val)) {
+    return `"${val.replace(/"/g, '""')}"`;
+  }
+  return val;
+}
+
+function downloadUnitsCsv(
+  units: Unit[],
+  visibleColumns: Array<{ key: string; label: string; accessor: string; data_type: string; display_format?: string }>
+) {
+  const header = visibleColumns.map((c) => escapeCsvCell(c.label)).join(",");
+  const rows = units.map((u) => {
+    return visibleColumns
+      .map(({ key, accessor, data_type, display_format: df }) => {
+        const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
+        const raw = getValue(u, accessor, catalogKey);
+        let formatted = formatValue(raw, { display_format: df ?? data_type, key });
+        if (key === "local_price_diff_1000m" || key === "local_price_diff_2000m") {
+          const n = typeof raw === "number" ? raw : raw != null ? Number(raw) : Number.NaN;
+          if (!Number.isNaN(n)) {
+            const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+            formatted = `${sign}${Math.abs(n).toFixed(1)} %`;
+          }
+        }
+        return escapeCsvCell(String(formatted ?? ""));
+      })
+      .join(",");
+  });
+  const csv = "\uFEFF" + [header, ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `jednotky-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function computeSummaryFromUnits(units: Unit[], total: number) {
   const withPrice = units.filter((u) => u.price_czk != null && !Number.isNaN(u.price_czk));
   const withPricePerM2 = units.filter((u) => u.price_per_m2_czk != null && !Number.isNaN(u.price_per_m2_czk));
@@ -447,6 +486,7 @@ export default function Home() {
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
   const [savingOverride, setSavingOverride] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
 
   const rowClickTimeoutRef = useRef<number | null>(null);
 
@@ -913,6 +953,26 @@ export default function Home() {
           >
             Reset
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              const qs = searchParams?.toString() ?? "";
+              const url =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}${pathname}${qs ? `?${qs}` : ""}`
+                  : "";
+              if (url && navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                  setLinkCopied(true);
+                  window.setTimeout(() => setLinkCopied(false), 2000);
+                });
+              }
+            }}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            title="Kopírovat odkaz s aktuálními filtry"
+          >
+            {linkCopied ? "Zkopírováno!" : "Kopírovat odkaz"}
+          </button>
         </div>
 
         <div className="flex flex-col items-end gap-1">
@@ -1110,9 +1170,50 @@ export default function Home() {
                 >
                   Další
                 </button>
+                <button
+                  type="button"
+                  onClick={() => downloadUnitsCsv(units, visibleColumns)}
+                  disabled={units.length === 0 || loading}
+                  className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Export CSV
+                </button>
               </div>
             </div>
-            <div className="data-grid-scroll">
+            {/* Mobilní karty – zobrazí se jen na malých obrazovkách */}
+            <div className="block space-y-2 md:hidden">
+              {!loading && units.length > 0 &&
+                units.map((u: Unit) => {
+                  const extId = getExternalIdForRow(u) ?? u.external_id;
+                  const projectName = (u.project as { name?: string } | undefined)?.name ?? "—";
+                  const price = u.price_czk != null ? formatValue(u.price_czk, { display_format: "currency", key: "price_czk" }) : "—";
+                  const layoutRaw = getValue(u, "layout", "layout");
+                  const layoutStr =
+                    layoutRaw != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(layoutRaw))
+                      ? String(layoutRaw).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_m: string, a: string, b?: string) => (b ? `${a},${b} kk` : `${a} kk`))
+                      : "—";
+                  const area = u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—";
+                  return (
+                    <div
+                      key={u.external_id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={(e) => handleRowClick(e, u)}
+                      onKeyDown={(e) => e.key === "Enter" && handleRowClick(e as unknown as React.MouseEvent, u)}
+                      className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm active:bg-slate-50"
+                    >
+                      <div className="font-mono text-sm font-medium text-slate-900">{extId}</div>
+                      <div className="text-xs text-slate-600">{projectName}</div>
+                      <div className="mt-2 flex justify-between text-sm">
+                        <span className="text-slate-700">{layoutStr}</span>
+                        <span className="font-medium text-slate-900">{price}</span>
+                      </div>
+                      <div className="text-xs text-slate-500">{area}</div>
+                    </div>
+                  );
+                })}
+            </div>
+            <div className="data-grid-scroll hidden md:block">
               <table className="data-grid-table">
                 <thead className="bg-slate-50/90">
                   <tr>
@@ -1159,6 +1260,15 @@ export default function Home() {
                         className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
                       >
                         Načítání…
+                      </td>
+                    </tr>
+                  ) : !loading && units.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={visibleColumns.length}
+                        className="px-3 py-8 text-center text-sm text-slate-600"
+                      >
+                        Žádné jednotky nevyhovují zadaným filtrům. Zkuste upravit filtry.
                       </td>
                     </tr>
                   ) : (

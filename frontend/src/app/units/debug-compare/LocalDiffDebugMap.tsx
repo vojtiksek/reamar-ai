@@ -1,6 +1,7 @@
 "use client";
 
 import type { FC } from "react";
+import Link from "next/link";
 import { MapContainer, TileLayer, Circle, Marker, Popup } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import L from "leaflet";
@@ -125,6 +126,12 @@ const LocalDiffDebugMap: FC<Props> = ({ center, unitInfo, unitExternalId, compar
               <div className="text-gray-600">
                 Vzdálenost: {Math.round(c.distance_m).toLocaleString("cs-CZ")} m
               </div>
+              <Link
+                href={`/units/${encodeURIComponent(c.external_id)}`}
+                className="mt-1 inline-block text-blue-600 hover:underline"
+              >
+                Detail jednotky →
+              </Link>
             </div>
           </Popup>
         </Marker>
@@ -190,6 +197,12 @@ const LocalDiffDebugMap: FC<Props> = ({ center, unitInfo, unitExternalId, compar
                     {Math.round(unitInfo.price_per_m2_czk).toLocaleString("cs-CZ")} Kč/m²
                   </div>
                 )}
+                <Link
+                  href={`/units/${encodeURIComponent(unitExternalId)}`}
+                  className="mt-1 inline-block text-blue-600 hover:underline"
+                >
+                  Detail jednotky →
+                </Link>
               </div>
             </Popup>
           </Marker>

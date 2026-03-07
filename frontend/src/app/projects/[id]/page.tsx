@@ -26,6 +26,17 @@ type FetchState<T> = {
   error: string | null;
 };
 
+type UnitInProject = {
+  external_id: string;
+  unit_name: string | null;
+  layout: string | null;
+  floor_area_m2: number | null;
+  price_czk: number | null;
+  price_per_m2_czk: number | null;
+  available: boolean;
+  project?: { name?: string };
+};
+
 function formatValue(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "ANO" : "NE";
@@ -61,6 +72,11 @@ export default function ProjectDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [unitsState, setUnitsState] = useState<FetchState<UnitInProject[]>>({
+    data: null,
+    loading: false,
+    error: null,
+  });
 
   useEffect(() => {
     if (!projectId) return;
@@ -91,6 +107,35 @@ export default function ProjectDetailPage() {
         setColumnsState({ data: null, loading: false, error: msg });
       });
   }, [projectId]);
+
+  // Načíst jednotky v projektu (podle názvu projektu)
+  useEffect(() => {
+    const projectName = projectState.data && (
+      (projectState.data["project"] as string | undefined) ??
+      (projectState.data["name"] as string | undefined)
+    );
+    if (!projectName || projectState.loading) {
+      setUnitsState({ data: null, loading: false, error: null });
+      return;
+    }
+    setUnitsState({ data: null, loading: true, error: null });
+    const params = new URLSearchParams();
+    params.set("project", projectName);
+    params.set("limit", "500");
+    fetch(`${API_BASE}/units?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((json: { items?: UnitInProject[] }) => {
+        const items = json?.items ?? [];
+        setUnitsState({ data: items, loading: false, error: null });
+      })
+      .catch((e) => {
+        setUnitsState({
+          data: null,
+          loading: false,
+          error: e instanceof Error ? e.message : "Chyba načítání jednotek",
+        });
+      });
+  }, [projectState.data, projectState.loading]);
 
   const editableColumns = useMemo(() => {
     if (!columnsState.data) return [] as ProjectColumn[];
@@ -426,6 +471,65 @@ export default function ProjectDetailPage() {
                                 onChange={(e) => handleChangeDraft(key, e.target.value)}
                               />
                             )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+            <h2 className="mb-3 text-base font-semibold text-gray-900">Jednotky v projektu</h2>
+            {unitsState.loading ? (
+              <p className="text-sm text-gray-600">Načítání jednotek…</p>
+            ) : unitsState.error ? (
+              <p className="text-sm text-red-600">{unitsState.error}</p>
+            ) : !unitsState.data || unitsState.data.length === 0 ? (
+              <p className="text-sm text-gray-600">Žádné jednotky.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200 text-sm">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Jednotka</th>
+                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Dispozice</th>
+                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Plocha</th>
+                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Cena</th>
+                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Cena/m²</th>
+                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Stav</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100 bg-white">
+                    {unitsState.data.map((u) => {
+                      const layoutStr =
+                        u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
+                          ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) => (b ? `${a},${b} kk` : `${a} kk`))
+                          : u.layout ?? "—";
+                      return (
+                        <tr key={u.external_id} className="hover:bg-gray-50">
+                          <td className="px-4 py-2">
+                            <Link
+                              href={`/units/${encodeURIComponent(u.external_id)}`}
+                              className="font-mono text-blue-600 hover:underline"
+                            >
+                              {u.unit_name ?? u.external_id}
+                            </Link>
+                          </td>
+                          <td className="px-4 py-2 text-gray-900">{layoutStr}</td>
+                          <td className="px-4 py-2 text-right text-gray-900">
+                            {u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-right text-gray-900">
+                            {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-right text-gray-900">
+                            {u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}
+                          </td>
+                          <td className="px-4 py-2 text-gray-900">
+                            {u.available ? "Dostupná" : "Prodaná/rezervovaná"}
                           </td>
                         </tr>
                       );

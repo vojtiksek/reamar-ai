@@ -1,6 +1,6 @@
-## Reamar AI Backend Skeleton
+## Reamar AI
 
-This is a minimal FastAPI + SQLAlchemy 2.0 backend with PostgreSQL (via Docker Compose) and Alembic migrations, set up for local development on macOS.
+Webová aplikace pro nemovitosti: jednotky (byty) a developerské projekty. Backend FastAPI + SQLAlchemy 2.0 + PostgreSQL, frontend Next.js.
 
 ### Requirements
 
@@ -249,11 +249,43 @@ python -m app.import_units big.json --source api --chunk-size 5000
 - Upserts `Unit` records by `external_id` (from `unique_id` in JSON)
 - Normalizes all fields (prices, areas, GPS coordinates, booleans, etc.)
 - Inserts `UnitPriceHistory` rows only when price/availability values change
+- **After each import**, automatically runs **recompute of project aggregates** and **recompute of local price diffs** (odchylka od trhu)
 - Prints counts (projects created/reused, units created/updated, history rows inserted), snapshot id, total time, and units/sec
 
-### 7. Stopping Services
+### 7. Přepočet lokální odchylky od trhu
+
+Sloupce `local_price_diff_1000m` a `local_price_diff_2000m` se po každém importu přepočítají automaticky. Pro ruční přepočet (např. po úpravě dat v DB) můžete zavolat:
+
+```bash
+curl -X POST http://127.0.0.1:8001/units/local-price-diffs/recompute
+```
+
+Nebo z UI na stránce Jednotky použijte tlačítko „Přepočítat“.
+
+### 8. Frontend (Next.js)
+
+Z kořene projektu:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend běží na `http://localhost:3000`. Pro správnou komunikaci s API musí běžet backend na `http://127.0.0.1:8001` (viz `frontend/src/lib/api.ts` – `API_BASE`).
+
+**Hlavní cesty:**
+- `/units` — tabulka jednotek, filtry, řazení, export CSV
+- `/projects` — přehled projektů, export CSV
+- `/projects/map` — mapa projektů (barvy podle ceny m², výběr oblasti)
+- `/units/[external_id]` — detail jednotky
+- `/units/debug-compare` — srovnání ceny s trhem (lokální odchylka), mapa comparables
+- `/projects/[id]` — detail projektu včetně seznamu jednotek
+
+### 9. Stopping Services
 
 - **Stop FastAPI**: Press `Ctrl+C` in the terminal where Uvicorn is running.
+- **Stop Next.js**: Press `Ctrl+C` in the terminal where `npm run dev` is running.
 - **Stop PostgreSQL**:
 
 ```bash
@@ -261,5 +293,13 @@ cd /path/to/reamar_ai
 docker-compose down
 ```
 
-This skeleton is intentionally minimal: no models, no migrations, just a working DB, configuration via `.env`, and a `/health` endpoint that validates DB connectivity.
+### 10. Testy
+
+```bash
+cd backend
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+Integrační testy v `tests/test_api_units_projects.py` volají GET `/units`, GET `/projects` a GET `/projects/search` včetně filtrů.
 

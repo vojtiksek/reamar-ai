@@ -242,6 +242,37 @@ function toProjectsSearchParams(
   return params;
 }
 
+function escapeCsvCell(val: string): string {
+  if (/["\r\n,]/.test(val)) {
+    return `"${val.replace(/"/g, '""')}"`;
+  }
+  return val;
+}
+
+function downloadProjectsCsv(
+  items: ProjectItem[],
+  visibleColumns: ProjectColumnDef[]
+) {
+  const header = visibleColumns.map((c) => escapeCsvCell(c.label)).join(",");
+  const rows = items.map((p) => {
+    return visibleColumns
+      .map((col) => {
+        const raw = getProjectCellValue(p, col);
+        const formatted = formatProjectValue(raw, col);
+        return escapeCsvCell(String(formatted ?? ""));
+      })
+      .join(",");
+  });
+  const csv = "\uFEFF" + [header, ...rows].join("\r\n");
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `projekty-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function ProjectsPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -272,6 +303,7 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null);
   const [editingCell, setEditingCell] = useState<{ projectId: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
+  const [linkCopied, setLinkCopied] = useState(false);
   const [savingOverride, setSavingOverride] = useState(false);
 
   const rowClickTimeoutRef = useRef<number | null>(null);
@@ -671,6 +703,26 @@ export default function ProjectsPage() {
           >
             Reset
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              const qs = searchParams?.toString() ?? "";
+              const url =
+                typeof window !== "undefined"
+                  ? `${window.location.origin}${pathname}${qs ? `?${qs}` : ""}`
+                  : "";
+              if (url && navigator.clipboard?.writeText) {
+                navigator.clipboard.writeText(url).then(() => {
+                  setLinkCopied(true);
+                  window.setTimeout(() => setLinkCopied(false), 2000);
+                });
+              }
+            }}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            title="Kopírovat odkaz s aktuálními filtry"
+          >
+            {linkCopied ? "Zkopírováno!" : "Kopírovat odkaz"}
+          </button>
         </div>
 
         <div className="flex flex-col items-end gap-1">
@@ -825,6 +877,14 @@ export default function ProjectsPage() {
                 >
                   Další
                 </button>
+                <button
+                  type="button"
+                  onClick={() => downloadProjectsCsv(projects, visibleColumns)}
+                  disabled={projects.length === 0 || loading}
+                  className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Export CSV
+                </button>
               </div>
             </div>
             <div className="data-grid-scroll">
@@ -873,9 +933,9 @@ export default function ProjectsPage() {
                   <tr>
                     <td
                       colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
+                      className="px-3 py-8 text-center text-sm text-slate-600"
                     >
-                      Žádné projekty k zobrazení.
+                      Žádné projekty nevyhovují zadaným filtrům. Zkuste upravit filtry.
                     </td>
                   </tr>
                 ) : (

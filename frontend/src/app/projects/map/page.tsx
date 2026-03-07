@@ -287,7 +287,9 @@ export default function ProjectsMapPage() {
           <div className="flex-1 overflow-y-auto px-4 py-2 text-xs sm:text-sm">
             {loading && <div className="text-slate-600">Načítání…</div>}
             {!loading && visibleProjects.length === 0 && (
-              <div className="text-slate-600">Žádné projekty s GPS nejsou k dispozici.</div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+                Žádné projekty nevyhovují filtrům nebo nemají GPS. Zkuste upravit filtry nebo zrušit výběr oblasti.
+              </div>
             )}
             <ul className="space-y-2">
               {visibleProjects.map((p) => (
