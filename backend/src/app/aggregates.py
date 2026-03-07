@@ -354,7 +354,8 @@ def recompute_local_price_diffs(db: Session) -> None:
 
         # Zjisti, zda je jednotka aktuálně "na trhu".
         # Bereme jednotky, které jsou dostupné (available) NEBO mají stav "available"/"reserved".
-        # Prodané ("sold") nechceme, aby neovlivňovaly průměr.
+        # Prodané ("sold") se budou používat jen jako referenční body, a to
+        # pouze pokud mají sold_date mladší než 90 dní (viz níže).
         if isinstance(data, dict):
             avail_flag = data.get("available")
             status_raw = data.get("availability_status") or u.availability_status or ""
@@ -384,7 +385,9 @@ def recompute_local_price_diffs(db: Session) -> None:
                 "group": group,
                 "on_market": on_market,
                 "renovation": renovation_val,
+                "availability_status": status,
                 "last_seen": getattr(u, "last_seen", None),
+                "sold_date": getattr(u, "sold_date", None),
             }
         )
 
@@ -482,10 +485,14 @@ def recompute_local_price_diffs(db: Session) -> None:
                         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
                         if other.get("renovation") != info.get("renovation"):
                             continue
-                        # Prodané jednotky (SOLD) zahrnujeme jen pokud byly last_seen nejvýše 90 dní od dneška.
+                        # Pro účely lokálního průměru bereme:
+                        # - jednotky "na trhu" (available / reserved) vždy
+                        # - prodané jednotky (sold) jen pokud mají sold_date mladší než 90 dní,
+                        #   aby staré historické prodeje nezkreslovaly aktuální trh.
                         if not other.get("on_market"):
-                            ls = other.get("last_seen")
-                            if ls is None or (date.today() - ls).days > 90:
+                            status_other = str(other.get("availability_status") or "").strip().lower()
+                            sold_date = other.get("sold_date")
+                            if status_other != "sold" or sold_date is None or (date.today() - sold_date).days > 90:
                                 continue
                         # Do průměru bereme všechny jednotky v bucketu (včetně prodaných), aby
                         # dvě stejné jednotky ve stejném projektu měly stejný ref_avg a tedy

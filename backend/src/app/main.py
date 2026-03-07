@@ -138,6 +138,7 @@ class LocalPriceDiffComparable(BaseModel):
     total_price_czk: float | None = None
     exterior_area_m2: float | None = None
     last_seen: date | None = None
+    sold_date: date | None = None
     distance_m: float
     availability_status: str | None = None
     available: bool
@@ -358,6 +359,7 @@ def get_unit_local_price_diff_debug(
             "renovation": renovation_val,
             "on_market": on_market,
             "last_seen": last_seen_val,
+            "sold_date": getattr(u, "sold_date", None),
             "total_price_czk": total_price_f,
             "exterior_area_m2": exterior_area_f,
             "availability_status": data.get("availability_status"),
@@ -418,10 +420,13 @@ def get_unit_local_price_diff_debug(
         # Porovnávame jen jednotky se stejným typem rekonstrukce (novostavba s novostavbou, rekonstrukce s rekonstrukcí).
         if other.get("renovation") != target.get("renovation"):
             continue
-        # Prodané jednotky (SOLD) zahrnujeme jen pokud byly last_seen nejvýše 90 dní od dneška.
+        # Pro účely lokálního průměru bereme:
+        # - jednotky "na trhu" (available / reserved) vždy
+        # - prodané jednotky (sold) jen pokud mají sold_date mladší než 90 dní.
         if not other.get("on_market"):
-            ls = other.get("last_seen")
-            if ls is None or (date.today() - ls).days > 90:
+            status_other = str(other.get("availability_status") or "").strip().lower()
+            sold_date = other.get("sold_date")
+            if status_other != "sold" or sold_date is None or (date.today() - sold_date).days > 90:
                 continue
         d = _haversine_m(lat1, lon1, other["lat"], other["lon"])
         if d > radius_m:
@@ -502,6 +507,7 @@ def get_unit_local_price_diff_debug(
                 total_price_czk=other.get("total_price_czk"),
                 exterior_area_m2=other.get("exterior_area_m2"),
                 last_seen=other.get("last_seen"),
+                sold_date=other.get("sold_date"),
                 distance_m=dist,
                 availability_status=other.get("availability_status"),
                 available=bool(other.get("available", False)),
