@@ -92,8 +92,30 @@ type UnitInProject = {
   price_czk: number | null;
   price_per_m2_czk: number | null;
   available: boolean;
+  availability_status?: string | null;
   project?: { name?: string };
 };
+
+type UnitsSortKey =
+  | "unit_name"
+  | "layout"
+  | "floor_area_m2"
+  | "exterior_area_m2"
+  | "price_czk"
+  | "price_per_m2_czk"
+  | "availability_status";
+
+function availabilityStatusLabel(status: string | null | undefined, available: boolean): string {
+  if (status != null && status !== "") {
+    const s = String(status).toLowerCase();
+    if (s === "available" || s === "volné") return "Volné";
+    if (s === "reserved" || s === "rezervované") return "Rezervované";
+    if (s === "sold" || s === "prodané") return "Prodané";
+    if (s === "unseen") return "Unseen";
+    return status;
+  }
+  return available ? "Volné" : "—";
+}
 
 export default function ProjectDetailPage() {
   const params = useParams();
@@ -121,6 +143,8 @@ export default function ProjectDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");
+  const [unitsSortDir, setUnitsSortDir] = useState<"asc" | "desc">("asc");
 
   const filterSpecsByKey = useMemo(
     () => (filtersState.data?.groups ? flattenFilterSpecsByKey(filtersState.data.groups) : new Map()),
@@ -353,6 +377,36 @@ export default function ProjectDetailPage() {
   const displayOrDraft = (key: string, fallback: unknown) =>
     draft(key) !== undefined ? draft(key) : fallback;
 
+  const sortedUnits = useMemo(() => {
+    const list = unitsState.data ?? [];
+    const dir = unitsSortDir === "asc" ? 1 : -1;
+    const key = unitsSortBy;
+    const cmp = (a: UnitInProject, b: UnitInProject): number => {
+      const av = a.available ? 1 : 0;
+      const bv = b.available ? 1 : 0;
+      if (av !== bv) return bv - av;
+      const aVal = key === "unit_name" ? (a.unit_name ?? a.external_id) ?? "" : (a as Record<string, unknown>)[key];
+      const bVal = key === "unit_name" ? (b.unit_name ?? b.external_id) ?? "" : (b as Record<string, unknown>)[key];
+      const aNum = typeof aVal === "number" ? aVal : Number(aVal);
+      const bNum = typeof bVal === "number" ? bVal : Number(bVal);
+      if (key !== "unit_name" && key !== "layout" && key !== "availability_status" && !Number.isNaN(aNum) && !Number.isNaN(bNum)) {
+        return (aNum - bNum) * dir;
+      }
+      const aStr = String(aVal ?? "").toLowerCase();
+      const bStr = String(bVal ?? "").toLowerCase();
+      return aStr.localeCompare(bStr, "cs") * dir;
+    };
+    return [...list].sort(cmp);
+  }, [unitsState.data, unitsSortBy, unitsSortDir]);
+
+  const handleUnitsSort = useCallback((key: UnitsSortKey) => {
+    setUnitsSortBy((prev) => {
+      if (prev === key) setUnitsSortDir((d) => (d === "asc" ? "desc" : "asc"));
+      else setUnitsSortDir("asc");
+      return key;
+    });
+  }, []);
+
   if (projectState.loading) {
     return (
       <div className="min-h-screen bg-slate-50">
@@ -578,7 +632,7 @@ export default function ProjectDetailPage() {
                 <p className="text-xs font-medium text-slate-500">Průměrná plocha m²</p>
                 <p className="mt-0.5 font-medium text-slate-900">
                   {project["avg_floor_area_m2"] != null
-                    ? `${Number(project["avg_floor_area_m2"]).toLocaleString("cs-CZ")} m²`
+                    ? `${Math.round(Number(project["avg_floor_area_m2"])).toLocaleString("cs-CZ")} m²`
                     : "—"}
                 </p>
               </div>
@@ -1107,17 +1161,80 @@ export default function ProjectDetailPage() {
               <table className="min-w-full divide-y divide-slate-200 text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Jednotka</th>
-                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Dispozice</th>
-                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Plocha</th>
-                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Venek</th>
-                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Cena</th>
-                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Cena/m²</th>
-                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Stav</th>
+                    <th className="px-4 py-2 text-left">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("unit_name")}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Jednotka
+                        {unitsSortBy === "unit_name" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-left">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("layout")}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Dispozice
+                        {unitsSortBy === "layout" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("floor_area_m2")}
+                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Plocha
+                        {unitsSortBy === "floor_area_m2" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("exterior_area_m2")}
+                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Venek
+                        {unitsSortBy === "exterior_area_m2" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("price_czk")}
+                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Cena
+                        {unitsSortBy === "price_czk" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("price_per_m2_czk")}
+                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Cena/m²
+                        {unitsSortBy === "price_per_m2_czk" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
+                    <th className="px-4 py-2 text-left">
+                      <button
+                        type="button"
+                        onClick={() => handleUnitsSort("availability_status")}
+                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
+                      >
+                        Stav
+                        {unitsSortBy === "availability_status" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                      </button>
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {unitsState.data.map((u) => {
+                  {sortedUnits.map((u) => {
                     const layoutStr =
                       u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
                         ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) =>
@@ -1148,7 +1265,7 @@ export default function ProjectDetailPage() {
                           {u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}
                         </td>
                         <td className="px-4 py-2 text-slate-900">
-                          {u.available ? "Dostupná" : "Prodaná/rezervovaná"}
+                          {availabilityStatusLabel(u.availability_status, u.available)}
                         </td>
                       </tr>
                     );

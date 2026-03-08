@@ -2068,6 +2068,13 @@ def _project_agg_subquery():
             # Sample unit URL (for deriving project_url)
             func.min(Unit.url).label("unit_url_sample"),
             layouts,
+            # Standardy z jednotek (reprezentativní hodnota pro projekt)
+            func.max(Unit.category).label("sample_category"),
+            func.max(Unit.floors).label("sample_floors"),
+            func.max(case((Unit.air_conditioning.is_(True), 1), else_=0)).label("sample_air_conditioning"),
+            func.max(case((Unit.cooling_ceilings.is_(True), 1), else_=0)).label("sample_cooling_ceilings"),
+            func.max(case((Unit.exterior_blinds.is_(True), 1), else_=0)).label("sample_exterior_blinds"),
+            func.max(case((Unit.smart_home.is_(True), 1), else_=0)).label("sample_smart_home"),
         )
         .group_by(Unit.project_id)
         .subquery()
@@ -2093,6 +2100,10 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
                 out[key] = val
         else:
             out[key] = None
+
+    # Pole na projektu, která nejsou v katalogu (Entity=Projekt) – např. heating je v CSV u Jednotky
+    if out.get("heating") is None and hasattr(project, "heating"):
+        out["heating"] = getattr(project, "heating", None)
 
     # Agregovaná data: select(Project, agg_subq) vrací Row. V SQLAlchemy 2 _mapping obsahuje
     # sloupce z obou (Project + subquery s labely units_total, units_available, ...).
@@ -2121,7 +2132,7 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     out["units_reserved"] = units_reserved
     out["units_priced"] = int(agg.get("units_priced") or 0)
 
-    # Core aggregate metrics
+    # Core aggregate metrics (včetně cen parkování)
     for k in (
         "min_price_czk",
         "avg_price_czk",
@@ -2137,6 +2148,10 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         "avg_public_transport_to_center_min",
         "median_public_transport_to_center_min",
         "avg_floor_area_m2",
+        "min_parking_indoor_price_czk",
+        "max_parking_indoor_price_czk",
+        "min_parking_outdoor_price_czk",
+        "max_parking_outdoor_price_czk",
     ):
         v = agg.get(k)
         if v is None:
@@ -2215,6 +2230,27 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     )
     out["availability_ratio"] = out["available_ratio"]  # frontend expects availability_ratio
     out["project"] = getattr(project, "name", None)  # frontend column "project" (název projektu)
+
+    # Standardy z jednotek (reprezentativní hodnota), pokud je projekt sám nemá
+    if out.get("category") is None:
+        v = agg.get("sample_category")
+        out["category"] = str(v) if v is not None else None
+    if out.get("floors") is None:
+        v = agg.get("sample_floors")
+        out["floors"] = str(v) if v is not None else None
+    if out.get("air_conditioning") is None:
+        v = agg.get("sample_air_conditioning")
+        out["air_conditioning"] = bool(v) if v is not None else None
+    if out.get("cooling_ceilings") is None:
+        v = agg.get("sample_cooling_ceilings")
+        out["cooling_ceilings"] = bool(v) if v is not None else None
+    if out.get("exterior_blinds") is None:
+        v = agg.get("sample_exterior_blinds")
+        out["exterior_blinds"] = bool(v) if v is not None else None
+    if out.get("smart_home") is None:
+        v = agg.get("sample_smart_home")
+        out["smart_home"] = bool(v) if v is not None else None
+
     raw_layouts = agg.get("layouts_present_raw")
     if raw_layouts is not None and isinstance(raw_layouts, (list, tuple)):
         out["layouts_present"] = list(dict.fromkeys(x for x in raw_layouts if x is not None))
