@@ -215,6 +215,8 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         except (TypeError, ValueError):
             return v
 
+    _ride = _dec(base.project.ride_to_center_min) if base.project else None
+    _mhd = _dec(base.project.public_transport_to_center_min) if base.project else None
     project_info = {
         "developer": base.project.developer,
         "name": base.project.name,
@@ -228,8 +230,10 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "region_iga": base.project.region_iga,
         "gps_latitude": _dec(base.project.gps_latitude),
         "gps_longitude": _dec(base.project.gps_longitude),
-        "ride_to_center_min": _dec(base.project.ride_to_center_min),
-        "public_transport_to_center_min": _dec(base.project.public_transport_to_center_min),
+        "ride_to_center_min": _ride,
+        "public_transport_to_center_min": _mhd,
+        "ride_to_center": _ride,
+        "public_transport_to_center": _mhd,
         "permit_regular": base.project.permit_regular,
         "renovation": base.project.renovation,
         "overall_quality": base.project.overall_quality,
@@ -248,6 +252,13 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
                 value = _get(attr, base_val)
             else:
                 value = base_val
+            # Jednotka: autem/MHD do centra – fallback z projektu, když na jednotce není
+            if column in ("ride_to_center", "public_transport_to_center") and value is None and base.project:
+                value = getattr(
+                    base.project,
+                    "ride_to_center_min" if column == "ride_to_center" else "public_transport_to_center_min",
+                    None,
+                )
             # Speciální case: Žaluzie – použijeme původní text z importu, pokud je k dispozici.
             if column == "exterior_blinds" and hasattr(base, "exterior_blinds_raw") and base.exterior_blinds_raw is not None:
                 value = base.exterior_blinds_raw
@@ -277,8 +288,8 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "municipality": base.municipality,
         "city": base.city,
         "postal_code": base.postal_code,
-        "ride_to_center_min": _dec(base.ride_to_center_min),
-        "public_transport_to_center_min": _dec(base.public_transport_to_center_min),
+        "ride_to_center_min": _dec(base.ride_to_center_min) or _ride,
+        "public_transport_to_center_min": _dec(base.public_transport_to_center_min) or _mhd,
         "url": base.url,
         "project": project_info,
         "data": data,

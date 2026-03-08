@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from decimal import Decimal
 from datetime import date
 from typing import Iterable, Sequence, Any
@@ -12,6 +13,8 @@ from sqlalchemy.orm import Session
 from .models import ProjectAggregates, Unit, UnitOverride
 from .overrides import OVERRIDEABLE_FIELDS, build_override_map, unit_to_response_dict
 
+# Prodané jednotky (sold) se berou do průměru pro odchylku jen pokud jsou prodané max tolik dní
+SOLD_DATE_MAX_DAYS_FOR_COMPARABLE = 180  # 6 měsíců
 
 AGGREGATE_RELEVANT_FIELDS: frozenset[str] = frozenset(
     {
@@ -355,7 +358,7 @@ def recompute_local_price_diffs(db: Session) -> None:
         # Zjisti, zda je jednotka aktuálně "na trhu".
         # Bereme jednotky, které jsou dostupné (available) NEBO mají stav "available"/"reserved".
         # Prodané ("sold") se budou používat jen jako referenční body, a to
-        # pouze pokud mají sold_date mladší než 90 dní (viz níže).
+        # pouze pokud mají sold_date mladší než SOLD_DATE_MAX_DAYS_FOR_COMPARABLE (viz níže).
         if isinstance(data, dict):
             avail_flag = data.get("available")
             status_raw = data.get("availability_status") or u.availability_status or ""
@@ -452,10 +455,11 @@ def recompute_local_price_diffs(db: Session) -> None:
         diffs: dict[float, float | None] = {r: None for r in radii}
 
         for radius in radii:
-            bucket_1_prices: list[float] = []
-            bucket_2_prices: list[float] = []
-            bucket_3_prices: list[float] = []
-            bucket_4_prices: list[float] = []
+            # Průměr průměrů po projektech: každý projekt jeden hlas (méně zkreslení luxusním projektem s mnoha jednotkami)
+            bucket_1_by_project: dict[tuple[Any, Any], list[float]] = defaultdict(list)
+            bucket_2_by_project: dict[tuple[Any, Any], list[float]] = defaultdict(list)
+            bucket_3_by_project: dict[tuple[Any, Any], list[float]] = defaultdict(list)
+            bucket_4_by_project: dict[tuple[Any, Any], list[float]] = defaultdict(list)
 
             # Determine how many grid cells around the current cell we need
             # to cover the given radius in both directions.
@@ -487,12 +491,12 @@ def recompute_local_price_diffs(db: Session) -> None:
                             continue
                         # Pro účely lokálního průměru bereme:
                         # - jednotky "na trhu" (available / reserved) vždy
-                        # - prodané jednotky (sold) jen pokud mají sold_date mladší než 90 dní,
+                        # - prodané jednotky (sold) jen pokud mají sold_date mladší než 6 měsíců,
                         #   aby staré historické prodeje nezkreslovaly aktuální trh.
                         if not other.get("on_market"):
                             status_other = str(other.get("availability_status") or "").strip().lower()
                             sold_date = other.get("sold_date")
-                            if status_other != "sold" or sold_date is None or (date.today() - sold_date).days > 90:
+                            if status_other != "sold" or sold_date is None or (date.today() - sold_date).days > SOLD_DATE_MAX_DAYS_FOR_COMPARABLE:
                                 continue
                         # Do průměru bereme všechny jednotky v bucketu (včetně prodaných), aby
                         # dvě stejné jednotky ve stejném projektu měly stejný ref_avg a tedy
@@ -504,27 +508,33 @@ def recompute_local_price_diffs(db: Session) -> None:
                         g2 = other["group"]
                         a2 = other["area"]
                         p2 = other["price_pm2"]
+                        proj_key = (other.get("project_id"), other.get("project_name") or "")
                         if in_area_bucket(g2, a2, "1kk"):
-                            bucket_1_prices.append(p2)
+                            bucket_1_by_project[proj_key].append(p2)
                         if in_area_bucket(g2, a2, "2kk"):
-                            bucket_2_prices.append(p2)
+                            bucket_2_by_project[proj_key].append(p2)
                         if in_area_bucket(g2, a2, "3kk"):
-                            bucket_3_prices.append(p2)
+                            bucket_3_by_project[proj_key].append(p2)
                         if in_area_bucket(g2, a2, "4kk"):
-                            bucket_4_prices.append(p2)
+                            bucket_4_by_project[proj_key].append(p2)
+
+            def avg_of_project_avgs(by_project: dict[tuple[Any, Any], list[float]]) -> float | None:
+                """Průměr průměrů: v každém projektu průměr cen, pak průměr těchto čísel."""
+                project_avgs = [avg(prices) for prices in by_project.values() if prices]
+                return avg(project_avgs) if project_avgs else None
 
             ref_avg: float | None = None
             if group == "1kk":
-                ref_avg = avg(bucket_1_prices)
+                ref_avg = avg_of_project_avgs(bucket_1_by_project)
             elif group == "2kk":
-                ref_avg = avg(bucket_2_prices)
+                ref_avg = avg_of_project_avgs(bucket_2_by_project)
             elif group == "3kk":
-                ref_avg = avg(bucket_3_prices)
+                ref_avg = avg_of_project_avgs(bucket_3_by_project)
             elif group == "4kk":
-                ref_avg = avg(bucket_4_prices)
+                ref_avg = avg_of_project_avgs(bucket_4_by_project)
             elif group == "1.5kk":
-                ref1 = avg(bucket_1_prices)
-                ref2 = avg(bucket_2_prices)
+                ref1 = avg_of_project_avgs(bucket_1_by_project)
+                ref2 = avg_of_project_avgs(bucket_2_by_project)
                 if ref1 is not None and ref2 is not None:
                     ref_avg = (ref1 + ref2) / 2.0
                 elif ref1 is not None:

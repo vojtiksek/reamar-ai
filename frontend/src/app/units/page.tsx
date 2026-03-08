@@ -161,6 +161,8 @@ const BACKEND_SORT_FIELDS = [
   "original_price_per_m2_czk",
   "ride_to_center_min",
   "public_transport_to_center_min",
+  "ride_to_center",
+  "public_transport_to_center",
   "floor_area_m2",
   "total_area_m2",
   "exterior_area_m2",
@@ -299,6 +301,11 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   // Lokální cenová odchylka (percent)
   local_price_diff_1000m: "local_price_diff_1000m",
   local_price_diff_2000m: "local_price_diff_2000m",
+  // Backend data používá klíče ride_to_center / public_transport_to_center (catalog column)
+  ride_to_center_min: "ride_to_center",
+  public_transport_to_center_min: "public_transport_to_center",
+  "project.ride_to_center": "ride_to_center",
+  "project.public_transport_to_center": "public_transport_to_center",
 };
 
 function getValue(unit: Unit, accessor: string, catalogKey?: string): unknown {
@@ -489,6 +496,8 @@ export default function Home() {
   const [linkCopied, setLinkCopied] = useState(false);
 
   const rowClickTimeoutRef = useRef<number | null>(null);
+  /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL“ přepsat state starou URL (router.replace je async). */
+  const skipSyncSortPaginationRef = useRef(false);
 
   const supportedFilterKeys = useMemo(
     () => new Set(filterGroups.flatMap((g) => g.filters.filter((f) => f.backend_supported).map((f) => f.key))),
@@ -572,11 +581,15 @@ export default function Home() {
   useEffect(() => {
     const parsed = parseSearchParams(new URLSearchParams(searchParams?.toString() ?? ""));
     setFilters(parsed.filters);
-    setLimit(parsed.limit);
-    setOffset(parsed.offset);
-    setSortBy(parsed.sortBy);
-    setSortDir(parsed.sortDir);
     setPolygon(parsed.polygon ?? null);
+    if (skipSyncSortPaginationRef.current) {
+      skipSyncSortPaginationRef.current = false;
+    } else {
+      setLimit(parsed.limit);
+      setOffset(parsed.offset);
+      setSortBy(parsed.sortBy);
+      setSortDir(parsed.sortDir);
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -598,6 +611,13 @@ export default function Home() {
     ? sortBy
     : DEFAULT_SORT_BY;
   const validSortDir = SORT_DIR_OPTIONS.includes(sortDir as "asc" | "desc") ? sortDir : DEFAULT_SORT_DIR;
+  // Backend očekává ride_to_center / public_transport_to_center pro speciální řazení (coalesce s projektem)
+  const backendSortBy =
+    validSortBy === "ride_to_center_min"
+      ? "ride_to_center"
+      : validSortBy === "public_transport_to_center_min"
+        ? "public_transport_to_center"
+        : validSortBy;
 
   useEffect(() => {
     setLoading(true);
@@ -606,7 +626,7 @@ export default function Home() {
       filters,
       supportedFilterKeys,
       { limit: safeLimit, offset },
-      { sort_by: validSortBy, sort_dir: validSortDir }
+      { sort_by: backendSortBy, sort_dir: validSortDir }
     );
     // Pokud máme v URL polygon, pošleme jeho obdélníkový obal na backend
     // jako min/max latitude/longitude, aby se filtr aplikoval globálně před paginačním limitem.
@@ -635,7 +655,7 @@ export default function Home() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, validSortBy, validSortDir, supportedFilterKeys, polygon]);
+  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon]);
 
   const openDrawer = useCallback(() => {
     setCurrentFilters({ ...filters });
@@ -647,6 +667,7 @@ export default function Home() {
   const onReset = useCallback(() => setCurrentFilters({}), []);
 
   const onResetAll = useCallback(() => {
+    skipSyncSortPaginationRef.current = true;
     setFilters({});
     setCurrentFilters({});
     syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
@@ -660,6 +681,7 @@ export default function Home() {
 
   const applyFilters = useCallback(
     (next: CurrentFilters) => {
+      skipSyncSortPaginationRef.current = true;
       setFilters(next);
       setOffset(0);
       syncToUrl(next, limit, 0, sortBy, sortDir, polygon);
@@ -669,6 +691,7 @@ export default function Home() {
 
   const setPage = useCallback(
     (newOffset: number) => {
+      skipSyncSortPaginationRef.current = true;
       setOffset(newOffset);
       syncToUrl(filters, limit, newOffset, sortBy, sortDir, polygon);
     },
@@ -683,7 +706,7 @@ export default function Home() {
         currentFilters,
         supportedFilterKeys,
         { limit: safeLimit, offset: 0 },
-        { sort_by: validSortBy, sort_dir: validSortDir }
+        { sort_by: backendSortBy, sort_dir: validSortDir }
       );
       // eslint-disable-next-line no-console
       console.log("GET /units fetch URL:", `${API_BASE}/units?${qs}`);
@@ -692,7 +715,7 @@ export default function Home() {
     currentFilters,
     supportedFilterKeys,
     safeLimit,
-    validSortBy,
+    backendSortBy,
     validSortDir,
     applyFilters,
     closeDrawer,
@@ -703,6 +726,7 @@ export default function Home() {
       const newLimit = opts.limit ?? limit;
       const newSortBy = opts.sortBy ?? sortBy;
       const newSortDir = opts.sortDir ?? sortDir;
+      skipSyncSortPaginationRef.current = true;
       if (opts.limit !== undefined) setLimit(newLimit);
       if (opts.sortBy !== undefined) setSortBy(newSortBy);
       if (opts.sortDir !== undefined) setSortDir(newSortDir);
@@ -713,7 +737,7 @@ export default function Home() {
   );
 
   const handleSortHeaderClick = useCallback(
-    (columnKey: string, accessor: string, dataType: string) => {
+    (columnKey: string, accessor: string, _dataType: string) => {
       const backendField = BACKEND_SORT_FIELDS.find(
         (f) => accessor === f || accessor.endsWith(`.${f}`)
       );
@@ -722,8 +746,13 @@ export default function Home() {
         // a tím pádem nikdy neřadíme jen aktuální stránku.
         return;
       }
-      if (backendField !== sortBy) {
-        setLimitAndSort({ sortBy: backendField, sortDir: "asc" });
+      // Do stavu a URL ukládáme klíč z SORT_BY_OPTIONS (např. public_transport_to_center_min),
+      // aby validSortBy nepadl na DEFAULT_SORT_BY a backend dostal správné mapování (backendSortBy).
+      const sortByForState = SORT_BY_OPTIONS.includes(columnKey as (typeof SORT_BY_OPTIONS)[number])
+        ? columnKey
+        : backendField;
+      if (sortByForState !== sortBy) {
+        setLimitAndSort({ sortBy: sortByForState, sortDir: "asc" });
       } else {
         setLimitAndSort({ sortDir: sortDir === "asc" ? "desc" : "asc" });
       }
@@ -839,7 +868,7 @@ export default function Home() {
   );
 
   const handleRowClick = useCallback(
-    (e: React.MouseEvent<HTMLTableRowElement>, u: Unit) => {
+    (e: React.MouseEvent<Element>, u: Unit) => {
       // Do not navigate while a cell is in edit mode
       if (editingCell) return;
 
@@ -852,7 +881,8 @@ export default function Home() {
         if (interactive) return;
       }
 
-      if (e.defaultPrevented || e.shiftKey || e.altKey || e.button !== 0) return;
+      // Pouze levé (0) a střední (1) tlačítko – pravé a ostatní ignorujeme
+      if (e.defaultPrevented || e.shiftKey || e.altKey || (e.button !== 0 && e.button !== 1)) return;
 
       const externalId = getExternalIdForRow(u);
       if (!externalId) {
@@ -997,7 +1027,7 @@ export default function Home() {
                     filters,
                     supportedFilterKeys,
                     { limit: safeLimit, offset },
-                    { sort_by: validSortBy, sort_dir: validSortDir }
+                    { sort_by: backendSortBy, sort_dir: validSortDir }
                   );
                   const data: UnitsListResponse = await fetch(
                     `${API_BASE}/units?${qs}`
@@ -1234,7 +1264,8 @@ export default function Home() {
                           (f) => accessor === f || accessor.endsWith(`.${f}`)
                         );
                         const isBackendSortable = !!backendField;
-                        const isActive = isBackendSortable && backendField === sortBy;
+                        // Aktivní řazení: sortBy je buď key sloupce (např. public_transport_to_center_min) nebo backendField
+                        const isActive = isBackendSortable && (sortBy === key || sortBy === backendField);
                         const isStickyFirst = columnIndex === 0;
                         const canSort = isBackendSortable;
                         return (
