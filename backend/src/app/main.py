@@ -1791,6 +1791,10 @@ def _project_agg_subquery():
         case((func.lower(Unit.availability_status) == "reserved", 1), else_=0)
     ).label("units_reserved")
     units_priced = func.sum(case((Unit.price_czk.isnot(None), 1), else_=0)).label("units_priced")
+    units_total = func.count(Unit.id).label("units_total")
+    availability_ratio_expr = (
+        func.sum(case((Unit.available.is_(True), 1), else_=0)) / func.nullif(func.count(Unit.id), 0)
+    ).label("availability_ratio")
     median_pm2 = func.percentile_cont(0.5).within_group(Unit.price_per_m2_czk.asc()).label(
         "median_price_per_m2_czk"
     )
@@ -1804,8 +1808,9 @@ def _project_agg_subquery():
     return (
         select(
             Unit.project_id,
-            func.count(Unit.id).label("units_total"),
+            units_total,
             units_available,
+            availability_ratio_expr,
             units_reserved,
             units_priced,
             func.min(Unit.price_czk).label("min_price_czk"),
@@ -2012,16 +2017,36 @@ def _projects_base_select(agg_subq):
     )
 
 
+# Sloupce, které jsou jen v agregátu (ne na Project) – řadíme podle agg_subq.c[...]
+_AGG_ONLY_SORT_KEYS = frozenset({
+    "min_parking_indoor_price_czk",
+    "max_parking_indoor_price_czk",
+    "min_parking_outdoor_price_czk",
+    "max_parking_outdoor_price_czk",
+    "project_first_seen",
+    "project_last_seen",
+    "max_days_on_market",
+})
+
+
 def _projects_order_clause(agg_subq, sort_by: str, sort_dir: str):
     """Order by expression for sort_by (catalog or computed key)."""
     allowed = get_projects_sort_keys()
     if sort_by not in allowed:
         return None
     dir_asc = sort_dir.strip().lower() != "desc"
-    # Speciální case: řazení podle odkazu na projekt – používáme sample URL z agregátu.
+    # Speciální case: řazení podle sloupců z agregátu (jiný název než v subdotazu).
     if sort_by == "project_url":
         col = agg_subq.c.unit_url_sample
-    elif sort_by in COMPUTED_COLUMN_KEYS:
+    elif sort_by == "availability_ratio":
+        col = agg_subq.c.availability_ratio
+    elif sort_by == "available_units":
+        col = agg_subq.c.units_available
+    elif sort_by == "total_units":
+        col = agg_subq.c.units_total
+    elif sort_by == "name" or sort_by == "project":
+        col = Project.name
+    elif sort_by in _AGG_ONLY_SORT_KEYS or sort_by in COMPUTED_COLUMN_KEYS:
         col = agg_subq.c[sort_by]
     else:
         attr = PROJECT_CATALOG_TO_ATTR.get(sort_by)

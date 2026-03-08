@@ -198,5 +198,5 @@ def get_projects_columns_with_computed() -> list[dict]:
 def get_allowed_sort_keys() -> set[str]:
     """Keys that are valid for sort_by (catalog + computed)."""
     catalog_keys = {c["key"] for c in get_project_columns()}
-    # Přidáme project_url, i když je odvozený z jednotek / overrides.
-    return catalog_keys | set(COMPUTED_COLUMN_KEYS) | {"project_url"}
+    # project_url odvozený z jednotek; name = accessor sloupce „Projekt“, řazení stejné jako project
+    return catalog_keys | set(COMPUTED_COLUMN_KEYS) | {"project_url", "name"}
