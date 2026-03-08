@@ -56,23 +56,35 @@ type UnitColumn = {
   display_format?: string;
 };
 
-/** Pole zobrazená v boxu „Data o projektu“ (vždy z projektu). */
+/** Pole zobrazená v boxu „Data o projektu“. První skupina je na úrovni jednotky (UNITS), zbytek z projektu/agregátů. */
 const PROJECT_OVERVIEW_FIELDS: Array<{ key: string; label: string; accessor: string; data_type: string }> = [
-  { key: "project.heating", label: "Topení", accessor: "project.heating", data_type: "text" },
-  { key: "project.air_conditioning", label: "Klimatizace", accessor: "project.air_conditioning", data_type: "bool" },
-  { key: "project.cooling_ceilings", label: "Chlazení stropem", accessor: "project.cooling_ceilings", data_type: "bool" },
-  { key: "project.exterior_blinds", label: "Žaluzie", accessor: "project.exterior_blinds", data_type: "text" },
-  { key: "project.smart_home", label: "Smart home", accessor: "project.smart_home", data_type: "bool" },
+  // Z tabulky UNITS (jednotka) – topení, klimatizace atd. jsou u jednotky
+  { key: "heating", label: "Topení", accessor: "heating", data_type: "text" },
+  { key: "air_conditioning", label: "Klimatizace", accessor: "air_conditioning", data_type: "boolean" },
+  { key: "cooling_ceilings", label: "Chlazení stropem", accessor: "cooling_ceilings", data_type: "boolean" },
+  { key: "exterior_blinds", label: "Žaluzie", accessor: "exterior_blinds", data_type: "text" },
+  { key: "smart_home", label: "Smart home", accessor: "smart_home", data_type: "boolean" },
+  // Z projektu (nebo unit.data po doplnění agregátů na backendu)
   { key: "project.ride_to_center_min", label: "Autem do centra", accessor: "project.ride_to_center_min", data_type: "number" },
   { key: "project.public_transport_to_center_min", label: "MHD do centra", accessor: "project.public_transport_to_center_min", data_type: "number" },
-  { key: "project.total_units", label: "Počet jednotek", accessor: "project.total_units", data_type: "number" },
-  { key: "project.available_units", label: "Dostupných jednotek", accessor: "project.available_units", data_type: "number" },
-  { key: "project.availability_ratio", label: "Podíl dostupných", accessor: "project.availability_ratio", data_type: "number" },
-  { key: "project.project_first_seen", label: "First seen", accessor: "project.project_first_seen", data_type: "date" },
-  { key: "project.max_days_on_market", label: "Dní na trhu", accessor: "project.max_days_on_market", data_type: "number" },
+  { key: "total_units", label: "Počet jednotek", accessor: "total_units", data_type: "number" },
+  { key: "available_units", label: "Dostupných jednotek", accessor: "available_units", data_type: "number" },
+  { key: "availability_ratio", label: "Podíl dostupných", accessor: "availability_ratio", data_type: "number" },
+  { key: "project_first_seen", label: "First seen", accessor: "project_first_seen", data_type: "date" },
+  { key: "max_days_on_market", label: "Dní na trhu", accessor: "max_days_on_market", data_type: "number" },
 ];
 
 const UnitDetailMap = dynamic(() => import("./UnitDetailMap"), { ssr: false });
+
+/** Možnosti stavu jednotky (stejné jako ve filtrech). */
+const AVAILABILITY_STATUS_OPTIONS = [
+  { value: "available", label: "Dostupná" },
+  { value: "reserved", label: "Rezervovaná" },
+  { value: "sold", label: "Prodaná" },
+  { value: "unseen", label: "Neviditelná" },
+] as const;
+
+const ORIENTATION_LETTERS = ["N", "E", "S", "W"] as const;
 
 type FetchState<T> = {
   data: T | null;
@@ -686,7 +698,14 @@ export default function UnitDetailPage() {
               Data o jednotce
             </h2>
             <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {unitColumns.map((col) => {
+              {unitColumns
+                .filter(
+                  (col) =>
+                    !["heating", "air_conditioning", "cooling_ceilings", "exterior_blinds", "smart_home"].includes(
+                      col.key
+                    )
+                )
+                .map((col) => {
                 const overrideField = col.key === "unit_url" ? "url" : col.key;
                 const editableCol = editableColumns.find(
                   (ec) => ec.key === col.key || ec.overrideField === overrideField
@@ -716,6 +735,68 @@ export default function UnitDetailPage() {
                           />
                           <span className="text-sm text-slate-900">{parseBool(draftVal) ? "Ano" : "Ne"}</span>
                         </label>
+                      ) : editableCol.key === "availability_status" ? (
+                        <select
+                          className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                          value={(draftVal as string | undefined) ?? ""}
+                          onChange={(e) => handleChangeDraft(editableCol.overrideField, e.target.value)}
+                        >
+                          <option value="">—</option>
+                          {AVAILABILITY_STATUS_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
+                      ) : editableCol.key === "floor" ? (
+                        <input
+                          type="number"
+                          step={1}
+                          min={0}
+                          className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                          value={draftVal !== undefined && draftVal !== null && draftVal !== "" ? String(Math.floor(Number(draftVal))) : ""}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (v === "") {
+                              handleChangeDraft(editableCol.overrideField, "");
+                              return;
+                            }
+                            const n = parseInt(v, 10);
+                            if (!Number.isNaN(n) && n >= 0) handleChangeDraft(editableCol.overrideField, n);
+                          }}
+                        />
+                      ) : editableCol.key === "orientation" ? (
+                        <div className="mt-0.5 flex flex-wrap gap-3">
+                          {ORIENTATION_LETTERS.map((letter) => {
+                            const currentStr = (draftVal as string | undefined) ?? (raw as string) ?? "";
+                            const selected = currentStr
+                              .split(/[,;\s]+/)
+                              .map((s) => s.trim().toUpperCase())
+                              .filter(Boolean);
+                            const checked = selected.includes(letter);
+                            return (
+                              <label key={letter} className="flex cursor-pointer items-center gap-1.5 text-sm text-slate-900">
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4 rounded border-slate-300"
+                                  checked={checked}
+                                  onChange={() => {
+                                    const nextRaw = checked
+                                      ? selected.filter((x) => x !== letter)
+                                      : [...selected.filter((x) => ORIENTATION_LETTERS.includes(x as "N" | "E" | "S" | "W")), letter];
+                                    const next = [...new Set(nextRaw)].sort(
+                                      (a, b) =>
+                                        ORIENTATION_LETTERS.indexOf(a as "N" | "E" | "S" | "W") -
+                                        ORIENTATION_LETTERS.indexOf(b as "N" | "E" | "S" | "W")
+                                    );
+                                    handleChangeDraft(editableCol.overrideField, next.join(","));
+                                  }}
+                                />
+                                {letter}
+                              </label>
+                            );
+                          })}
+                        </div>
                       ) : editableCol.data_type === "number" ? (
                         <input
                           type="number"

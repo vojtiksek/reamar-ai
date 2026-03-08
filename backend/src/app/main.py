@@ -214,7 +214,9 @@ def _get_project_or_404(db: Session, project_id: int) -> Project:
 
 
 def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
-    """Load overrides for unit and return UnitResponse with overrides applied."""
+    """Load overrides for unit and return UnitResponse with overrides applied.
+    Injects project aggregates (total_units, available_units, etc.) into data when available.
+    """
     override_rows = (
         db.execute(
             select(UnitOverride).where(
@@ -225,7 +227,40 @@ def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
         .scalars().all()
     )
     override_map = build_override_map(override_rows)
-    return UnitResponse.model_validate(unit_to_response_dict(unit, override_map))
+    d = unit_to_response_dict(unit, override_map)
+    # Doplnit projektové agregáty do data (stejně jako v list_units), aby v detailu jednotky
+    # byly vidět total_units, available_units, project_first_seen, max_days_on_market atd.
+    from .models import ProjectAggregates  # local import to avoid circular
+
+    agg_row = (
+        db.execute(
+            select(ProjectAggregates).where(ProjectAggregates.project_id == unit.project_id)
+        )
+        .scalars()
+        .first()
+    )
+    if agg_row is not None:
+        data = dict(d.get("data") or {})
+
+        def _dec_agg(val: Any) -> Any:
+            if val is None:
+                return None
+            if hasattr(val, "__float__"):
+                try:
+                    return float(val)
+                except (TypeError, ValueError):
+                    return val
+            return val
+
+        data["total_units"] = agg_row.total_units
+        data["available_units"] = agg_row.available_units
+        data["availability_ratio"] = _dec_agg(agg_row.availability_ratio)
+        data["project_first_seen"] = agg_row.project_first_seen
+        data["project_last_seen"] = agg_row.project_last_seen
+        data["max_days_on_market"] = agg_row.max_days_on_market
+        d["data"] = data
+
+    return UnitResponse.model_validate(d)
 
 
 @app.get("/health")
