@@ -283,6 +283,19 @@ export default function UnitDetailPage() {
     return cols;
   }, [columnsState.data, debugMode]);
 
+  const allColumns = columnsState.data ?? [];
+  const { projectColumns, unitColumns } = useMemo(() => {
+    const list = allColumns;
+    const project = list.filter(
+      (c) =>
+        c.entity === "project" ||
+        (c.key && c.key.startsWith("project.")) ||
+        (c.accessor && String(c.accessor).startsWith("project."))
+    );
+    const unit = list.filter((c) => !project.includes(c));
+    return { projectColumns: project, unitColumns: unit };
+  }, [allColumns]);
+
   const handleStartEdit = () => {
     if (!unit) return;
     const nextDraft: Record<string, unknown> = {};
@@ -418,7 +431,6 @@ export default function UnitDetailPage() {
     }))
     .reverse();
 
-  const allColumns = columnsState.data ?? [];
   const hasGps =
     (unit.project as { gps_latitude?: number | null; gps_longitude?: number | null })?.gps_latitude != null &&
     (unit.project as { gps_latitude?: number | null; gps_longitude?: number | null })?.gps_longitude != null;
@@ -476,54 +488,82 @@ export default function UnitDetailPage() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 p-4">
-        {/* Hlavní přehled */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Přehled
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Projekt</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {unit.project?.name ?? "—"}
-                {unit.project_id ? (
-                  <Link
-                    href={`/projects/${unit.project_id}`}
-                    className="ml-2 text-sm text-slate-600 underline hover:text-slate-900"
-                  >
-                    Upravit projekt
-                  </Link>
-                ) : null}
-              </p>
+        {/* Řádek: Přehled + Mapa vedle sebe */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Přehled
+            </h2>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium text-slate-500">Projekt</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {unit.project?.name ?? "—"}
+                  {unit.project_id ? (
+                    <Link
+                      href={`/projects/${unit.project_id}`}
+                      className="ml-2 text-sm text-slate-600 underline hover:text-slate-900"
+                    >
+                      Upravit projekt
+                    </Link>
+                  ) : null}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Developer</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(unit as { developer?: string | null }).developer ??
+                    (unit.project as { developer?: string | null })?.developer ??
+                    "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Dispozice</p>
+                <p className="mt-0.5 font-medium text-slate-900">{formatLayout(unit.layout)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Podlahová plocha</p>
+                <p className="mt-0.5 font-medium text-slate-900">{formatAreaM2(unit.floor_area_m2)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Venek</p>
+                <p className="mt-0.5 font-medium text-slate-900">{formatAreaM2(unit.exterior_area_m2)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Cena</p>
+                <p className="mt-0.5 font-medium text-slate-900">{formatCurrencyCzk(unit.price_czk)}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Cena za m²</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(unit.price_per_m2_czk)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Dostupnost</p>
+                <p
+                  className={`mt-0.5 font-medium ${unit.available ? "text-green-600" : "text-red-600"}`}
+                >
+                  {unit.available ? "ANO" : "NE"}
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Dispozice</p>
-              <p className="mt-0.5 font-medium text-slate-900">{formatLayout(unit.layout)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Podlahová plocha</p>
-              <p className="mt-0.5 font-medium text-slate-900">{formatAreaM2(unit.floor_area_m2)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Cena</p>
-              <p className="mt-0.5 font-medium text-slate-900">{formatCurrencyCzk(unit.price_czk)}</p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Cena za m²</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {formatCurrencyCzk(unit.price_per_m2_czk)}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Dostupnost</p>
-              <p
-                className={`mt-0.5 font-medium ${unit.available ? "text-green-600" : "text-red-600"}`}
-              >
-                {unit.available ? "ANO" : "NE"}
-              </p>
-            </div>
-          </div>
-        </section>
+          </section>
+
+          {/* Mapa na stejném řádku jako přehled */}
+          {hasGps && gpsLat != null && gpsLng != null && (
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Poloha
+              </h2>
+              <UnitDetailMap
+                lat={gpsLat}
+                lng={gpsLng}
+                label={[unit.project?.name, unit.unit_name ?? unit.external_id].filter(Boolean).join(" – ")}
+              />
+            </section>
+          )}
+        </div>
 
         {/* Odkazy na nabídku a web projektu */}
         {(() => {
@@ -577,14 +617,51 @@ export default function UnitDetailPage() {
           );
         })()}
 
-        {/* Všechna data jednotky */}
-        {allColumns.length > 0 && (
+        {/* Data o projektu */}
+        {projectColumns.length > 0 && (
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Všechna data jednotky
+              Data o projektu
             </h2>
             <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {allColumns.map((col) => {
+              {projectColumns.map((col) => {
+                const raw = getUnitDisplayValue(unit, col);
+                if (raw === undefined && col.key !== "project_url") return null;
+                const formatted = formatDisplayValue(raw, col);
+                const isLink =
+                  (col.key === "project_url") &&
+                  typeof raw === "string" &&
+                  /^https?:\/\//i.test(raw);
+                return (
+                  <div key={col.key} className="min-w-0">
+                    <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
+                    {isLink ? (
+                      <a
+                        href={raw}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
+                      >
+                        {formatted}
+                      </a>
+                    ) : (
+                      <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* Data o jednotce */}
+        {unitColumns.length > 0 && (
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Data o jednotce
+            </h2>
+            <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {unitColumns.map((col) => {
                 const raw = getUnitDisplayValue(unit, col);
                 if (raw === undefined && col.key !== "project_url") return null;
                 const formatted = formatDisplayValue(raw, col);
@@ -611,20 +688,6 @@ export default function UnitDetailPage() {
                 );
               })}
             </div>
-          </section>
-        )}
-
-        {/* Mapa */}
-        {hasGps && gpsLat != null && gpsLng != null && (
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Poloha
-            </h2>
-            <UnitDetailMap
-              lat={gpsLat}
-              lng={gpsLng}
-              label={[unit.project?.name, unit.unit_name ?? unit.external_id].filter(Boolean).join(" – ")}
-            />
           </section>
         )}
 
