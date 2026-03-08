@@ -95,6 +95,9 @@ def _load_web_columns() -> list[dict]:
 def _key_and_accessor(column: str, entity: str) -> tuple[str, str]:
     """Return (key, accessor) for stable id and frontend path. Prefer DB column name."""
     catalog_key = column
+    # U projektů: jedna hodnota „ride_to_center“ / „public_transport_to_center“ (ne min/max)
+    if entity == "project" and catalog_key in ("ride_to_center", "public_transport_to_center"):
+        return (f"project.{catalog_key}", f"project.{catalog_key}")
     if catalog_key in CATALOG_TO_DB:
         entity_type, db_attr = CATALOG_TO_DB[catalog_key]
         if entity_type == "Unit":
@@ -122,12 +125,8 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "region_iga",
     "gps_latitude",
     "gps_longitude",
-    "ride_to_center_min",
-    "public_transport_to_center_min",
-    "avg_ride_to_center_min",
-    "avg_public_transport_to_center_min",
-    "min_ride_to_center_min",
-    "min_public_transport_to_center_min",
+    "ride_to_center",
+    "public_transport_to_center",
     "permit_regular",
     "renovation",
     "overall_quality",

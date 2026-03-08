@@ -1468,6 +1468,7 @@ ALLOWED_PROJECT_OVERVIEW_SORT_BY = frozenset({
     "max_payment_construction",
     "min_payment_occupancy",
     "max_payment_occupancy",
+    "project_url",
 })
 ALLOWED_PROJECT_OVERVIEW_SORT_DIR = ("asc", "desc")
 
@@ -1592,6 +1593,11 @@ def get_projects_overview(
             func.min(unit_subq.c.price_czk).label("min_price_czk"),
             func.max(unit_subq.c.price_czk).label("max_price_czk"),
             func.avg(unit_subq.c.floor_area_m2).label("avg_floor_area_m2"),
+            # Autem / MHD do centra (z jednotek)
+            func.min(unit_subq.c.ride_to_center_min).label("min_ride_to_center_min"),
+            func.avg(unit_subq.c.ride_to_center_min).label("avg_ride_to_center_min"),
+            func.min(unit_subq.c.public_transport_to_center_min).label("min_public_transport_to_center_min"),
+            func.avg(unit_subq.c.public_transport_to_center_min).label("avg_public_transport_to_center_min"),
             # Parking price aggregates
             func.min(unit_subq.c.parking_indoor_price_czk).label("min_parking_indoor_price_czk"),
             func.max(unit_subq.c.parking_indoor_price_czk).label("max_parking_indoor_price_czk"),
@@ -1752,6 +1758,13 @@ def get_projects_overview(
         item["payment_occupancy"] = _first_non_none(
             _financing_or_none(min_pay_occupancy), _financing_or_none(max_pay_occupancy)
         )
+        # Jedna hodnota „Autem do centra“ / „MHD do centra“ (klíč ride_to_center / public_transport_to_center)
+        if item.get("ride_to_center_min") is None and r.get("avg_ride_to_center_min") is not None:
+            item["ride_to_center_min"] = _dec(r["avg_ride_to_center_min"])
+        if item.get("public_transport_to_center_min") is None and r.get("avg_public_transport_to_center_min") is not None:
+            item["public_transport_to_center_min"] = _dec(r["avg_public_transport_to_center_min"])
+        item["ride_to_center"] = item.get("ride_to_center_min")
+        item["public_transport_to_center"] = item.get("public_transport_to_center_min")
         apply_project_overrides_to_item(
             project_id=item["id"],
             item=item,
@@ -1844,6 +1857,8 @@ def _project_agg_subquery():
 def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     """Build one project item dict: id, catalog keys (from Project), computed keys."""
     out: dict[str, Any] = {"id": project.id}
+    # Sloupec „Projekt“ má v get_columns accessor „name“ (z CATALOG_TO_DB), takže musíme vracet i name
+    out["name"] = getattr(project, "name", None)
     catalog_cols = get_project_columns()
     for col in catalog_cols:
         key = col["key"]
@@ -1912,6 +1927,27 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
             out[k] = v.isoformat()
         else:
             out[k] = v
+
+    # Jedna hodnota „Autem do centra“ / „MHD do centra“: klíč ride_to_center / public_transport_to_center.
+    # Projekt je často nemá; doplníme z agregátu jednotek (průměr).
+    if out.get("ride_to_center_min") is None and agg.get("avg_ride_to_center_min") is not None:
+        v = agg["avg_ride_to_center_min"]
+        out["ride_to_center_min"] = float(v) if isinstance(v, Decimal) else v
+    if out.get("public_transport_to_center_min") is None and agg.get("avg_public_transport_to_center_min") is not None:
+        v = agg["avg_public_transport_to_center_min"]
+        out["public_transport_to_center_min"] = float(v) if isinstance(v, Decimal) else v
+    out["ride_to_center"] = out.get("ride_to_center_min")
+    out["public_transport_to_center"] = out.get("public_transport_to_center_min")
+
+    # Časové údaje z agregátu (field_catalog: project_first_seen, project_last_seen, max_days_on_market)
+    out["project_first_seen"] = agg.get("project_first_seen")
+    if out["project_first_seen"] is not None and hasattr(out["project_first_seen"], "isoformat"):
+        out["project_first_seen"] = out["project_first_seen"].isoformat()
+    out["project_last_seen"] = agg.get("project_last_seen")
+    if out["project_last_seen"] is not None and hasattr(out["project_last_seen"], "isoformat"):
+        out["project_last_seen"] = out["project_last_seen"].isoformat()
+    v_days = agg.get("max_days_on_market")
+    out["max_days_on_market"] = int(v_days) if v_days is not None else None
 
     # Derived single-value financing fields (per project). 0 = nevyplněno, vracíme None.
     def _first_non_none(a, b):
