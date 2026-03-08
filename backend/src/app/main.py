@@ -712,6 +712,7 @@ def _build_units_query(
     air_conditioning: bool | None = None,
     cooling_ceilings: bool | None = None,
     smart_home: bool | None = None,
+    exterior_blinds: bool | None = None,
     min_floor_area: float | None = None,
     max_floor_area: float | None = None,
     min_total_area: float | None = None,
@@ -746,6 +747,16 @@ def _build_units_query(
     max_latitude: float | None = None,
     min_longitude: float | None = None,
     max_longitude: float | None = None,
+    min_ride_to_center_min: float | None = None,
+    max_ride_to_center_min: float | None = None,
+    min_public_transport_to_center_min: float | None = None,
+    max_public_transport_to_center_min: float | None = None,
+    min_payment_contract: float | None = None,
+    max_payment_contract: float | None = None,
+    min_payment_construction: float | None = None,
+    max_payment_construction: float | None = None,
+    min_payment_occupancy: float | None = None,
+    max_payment_occupancy: float | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None.
     Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
@@ -795,6 +806,8 @@ def _build_units_query(
         base = base.where(Unit.cooling_ceilings.is_(cooling_ceilings))
     if smart_home is not None:
         base = base.where(Unit.smart_home.is_(smart_home))
+    if exterior_blinds is not None:
+        base = base.where(Unit.exterior_blinds.is_(exterior_blinds))
     if min_floor_area is not None:
         base = base.where(Unit.floor_area_m2 >= min_floor_area)
     if max_floor_area is not None:
@@ -881,6 +894,39 @@ def _build_units_query(
         base = base.where(Unit.gps_longitude >= min_longitude)
     if max_longitude is not None:
         base = base.where(Unit.gps_longitude <= max_longitude)
+    if min_ride_to_center_min is not None:
+        base = base.where(Unit.ride_to_center_min >= min_ride_to_center_min)
+    if max_ride_to_center_min is not None:
+        base = base.where(Unit.ride_to_center_min <= max_ride_to_center_min)
+    if min_public_transport_to_center_min is not None:
+        base = base.where(Unit.public_transport_to_center_min >= min_public_transport_to_center_min)
+    if max_public_transport_to_center_min is not None:
+        base = base.where(Unit.public_transport_to_center_min <= max_public_transport_to_center_min)
+    # Financování: jednotky bez údaje (NULL) filtrem projdou – „—“ = jako by bylo v rozsahu
+    if min_payment_contract is not None:
+        base = base.where(
+            or_(Unit.payment_contract.is_(None), Unit.payment_contract >= min_payment_contract)
+        )
+    if max_payment_contract is not None:
+        base = base.where(
+            or_(Unit.payment_contract.is_(None), Unit.payment_contract <= max_payment_contract)
+        )
+    if min_payment_construction is not None:
+        base = base.where(
+            or_(Unit.payment_construction.is_(None), Unit.payment_construction >= min_payment_construction)
+        )
+    if max_payment_construction is not None:
+        base = base.where(
+            or_(Unit.payment_construction.is_(None), Unit.payment_construction <= max_payment_construction)
+        )
+    if min_payment_occupancy is not None:
+        base = base.where(
+            or_(Unit.payment_occupancy.is_(None), Unit.payment_occupancy >= min_payment_occupancy)
+        )
+    if max_payment_occupancy is not None:
+        base = base.where(
+            or_(Unit.payment_occupancy.is_(None), Unit.payment_occupancy <= max_payment_occupancy)
+        )
     return base
 
 
@@ -971,6 +1017,7 @@ def list_units(
     air_conditioning: Annotated[bool | None, Query(description="Filter by air_conditioning")] = None,
     cooling_ceilings: Annotated[bool | None, Query(description="Filter by cooling_ceilings")] = None,
     smart_home: Annotated[bool | None, Query(description="Filter by smart_home")] = None,
+    exterior_blinds: Annotated[bool | None, Query(description="Filter by exterior_blinds")] = None,
     min_floor_area: Annotated[float | None, Query(ge=0)] = None,
     max_floor_area: Annotated[float | None, Query(ge=0)] = None,
     min_total_area: Annotated[float | None, Query(ge=0)] = None,
@@ -1007,6 +1054,16 @@ def list_units(
     max_latitude: Annotated[float | None, Query(description="Filter by Unit.gps_latitude <= value")] = None,
     min_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude >= value")] = None,
     max_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude <= value")] = None,
+    min_ride_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by ride_to_center_min >= value (min)")] = None,
+    max_ride_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by ride_to_center_min <= value (min)")] = None,
+    min_public_transport_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by public_transport_to_center_min >= value (min)")] = None,
+    max_public_transport_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by public_transport_to_center_min <= value (min)")] = None,
+    min_payment_contract: Annotated[float | None, Query(ge=0, le=1, description="Filter by payment_contract >= value (0–1)")] = None,
+    max_payment_contract: Annotated[float | None, Query(ge=0, le=1, description="Filter by payment_contract <= value (0–1)")] = None,
+    min_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
+    min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -1045,6 +1102,7 @@ def list_units(
         air_conditioning=air_conditioning,
         cooling_ceilings=cooling_ceilings,
         smart_home=smart_home,
+        exterior_blinds=exterior_blinds,
         min_floor_area=min_floor_area,
         max_floor_area=max_floor_area,
         min_total_area=min_total_area,
@@ -1079,6 +1137,16 @@ def list_units(
         max_latitude=max_latitude,
         min_longitude=min_longitude,
         max_longitude=max_longitude,
+        min_ride_to_center_min=min_ride_to_center_min,
+        max_ride_to_center_min=max_ride_to_center_min,
+        min_public_transport_to_center_min=min_public_transport_to_center_min,
+        max_public_transport_to_center_min=max_public_transport_to_center_min,
+        min_payment_contract=min_payment_contract,
+        max_payment_contract=max_payment_contract,
+        min_payment_construction=min_payment_construction,
+        max_payment_construction=max_payment_construction,
+        min_payment_occupancy=min_payment_occupancy,
+        max_payment_occupancy=max_payment_occupancy,
     )
     base_subq = base.subquery()
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
@@ -1778,6 +1846,8 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     units_reserved = int(agg.get("units_reserved") or 0)
     out["units_total"] = units_total
     out["units_available"] = units_available
+    out["total_units"] = units_total  # frontend/column_catalog expects total_units
+    out["available_units"] = units_available  # frontend/column_catalog expects available_units
     out["units_reserved"] = units_reserved
     out["units_priced"] = int(agg.get("units_priced") or 0)
 
@@ -1851,6 +1921,8 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     out["available_ratio"] = (
         (units_available / units_total) if units_total else 0.0
     )
+    out["availability_ratio"] = out["available_ratio"]  # frontend expects availability_ratio
+    out["project"] = getattr(project, "name", None)  # frontend column "project" (název projektu)
     raw_layouts = agg.get("layouts_present_raw")
     if raw_layouts is not None and isinstance(raw_layouts, (list, tuple)):
         out["layouts_present"] = list(dict.fromkeys(x for x in raw_layouts if x is not None))
@@ -1913,6 +1985,7 @@ def _has_unit_filters(
     air_conditioning,
     cooling_ceilings,
     smart_home,
+    exterior_blinds,
     min_floor_area,
     max_floor_area,
     min_total_area,
@@ -1947,6 +2020,16 @@ def _has_unit_filters(
     max_latitude,
     min_longitude,
     max_longitude,
+    min_ride_to_center_min,
+    max_ride_to_center_min,
+    min_public_transport_to_center_min,
+    max_public_transport_to_center_min,
+    min_payment_contract,
+    max_payment_contract,
+    min_payment_construction,
+    max_payment_construction,
+    min_payment_occupancy,
+    max_payment_occupancy,
 ):
     """True if any unit-level filter is set (so we restrict projects to those that have matching units)."""
     if available is not None:
@@ -1982,6 +2065,8 @@ def _has_unit_filters(
     if cooling_ceilings is not None:
         return True
     if smart_home is not None:
+        return True
+    if exterior_blinds is not None:
         return True
     if min_floor_area is not None or max_floor_area is not None:
         return True
@@ -2026,6 +2111,16 @@ def _has_unit_filters(
     if project and len(project) > 0:
         return True
     if min_latitude is not None or max_latitude is not None or min_longitude is not None or max_longitude is not None:
+        return True
+    if min_ride_to_center_min is not None or max_ride_to_center_min is not None:
+        return True
+    if min_public_transport_to_center_min is not None or max_public_transport_to_center_min is not None:
+        return True
+    if min_payment_contract is not None or max_payment_contract is not None:
+        return True
+    if min_payment_construction is not None or max_payment_construction is not None:
+        return True
+    if min_payment_occupancy is not None or max_payment_occupancy is not None:
         return True
     return False
 
@@ -2100,6 +2195,17 @@ def list_projects(
     developer: Annotated[list[str] | None, Query()] = None,
     building: Annotated[list[str] | None, Query()] = None,
     project: Annotated[list[str] | None, Query(description="Filter by project name (any of)")] = None,
+    exterior_blinds: Annotated[bool | None, Query()] = None,
+    min_ride_to_center_min: Annotated[float | None, Query(ge=0)] = None,
+    max_ride_to_center_min: Annotated[float | None, Query(ge=0)] = None,
+    min_public_transport_to_center_min: Annotated[float | None, Query(ge=0)] = None,
+    max_public_transport_to_center_min: Annotated[float | None, Query(ge=0)] = None,
+    min_payment_contract: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_payment_contract: Annotated[float | None, Query(ge=0, le=1)] = None,
+    min_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
+    min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
 ) -> ProjectsListResponse:
     allowed_sort = get_projects_sort_keys()
     if sort_by not in allowed_sort:
@@ -2139,6 +2245,7 @@ def list_projects(
         min_price_per_m2, max_price_per_m2,
         layout, district, municipality, heating, windows,
         permit_regular, renovation, air_conditioning, cooling_ceilings, smart_home,
+        exterior_blinds,
         min_floor_area, max_floor_area,
         min_total_area, max_total_area,
         min_exterior_area, max_exterior_area,
@@ -2151,6 +2258,11 @@ def list_projects(
         city, cadastral_area_iga, municipal_district_iga, administrative_district_iga, region_iga,
         developer, building, project,
         min_latitude, max_latitude, min_longitude, max_longitude,
+        min_ride_to_center_min, max_ride_to_center_min,
+        min_public_transport_to_center_min, max_public_transport_to_center_min,
+        min_payment_contract, max_payment_contract,
+        min_payment_construction, max_payment_construction,
+        min_payment_occupancy, max_payment_occupancy,
     ):
         units_base = _build_units_query(
             available=available,
@@ -2175,6 +2287,7 @@ def list_projects(
             air_conditioning=air_conditioning,
             cooling_ceilings=cooling_ceilings,
             smart_home=smart_home,
+            exterior_blinds=exterior_blinds,
             min_floor_area=min_floor_area,
             max_floor_area=max_floor_area,
             min_total_area=min_total_area,
@@ -2209,6 +2322,16 @@ def list_projects(
             max_latitude=max_latitude,
             min_longitude=min_longitude,
             max_longitude=max_longitude,
+            min_ride_to_center_min=min_ride_to_center_min,
+            max_ride_to_center_min=max_ride_to_center_min,
+            min_public_transport_to_center_min=min_public_transport_to_center_min,
+            max_public_transport_to_center_min=max_public_transport_to_center_min,
+            min_payment_contract=min_payment_contract,
+            max_payment_contract=max_payment_contract,
+            min_payment_construction=min_payment_construction,
+            max_payment_construction=max_payment_construction,
+            min_payment_occupancy=min_payment_occupancy,
+            max_payment_occupancy=max_payment_occupancy,
         )
         u_sub = units_base.subquery()
         matching_project_ids = select(u_sub.c.project_id).distinct()

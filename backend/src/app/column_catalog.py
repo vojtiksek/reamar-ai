@@ -110,6 +110,7 @@ def _key_and_accessor(column: str, entity: str) -> tuple[str, str]:
 PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "id",
     "name",
+    "project",  # alias for name (název projektu)
     "developer",
     "address",
     "city",
@@ -123,6 +124,10 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "gps_longitude",
     "ride_to_center_min",
     "public_transport_to_center_min",
+    "avg_ride_to_center_min",
+    "avg_public_transport_to_center_min",
+    "min_ride_to_center_min",
+    "min_public_transport_to_center_min",
     "permit_regular",
     "renovation",
     "overall_quality",

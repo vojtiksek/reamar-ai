@@ -37,6 +37,12 @@ function stepFromDecimals(decimals: number | null): string {
   return step < 1 ? String(step) : "1";
 }
 
+/** Filtry financování: v UI zobrazujeme a zadáváme celá procenta (1, 10), v modelu máme 0–1. */
+const PERCENT_RANGE_KEYS = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
+function isPercentRangeKey(key: string): boolean {
+  return PERCENT_RANGE_KEYS.has(key);
+}
+
 export function FiltersDrawer({
   open,
   onClose,
@@ -130,7 +136,13 @@ function FilterField({
   if (spec.type === "range") {
     const minVal = currentFilters[`${spec.key}_min`] as number | undefined;
     const maxVal = currentFilters[`${spec.key}_max`] as number | undefined;
-    const step = stepFromDecimals(spec.decimals);
+    const isPercent = isPercentRangeKey(spec.key);
+    // U financování: v modelu 0–1, v UI zobrazujeme celá procenta (1, 10)
+    const displayMin =
+      minVal != null && isPercent ? minVal * 100 : minVal;
+    const displayMax =
+      maxVal != null && isPercent ? maxVal * 100 : maxVal;
+    const step = isPercent ? "1" : stepFromDecimals(spec.decimals);
     return (
       <div className="space-y-2">
         <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -142,8 +154,14 @@ function FilterField({
           <input
             type="number"
             step={step}
-            value={minVal ?? ""}
-            onChange={(e) => onChange(`${spec.key}_min`, e.target.value === "" ? undefined : Number(e.target.value))}
+            min={isPercent ? 0 : undefined}
+            max={isPercent ? 100 : undefined}
+            value={displayMin ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value === "" ? undefined : Number(e.target.value);
+              const value = raw != null && isPercent ? raw / 100 : raw;
+              onChange(`${spec.key}_min`, value);
+            }}
             placeholder="Min"
             disabled={disabled}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
@@ -151,8 +169,14 @@ function FilterField({
           <input
             type="number"
             step={step}
-            value={maxVal ?? ""}
-            onChange={(e) => onChange(`${spec.key}_max`, e.target.value === "" ? undefined : Number(e.target.value))}
+            min={isPercent ? 0 : undefined}
+            max={isPercent ? 100 : undefined}
+            value={displayMax ?? ""}
+            onChange={(e) => {
+              const raw = e.target.value === "" ? undefined : Number(e.target.value);
+              const value = raw != null && isPercent ? raw / 100 : raw;
+              onChange(`${spec.key}_max`, value);
+            }}
             placeholder="Max"
             disabled={disabled}
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"

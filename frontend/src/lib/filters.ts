@@ -70,6 +70,15 @@ const CATALOG_TO_UNITS_API: Record<
   air_conditioning: { bool: "air_conditioning" },
   cooling_ceilings: { bool: "cooling_ceilings" },
   smart_home: { bool: "smart_home" },
+  exterior_blinds: { bool: "exterior_blinds" },
+  ride_to_center: { min: "min_ride_to_center_min", max: "max_ride_to_center_min" },
+  public_transport_to_center: {
+    min: "min_public_transport_to_center_min",
+    max: "max_public_transport_to_center_min",
+  },
+  payment_contract: { min: "min_payment_contract", max: "max_payment_contract" },
+  payment_construction: { min: "min_payment_construction", max: "max_payment_construction" },
+  payment_occupancy: { min: "min_payment_occupancy", max: "max_payment_occupancy" },
 };
 
 /**
@@ -85,8 +94,17 @@ export function filtersToUnitsParams(
     const api = CATALOG_TO_UNITS_API[key];
     if (!api) continue;
     if (api.min != null) {
-      const vMin = filters[`${key}_min`] as number | undefined;
-      const vMax = filters[`${key}_max`] as number | undefined;
+      let vMin = filters[`${key}_min`] as number | undefined;
+      let vMax = filters[`${key}_max`] as number | undefined;
+      // Backend očekává payment_* jako 0–1 (zlomek); UI může mít 0–100 (procenta)
+      if (
+        (key === "payment_contract" || key === "payment_construction" || key === "payment_occupancy") &&
+        (vMin != null || vMax != null)
+      ) {
+        const scale = (v: number) => (v >= 0 && v <= 100 ? v / 100 : v);
+        if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) vMin = scale(vMin);
+        if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) vMax = scale(vMax);
+      }
       if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) out[api.min] = vMin;
       if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) out[api.max!] = vMax;
     }
@@ -193,6 +211,17 @@ const API_TO_CATALOG: Record<string, { key: string; suffix?: string }> = {
   air_conditioning: { key: "air_conditioning" },
   cooling_ceilings: { key: "cooling_ceilings" },
   smart_home: { key: "smart_home" },
+  exterior_blinds: { key: "exterior_blinds" },
+  min_ride_to_center_min: { key: "ride_to_center", suffix: "min" },
+  max_ride_to_center_min: { key: "ride_to_center", suffix: "max" },
+  min_public_transport_to_center_min: { key: "public_transport_to_center", suffix: "min" },
+  max_public_transport_to_center_min: { key: "public_transport_to_center", suffix: "max" },
+  min_payment_contract: { key: "payment_contract", suffix: "min" },
+  max_payment_contract: { key: "payment_contract", suffix: "max" },
+  min_payment_construction: { key: "payment_construction", suffix: "min" },
+  max_payment_construction: { key: "payment_construction", suffix: "max" },
+  min_payment_occupancy: { key: "payment_occupancy", suffix: "min" },
+  max_payment_occupancy: { key: "payment_occupancy", suffix: "max" },
 };
 
 /** List-type API params (multi-select, repeated in URL) */

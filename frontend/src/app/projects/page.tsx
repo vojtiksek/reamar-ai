@@ -771,6 +771,7 @@ export default function ProjectsPage() {
                     });
                   }
                 }
+                const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
                 for (const base of rangeBases) {
                   const min = filters[`${base}_min`] as number | undefined;
                   const max = filters[`${base}_max`] as number | undefined;
@@ -782,12 +783,15 @@ export default function ProjectsPage() {
                   }
                   const spec = aliasByKey.get(base);
                   const label = spec?.alias || base;
+                  const asPercent = percentRangeBases.has(base);
+                  const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
+                  const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
                   let value = "";
-                  if (min != null && !Number.isNaN(min)) {
-                    value += `od ${min}`;
+                  if (dispMin != null) {
+                    value += `od ${dispMin}`;
                   }
-                  if (max != null && !Number.isNaN(max)) {
-                    value += value ? ` do ${max}` : `do ${max}`;
+                  if (dispMax != null) {
+                    value += value ? ` do ${dispMax}` : `do ${dispMax}`;
                   }
                   badges.push({
                     id: `${base}:${value}`,
