@@ -56,6 +56,22 @@ type UnitColumn = {
   display_format?: string;
 };
 
+/** Pole zobrazená v boxu „Data o projektu“ (vždy z projektu). */
+const PROJECT_OVERVIEW_FIELDS: Array<{ key: string; label: string; accessor: string; data_type: string }> = [
+  { key: "project.heating", label: "Topení", accessor: "project.heating", data_type: "text" },
+  { key: "project.air_conditioning", label: "Klimatizace", accessor: "project.air_conditioning", data_type: "bool" },
+  { key: "project.cooling_ceilings", label: "Chlazení stropem", accessor: "project.cooling_ceilings", data_type: "bool" },
+  { key: "project.exterior_blinds", label: "Žaluzie", accessor: "project.exterior_blinds", data_type: "text" },
+  { key: "project.smart_home", label: "Smart home", accessor: "project.smart_home", data_type: "bool" },
+  { key: "project.ride_to_center_min", label: "Autem do centra", accessor: "project.ride_to_center_min", data_type: "number" },
+  { key: "project.public_transport_to_center_min", label: "MHD do centra", accessor: "project.public_transport_to_center_min", data_type: "number" },
+  { key: "project.total_units", label: "Počet jednotek", accessor: "project.total_units", data_type: "number" },
+  { key: "project.available_units", label: "Dostupných jednotek", accessor: "project.available_units", data_type: "number" },
+  { key: "project.availability_ratio", label: "Podíl dostupných", accessor: "project.availability_ratio", data_type: "number" },
+  { key: "project.project_first_seen", label: "First seen", accessor: "project.project_first_seen", data_type: "date" },
+  { key: "project.max_days_on_market", label: "Dní na trhu", accessor: "project.max_days_on_market", data_type: "number" },
+];
+
 const UnitDetailMap = dynamic(() => import("./UnitDetailMap"), { ssr: false });
 
 type FetchState<T> = {
@@ -263,9 +279,8 @@ export default function UnitDetailPage() {
       .filter((c) => isEditableCatalogColumn({ ...c, key: c.key }, { entity: "unit" }))
       .map((c) => ({
         ...c,
-        // For units view, backend already exposes attr-keyed fields (e.g. price_czk),
-        // which are exactly what UnitOverride expects.
-        overrideField: c.key,
+        // API expects "url", catalog key is "unit_url".
+        overrideField: c.key === "unit_url" ? "url" : c.key,
       }));
 
     if (process.env.NODE_ENV === "development" && debugMode && columnsState.data.length > 0) {
@@ -618,13 +633,24 @@ export default function UnitDetailPage() {
         })()}
 
         {/* Data o projektu */}
-        {projectColumns.length > 0 && (
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-              Data o projektu
-            </h2>
-            <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {projectColumns.map((col) => {
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Data o projektu
+          </h2>
+          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {PROJECT_OVERVIEW_FIELDS.map((col) => {
+              const raw = getUnitDisplayValue(unit, col);
+              const formatted = formatDisplayValue(raw, col);
+              return (
+                <div key={col.key} className="min-w-0">
+                  <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
+                  <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                </div>
+              );
+            })}
+            {projectColumns
+              .filter((col) => !PROJECT_OVERVIEW_FIELDS.some((f) => f.key === col.key || f.accessor === col.accessor))
+              .map((col) => {
                 const raw = getUnitDisplayValue(unit, col);
                 if (raw === undefined && col.key !== "project_url") return null;
                 const formatted = formatDisplayValue(raw, col);
@@ -650,11 +676,10 @@ export default function UnitDetailPage() {
                   </div>
                 );
               })}
-            </div>
-          </section>
-        )}
+          </div>
+        </section>
 
-        {/* Data o jednotce */}
+        {/* Data o jednotce – zobrazení a při „Editovat“ inline úprava editovatelných polí */}
         {unitColumns.length > 0 && (
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -662,19 +687,53 @@ export default function UnitDetailPage() {
             </h2>
             <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {unitColumns.map((col) => {
+                const overrideField = col.key === "unit_url" ? "url" : col.key;
+                const editableCol = editableColumns.find(
+                  (ec) => ec.key === col.key || ec.overrideField === overrideField
+                );
                 const raw = getUnitDisplayValue(unit, col);
-                if (raw === undefined && col.key !== "project_url") return null;
+                if (raw === undefined && col.key !== "project_url" && col.key !== "unit_url") return null;
                 const formatted = formatDisplayValue(raw, col);
                 const isLink =
                   (col.key === "unit_url" || col.key === "project_url") &&
                   typeof raw === "string" &&
                   /^https?:\/\//i.test(raw);
+                const canEdit = editMode && editableCol;
+                const draftVal = editableCol ? draftValues[editableCol.overrideField] : undefined;
+                const displayVal = canEdit && draftVal !== undefined ? draftVal : raw;
+
                 return (
                   <div key={col.key} className="min-w-0">
                     <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
-                    {isLink ? (
+                    {canEdit ? (
+                      editableCol.data_type === "bool" ? (
+                        <label className="mt-0.5 flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-slate-300"
+                            checked={parseBool(draftVal)}
+                            onChange={(e) => handleChangeDraft(editableCol.overrideField, e.target.checked)}
+                          />
+                          <span className="text-sm text-slate-900">{parseBool(draftVal) ? "Ano" : "Ne"}</span>
+                        </label>
+                      ) : editableCol.data_type === "number" ? (
+                        <input
+                          type="number"
+                          className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                          value={draftVal ?? ""}
+                          onChange={(e) => handleChangeDraft(editableCol.overrideField, e.target.value)}
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                          value={(draftVal as string | undefined) ?? ""}
+                          onChange={(e) => handleChangeDraft(editableCol.overrideField, e.target.value)}
+                        />
+                      )
+                    ) : isLink ? (
                       <a
-                        href={raw}
+                        href={raw as string}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
@@ -690,99 +749,6 @@ export default function UnitDetailPage() {
             </div>
           </section>
         )}
-
-        {/* Upravitelné údaje */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Upravitelné údaje
-          </h2>
-          {debugMode && (
-            <div className="mb-3 space-y-1 text-xs text-slate-500">
-              <p>
-                Sloupců: {columnsState.data?.length ?? 0}, upravitelných: {editableColumns.length}
-              </p>
-            </div>
-          )}
-          {columnsState.loading ? (
-            <p className="text-sm text-slate-600">Načítání sloupců…</p>
-          ) : editableColumns.length === 0 ? (
-            <p className="text-sm text-slate-600">Žádná upravitelná pole.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-700">Pole</th>
-                    <th className="px-4 py-2.5 text-left font-semibold text-slate-700">Hodnota</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {editableColumns.map((col) => {
-                    const field = col.overrideField;
-                    if (!(field in unit)) return null;
-                    const currentValue = unit[field];
-                    const draftValue = draftValues[field];
-
-                    return (
-                      <tr key={col.key}>
-                        <td className="px-4 py-2.5 align-top font-medium text-slate-800">
-                          {col.label}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          {!editMode ? (
-                            (() => {
-                              const formatted = formatDisplayValue(currentValue, col);
-                              const linkUrl =
-                                (col.key === "unit_url" || col.key === "project_url") &&
-                                getUnitDisplayValue(unit, col);
-                              if (
-                                typeof linkUrl === "string" &&
-                                /^https?:\/\//i.test(linkUrl)
-                              ) {
-                                return (
-                                  <a
-                                    href={linkUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700"
-                                  >
-                                    {formatted}
-                                  </a>
-                                );
-                              }
-                              return <span className="text-slate-900">{formatted}</span>;
-                            })()
-                          ) : col.data_type === "bool" ? (
-                            <input
-                              type="checkbox"
-                              className="h-4 w-4 rounded border-slate-300"
-                              checked={parseBool(draftValue)}
-                              onChange={(e) => handleChangeDraft(field, e.target.checked)}
-                            />
-                          ) : col.data_type === "number" ? (
-                            <input
-                              type="number"
-                              className="max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
-                              value={draftValue ?? ""}
-                              onChange={(e) => handleChangeDraft(field, e.target.value)}
-                            />
-                          ) : (
-                            <input
-                              type="text"
-                              className="max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
-                              value={(draftValue as string | undefined) ?? ""}
-                              onChange={(e) => handleChangeDraft(field, e.target.value)}
-                            />
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
 
         {/* Historie ceny */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

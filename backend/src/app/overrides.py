@@ -21,19 +21,30 @@ OVERRIDEABLE_FIELDS = frozenset(
         "floor_area_m2",
         "equivalent_area_m2",
         "exterior_area_m2",
+        "layout",
+        "balcony_area_m2",
+        "terrace_area_m2",
+        "garden_area_m2",
+        "floor",
+        "orientation",
+        "renovation",
+        "url",
     }
 )
 
-_INT_FIELDS = frozenset({"price_czk", "price_per_m2_czk"})
-_BOOL_FIELDS = frozenset({"available"})
+_INT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "floor"})
+_BOOL_FIELDS = frozenset({"available", "renovation"})
 _DECIMAL_FIELDS = frozenset(
     {
         "floor_area_m2",
         "equivalent_area_m2",
         "exterior_area_m2",
+        "balcony_area_m2",
+        "terrace_area_m2",
+        "garden_area_m2",
     }
 )
-_STR_FIELDS = frozenset({"availability_status"})
+_STR_FIELDS = frozenset({"availability_status", "layout", "orientation", "url"})
 
 # Project-level overrideable fields (catalog column keys) derived from field_catalog.csv
 PROJECT_OVERRIDEABLE_FIELDS = frozenset(get_project_overrideable_fields())
@@ -273,8 +284,8 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "external_id": base.external_id,
         "project_id": base.project_id,
         "unit_name": base.unit_name,
-        "layout": base.layout,
-        "floor": base.floor,
+        "layout": _get("layout", base.layout),
+        "floor": _get("floor", base.floor),
         "availability_status": _get("availability_status", base.availability_status),
         "available": _get("available", base.available),
         "price_czk": _get("price_czk", base.price_czk),
@@ -282,15 +293,17 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "floor_area_m2": _dec(_get("floor_area_m2", base.floor_area_m2)),
         "equivalent_area_m2": _dec(_get("equivalent_area_m2", base.equivalent_area_m2)),
         "exterior_area_m2": _dec(_get("exterior_area_m2", base.exterior_area_m2)),
-        "balcony_area_m2": _dec(base.balcony_area_m2),
-        "terrace_area_m2": _dec(base.terrace_area_m2),
-        "garden_area_m2": _dec(base.garden_area_m2),
+        "balcony_area_m2": _dec(_get("balcony_area_m2", base.balcony_area_m2)),
+        "terrace_area_m2": _dec(_get("terrace_area_m2", base.terrace_area_m2)),
+        "garden_area_m2": _dec(_get("garden_area_m2", base.garden_area_m2)),
         "municipality": base.municipality,
         "city": base.city,
         "postal_code": base.postal_code,
         "ride_to_center_min": _dec(base.ride_to_center_min) or _ride,
         "public_transport_to_center_min": _dec(base.public_transport_to_center_min) or _mhd,
-        "url": base.url,
+        "orientation": _get("orientation", base.orientation),
+        "renovation": _get("renovation", base.renovation),
+        "url": _get("url", base.url),
         "project": project_info,
         "data": data,
     }

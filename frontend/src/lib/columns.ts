@@ -17,6 +17,15 @@ const UNIT_OVERRIDEABLE_FIELDS = new Set<string>([
   "floor_area_m2",
   "equivalent_area_m2",
   "exterior_area_m2",
+  "layout",
+  "balcony_area_m2",
+  "terrace_area_m2",
+  "garden_area_m2",
+  "floor",
+  "orientation",
+  "renovation",
+  "url",
+  "unit_url", // catalog key; API override field is "url"
 ]);
 
 function normalizeEditableFlag(raw: GenericColumn["editable"]): boolean {
