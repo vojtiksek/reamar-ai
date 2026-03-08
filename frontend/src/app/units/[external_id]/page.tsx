@@ -61,21 +61,23 @@ type UnitColumn = {
 };
 
 /** Pole zobrazená v boxu „Data o projektu“. První skupina je na úrovni jednotky (UNITS), zbytek z projektu/agregátů. */
-const PROJECT_OVERVIEW_FIELDS: Array<{ key: string; label: string; accessor: string; data_type: string }> = [
+const PROJECT_OVERVIEW_FIELDS: Array<{ key: string; label: string; accessor: string; data_type: string; display_format?: string }> = [
   // Z tabulky UNITS (jednotka) – topení, klimatizace atd. jsou u jednotky
   { key: "heating", label: "Topení", accessor: "heating", data_type: "text" },
   { key: "air_conditioning", label: "Klimatizace", accessor: "air_conditioning", data_type: "boolean" },
   { key: "cooling_ceilings", label: "Chlazení stropem", accessor: "cooling_ceilings", data_type: "boolean" },
   { key: "exterior_blinds", label: "Žaluzie", accessor: "exterior_blinds", data_type: "text" },
   { key: "smart_home", label: "Smart home", accessor: "smart_home", data_type: "boolean" },
+  // URL projektu (odvozená z unit URL)
+  { key: "project_url", label: "URL projektu", accessor: "project.project_url", data_type: "text" },
   // Z projektu (nebo unit.data po doplnění agregátů na backendu)
-  { key: "project.ride_to_center_min", label: "Autem do centra", accessor: "project.ride_to_center_min", data_type: "number" },
-  { key: "project.public_transport_to_center_min", label: "MHD do centra", accessor: "project.public_transport_to_center_min", data_type: "number" },
+  { key: "project.ride_to_center_min", label: "Autem do centra", accessor: "project.ride_to_center_min", data_type: "number", display_format: "duration_minutes" },
+  { key: "project.public_transport_to_center_min", label: "MHD do centra", accessor: "project.public_transport_to_center_min", data_type: "number", display_format: "duration_minutes" },
   { key: "total_units", label: "Počet jednotek", accessor: "total_units", data_type: "number" },
   { key: "available_units", label: "Dostupných jednotek", accessor: "available_units", data_type: "number" },
-  { key: "availability_ratio", label: "Podíl dostupných", accessor: "availability_ratio", data_type: "number" },
+  { key: "availability_ratio", label: "Podíl dostupných", accessor: "availability_ratio", data_type: "number", display_format: "percent" },
   { key: "project_first_seen", label: "First seen", accessor: "project_first_seen", data_type: "date" },
-  { key: "max_days_on_market", label: "Dní na trhu", accessor: "max_days_on_market", data_type: "number" },
+  { key: "max_days_on_market", label: "Dní na trhu", accessor: "max_days_on_market", data_type: "number", display_format: "duration_days" },
 ];
 
 const UnitDetailMap = dynamic(() => import("./UnitDetailMap"), { ssr: false });
@@ -635,15 +637,16 @@ export default function UnitDetailPage() {
               <div>
                 <p className="text-xs font-medium text-slate-500">Projekt</p>
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {unit.project?.name ?? "—"}
                   {unit.project_id ? (
                     <Link
                       href={`/projects/${unit.project_id}`}
-                      className="ml-2 text-sm text-slate-600 underline hover:text-slate-900"
+                      className="text-slate-900 underline hover:text-slate-700"
                     >
-                      Upravit projekt
+                      {unit.project?.name ?? "—"}
                     </Link>
-                  ) : null}
+                  ) : (
+                    unit.project?.name ?? "—"
+                  )}
                 </p>
               </div>
               <div>
@@ -763,10 +766,25 @@ export default function UnitDetailPage() {
             {PROJECT_OVERVIEW_FIELDS.map((col) => {
               const raw = getUnitDisplayValue(unit, col);
               const formatted = formatDisplayValue(raw, col);
+              const isLink =
+                col.key === "project_url" &&
+                typeof raw === "string" &&
+                /^https?:\/\//i.test(raw);
               return (
                 <div key={col.key} className="min-w-0">
                   <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
-                  <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                  {isLink ? (
+                    <a
+                      href={raw}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
+                    >
+                      {formatted}
+                    </a>
+                  ) : (
+                    <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+                  )}
                 </div>
               );
             })}
