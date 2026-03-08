@@ -55,7 +55,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 5002;Standardy;Jednotka;heating;Topení;ANO;ANO;ANO;;;enum;
 5003;Standardy;Jednotka;air_conditioning;Klimatizace;ANO;ANO;ANO;;;boolean;
 5004;Standardy;Jednotka;cooling_ceilings;Chlazení stropem;ANO;ANO;ANO;;;boolean;
-5005;Standardy;Jednotka;exterior_blinds;Žaluzie;ANO;ANO;ANO;;;boolean;
+5005;Standardy;Jednotka;exterior_blinds;Žaluzie;ANO;ANO;ANO;;;text;
 5006;Standardy;Jednotka;smart_home;Smart home;ANO;ANO;ANO;;;boolean;
 5007;Standardy;Projekt;windows;Okna;ANO;ANO;ANO;;;enum;
 5008;Standardy;Projekt;partition_walls;Příčky;ANO;ANO;ANO;;;enum;

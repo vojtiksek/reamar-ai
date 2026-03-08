@@ -173,8 +173,7 @@ class Unit(Base):
     renovation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     air_conditioning: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     cooling_ceilings: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    exterior_blinds: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    exterior_blinds_raw: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    exterior_blinds: Mapped[str | None] = mapped_column(String(50), nullable=True)  # "true" | "false" | "preparation"
     smart_home: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     category: Mapped[str | None] = mapped_column(String(255), nullable=True)

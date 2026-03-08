@@ -795,7 +795,7 @@ def _build_units_query(
     air_conditioning: bool | None = None,
     cooling_ceilings: bool | None = None,
     smart_home: bool | None = None,
-    exterior_blinds: bool | None = None,
+    exterior_blinds: str | None = None,
     min_floor_area: float | None = None,
     max_floor_area: float | None = None,
     min_total_area: float | None = None,
@@ -928,7 +928,7 @@ def _build_units_query(
     if smart_home is not None:
         base = base.where(Unit.smart_home.is_(smart_home))
     if exterior_blinds is not None:
-        base = base.where(Unit.exterior_blinds.is_(exterior_blinds))
+        base = base.where(Unit.exterior_blinds == exterior_blinds)
     if min_floor_area is not None:
         base = base.where(Unit.floor_area_m2 >= min_floor_area)
     if max_floor_area is not None:
@@ -1202,7 +1202,7 @@ def list_units(
     air_conditioning: Annotated[bool | None, Query(description="Filter by air_conditioning")] = None,
     cooling_ceilings: Annotated[bool | None, Query(description="Filter by cooling_ceilings")] = None,
     smart_home: Annotated[bool | None, Query(description="Filter by smart_home")] = None,
-    exterior_blinds: Annotated[bool | None, Query(description="Filter by exterior_blinds")] = None,
+    exterior_blinds: Annotated[str | None, Query(description="Filter by exterior_blinds (true/false/preparation)")] = None,
     min_floor_area: Annotated[float | None, Query(ge=0)] = None,
     max_floor_area: Annotated[float | None, Query(ge=0)] = None,
     min_total_area: Annotated[float | None, Query(ge=0)] = None,
@@ -2073,7 +2073,7 @@ def _project_agg_subquery():
             func.max(Unit.floors).label("sample_floors"),
             func.max(case((Unit.air_conditioning.is_(True), 1), else_=0)).label("sample_air_conditioning"),
             func.max(case((Unit.cooling_ceilings.is_(True), 1), else_=0)).label("sample_cooling_ceilings"),
-            func.max(case((Unit.exterior_blinds.is_(True), 1), else_=0)).label("sample_exterior_blinds"),
+            func.max(Unit.exterior_blinds).label("sample_exterior_blinds"),
             func.max(case((Unit.smart_home.is_(True), 1), else_=0)).label("sample_smart_home"),
         )
         .group_by(Unit.project_id)
@@ -2245,8 +2245,7 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         v = agg.get("sample_cooling_ceilings")
         out["cooling_ceilings"] = bool(v) if v is not None else None
     if out.get("exterior_blinds") is None:
-        v = agg.get("sample_exterior_blinds")
-        out["exterior_blinds"] = bool(v) if v is not None else None
+        out["exterior_blinds"] = agg.get("sample_exterior_blinds")
     if out.get("smart_home") is None:
         v = agg.get("sample_smart_home")
         out["smart_home"] = bool(v) if v is not None else None
@@ -2543,7 +2542,7 @@ def list_projects(
     developer: Annotated[list[str] | None, Query()] = None,
     building: Annotated[list[str] | None, Query()] = None,
     project: Annotated[list[str] | None, Query(description="Filter by project name (any of)")] = None,
-    exterior_blinds: Annotated[bool | None, Query()] = None,
+    exterior_blinds: Annotated[str | None, Query(description="Filter by exterior_blinds (true/false/preparation)")] = None,
     min_ride_to_center_min: Annotated[float | None, Query(ge=0)] = None,
     max_ride_to_center_min: Annotated[float | None, Query(ge=0)] = None,
     min_public_transport_to_center_min: Annotated[float | None, Query(ge=0)] = None,

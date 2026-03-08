@@ -252,6 +252,55 @@ python -m app.import_units big.json --source api --chunk-size 5000
 - **After each import**, automatically runs **recompute of project aggregates** and **recompute of local price diffs** (odchylka od trhu)
 - Prints counts (projects created/reused, units created/updated, history rows inserted), snapshot id, total time, and units/sec
 
+#### Stahování z BuiltMind API
+
+Data lze stáhnout přímo z BuiltMind API a rovnou naimportovat (bez ručního ukládání JSONu). Potřebujete API klíč z dokumentace (PDF); **nikdy ho necommitujte** – uložte ho do `.env`:
+
+```bash
+# V .env (necommitujte)
+BUILTMIND_API_KEY=sk_live_...
+```
+
+Z adresáře `backend` s aktivním venv:
+
+```bash
+# Stáhnout z API a naimportovat do DB
+python -m app.fetch_builtmind
+
+# Jen stáhnout a uložit do souboru (bez importu)
+python -m app.fetch_builtmind --output data.json --no-import
+
+# Jen ověřit, že API odpovídá (počet jednotek)
+python -m app.fetch_builtmind --dry-run
+```
+
+Skript volá BuiltMind API (`country=czechia`, `export_type=market_data_dashboard`), stáhne JSON z presigned URL a převede názvy polí na formát očekávaný importem (např. `unit_id` → `unique_id`, `project_name` → `project`). Závislost: `requests` (už v `pyproject.toml`).
+
+#### Jak spustit import
+
+1. **Záloha (doporučeno)** – před prvním nebo rizikovým importem zálohujte DB (viz níže).
+2. Z `backend/` s aktivním venv a nastaveným `BUILTMIND_API_KEY` v `.env` (v kořeni projektu):
+   ```bash
+   python -m app.fetch_builtmind
+   ```
+   Nebo z adresáře `backend` spusťte `./run_import.sh` (načte `.env` z kořene; první spuštění: `chmod +x run_import.sh`).
+   Případně jen z JSON souboru: `python -m app.import_units cesta/k/souboru.json --source api`
+3. Po běhu se vypíše **Import Summary** (projekty/jednotky vytvořené/aktualizované, snapshot, čas) a **Changes by field** – u každého pole počet aktualizovaných jednotek; u hromadných změn (celý sloupec, např. žaluzie) je řádek zkrácen na „N units (bulk)“.
+
+#### Záloha a vrácení (rollback)
+
+Import mění data v jedné transakci (commit na konci). Pokud se něco pokazí, **obnova jen z této aplikace není** – potřebujete zálohu DB.
+
+- **Před importem** (z kořene projektu nebo tam, kde máte přístup k `pg_dump`):
+  ```bash
+  pg_dump -h localhost -p 5433 -U reamar reamar > backup_pred_importem_$(date +%Y%m%d_%H%M).sql
+  ```
+- **Vrácení:** obnovení z této zálohy (všechny tabulky, které import mění, se přepíší):
+  ```bash
+  psql -h localhost -p 5433 -U reamar reamar < backup_pred_importem_YYYYMMDD_HHMM.sql
+  ```
+  (Port/host/user podle vašeho `DATABASE_URL`.)
+
 ### 7. Přepočet lokální odchylky od trhu
 
 Sloupce `local_price_diff_1000m` a `local_price_diff_2000m` se po každém importu přepočítají automaticky. Pro ruční přepočet (např. po úpravě dat v DB) můžete zavolat:

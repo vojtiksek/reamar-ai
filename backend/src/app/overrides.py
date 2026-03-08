@@ -58,7 +58,7 @@ _PROJECT_OVERRIDE_TYPE_FALLBACK: dict[str, str] = {
     "floors": "text",
     "air_conditioning": "bool",
     "cooling_ceilings": "bool",
-    "exterior_blinds": "bool",
+    "exterior_blinds": "text",  # "true" | "false" | "preparation"
     "smart_home": "bool",
 }
 
@@ -287,9 +287,6 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
                     "ride_to_center_min" if column == "ride_to_center" else "public_transport_to_center_min",
                     None,
                 )
-            # Speciální case: Žaluzie – použijeme původní text z importu, pokud je k dispozici.
-            if column == "exterior_blinds" and hasattr(base, "exterior_blinds_raw") and base.exterior_blinds_raw is not None:
-                value = base.exterior_blinds_raw
             value = _dec(value)
         else:  # "Project"
             proj: Project | None = base.project

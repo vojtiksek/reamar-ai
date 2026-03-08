@@ -77,6 +77,20 @@ def _get_attr_for_json_key(key: str) -> str | None:
     return None
 
 
+def _attrs_tracked_from_unit_data(unit_data: dict[str, Any]) -> set[str]:
+    """Set of Unit attribute names that may be updated from this unit_data (for change report)."""
+    attrs: set[str] = set()
+    for key in unit_data:
+        if key == "availability":
+            attrs.add("availability_status")
+            attrs.add("available")
+        elif key not in ("unique_id", "id"):
+            attr = _get_attr_for_json_key(key)
+            if attr:
+                attrs.add(attr)
+    return attrs
+
+
 def _normalize_value_for_column(value: Any, column_type: Any = None) -> Any:
     """Normalize a JSON value for storage in a Unit column. Uses column_type if provided."""
     if value is None:
@@ -163,6 +177,22 @@ def normalize_bool(value: Any) -> bool | None:
         return bool(value)
     except (ValueError, TypeError):
         return None
+
+
+def normalize_exterior_blinds(value: Any) -> str | None:
+    """Store API value as 'true' | 'false' | 'preparation'."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "on"):
+        return "true"
+    if s in ("false", "0", "no", "off"):
+        return "false"
+    if s == "preparation":
+        return "preparation"
+    return s if s else None
 
 
 def normalize_str(value: Any, max_length: int | None = None) -> str | None:
@@ -504,9 +534,7 @@ def apply_unit_data(
     if not only_if_present or unit_data.get("cooling_ceilings") is not None:
         unit.cooling_ceilings = normalize_bool(unit_data.get("cooling_ceilings"))
     if not only_if_present or unit_data.get("exterior_blinds") is not None:
-        raw_exterior_blinds = unit_data.get("exterior_blinds")
-        unit.exterior_blinds = normalize_bool(raw_exterior_blinds)
-        unit.exterior_blinds_raw = None if raw_exterior_blinds is None else str(raw_exterior_blinds)
+        unit.exterior_blinds = normalize_exterior_blinds(unit_data.get("exterior_blinds"))
     if not only_if_present or unit_data.get("smart_home") is not None:
         unit.smart_home = normalize_bool(unit_data.get("smart_home"))
     if not only_if_present or unit_data.get("category") is not None:
@@ -614,6 +642,7 @@ def import_units(
     units_updated = 0
     history_inserted = 0
     snapshot_id: int | None = None
+    changes_by_field: dict[str, int] = {}
 
     with get_db() as db:
         if not dry_run:
@@ -672,6 +701,8 @@ def import_units(
                     unit = Unit(external_id=external_id, project_id=project_id or 0)
                     apply_unit_data_mapped(unit, unit_data, only_if_present=False)
                 else:
+                    attrs_tracked = _attrs_tracked_from_unit_data(unit_data)
+                    old_vals = {a: getattr(unit, a, None) for a in attrs_tracked}
                     apply_unit_data_respecting_overrides(
                         unit,
                         unit_data,
@@ -679,6 +710,11 @@ def import_units(
                         pending_list,
                         only_if_present=True,
                     )
+                    for a in attrs_tracked:
+                        new_v = getattr(unit, a, None)
+                        old_v = old_vals.get(a)
+                        if old_v != new_v:
+                            changes_by_field[a] = changes_by_field.get(a, 0) + 1
 
                 if is_new:
                     if dry_run:
@@ -750,6 +786,16 @@ def import_units(
     if dry_run:
         print("(dry-run: no changes written)")
     print(f"Total time: {total_elapsed:.2f}s | {rate:.1f} units/s")
+
+    if changes_by_field and units_updated > 0:
+        print("\n--- Changes by field (updated units) ---")
+        bulk_threshold = max(500, int(0.5 * units_updated))
+        for attr in sorted(changes_by_field.keys()):
+            count = changes_by_field[attr]
+            if count >= bulk_threshold:
+                print(f"  {attr}: {count} units (bulk)")
+            else:
+                print(f"  {attr}: {count} units")
 
 
 def main() -> None:
