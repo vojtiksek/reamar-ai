@@ -221,6 +221,10 @@ class Unit(Base):
         back_populates="unit",
         cascade="all, delete-orphan",
     )
+    api_pending: Mapped[list["UnitApiPending"]] = relationship(
+        back_populates="unit",
+        cascade="all, delete-orphan",
+    )
 
 
 class UnitOverride(Base):
@@ -242,6 +246,29 @@ class UnitOverride(Base):
     value: Mapped[str] = mapped_column(Text, nullable=False)
 
     unit: Mapped["Unit"] = relationship(back_populates="overrides")
+
+
+class UnitApiPending(Base):
+    """Čekající hodnota z API (cena, cena/m², stav) – liší se od aktuální/ruční; uživatel si zvolí."""
+    __tablename__ = "unit_api_pending"
+    __table_args__ = (
+        UniqueConstraint("unit_id", "field", name="uq_unit_api_pending_unit_field"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    unit_id: Mapped[int] = mapped_column(
+        ForeignKey("units.id"),
+        nullable=False,
+    )
+    field: Mapped[str] = mapped_column(String(100), nullable=False)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    unit: Mapped["Unit"] = relationship("Unit", back_populates="api_pending")
 
 
 class ProjectOverride(Base):

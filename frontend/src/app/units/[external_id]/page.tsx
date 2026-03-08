@@ -3,6 +3,7 @@
 import {
   formatAreaM2,
   formatCurrencyCzk,
+  formatCurrencyPerM2,
   formatLayout,
   formatValue,
   type FormatValueMeta,
@@ -23,6 +24,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+type PendingApiUpdate = { field: string; api_value: string };
+
 type UnitDetail = {
   external_id: string;
   project_id: number;
@@ -37,6 +40,7 @@ type UnitDetail = {
   equivalent_area_m2?: number | null;
   exterior_area_m2?: number | null;
   data?: Record<string, unknown>;
+  pending_api_updates?: PendingApiUpdate[];
   [key: string]: unknown;
 };
 
@@ -83,6 +87,28 @@ const AVAILABILITY_STATUS_OPTIONS = [
   { value: "sold", label: "Prodaná" },
   { value: "unseen", label: "Neviditelná" },
 ] as const;
+
+const PENDING_FIELD_LABELS: Record<string, string> = {
+  price_czk: "Cena",
+  price_per_m2_czk: "Cena za m²",
+  availability_status: "Stav",
+};
+
+function formatPendingApiValue(field: string, apiValue: string): string {
+  if (field === "price_czk") {
+    const n = Number(apiValue);
+    if (Number.isFinite(n)) return formatCurrencyCzk(n);
+  }
+  if (field === "price_per_m2_czk") {
+    const n = Number(apiValue);
+    if (Number.isFinite(n)) return formatCurrencyPerM2(n);
+  }
+  if (field === "availability_status") {
+    const opt = AVAILABILITY_STATUS_OPTIONS.find((o) => o.value === (apiValue || "").toLowerCase());
+    return opt?.label ?? (apiValue || "—");
+  }
+  return apiValue || "—";
+}
 
 const ORIENTATION_LETTERS = ["N", "E", "S", "W"] as const;
 
@@ -174,6 +200,7 @@ export default function UnitDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [resolvingField, setResolvingField] = useState<string | null>(null);
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
 
   const appendDebugLog = (log: DebugLog) => {
@@ -405,6 +432,46 @@ export default function UnitDetailPage() {
     }
   };
 
+  const handleAcceptApi = async (field: string) => {
+    if (!external_id) return;
+    setResolvingField(field);
+    const id = decodeURIComponent(external_id);
+    try {
+      const res = await fetch(
+        `${API_BASE}/units/${encodeURIComponent(id)}/accept-api`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ field }) }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const u = (await res.json()) as UnitDetail;
+      setUnitState((prev) => ({ ...prev, data: u, error: null }));
+      setOriginalUnit(u);
+    } catch (e) {
+      setUnitState((prev) => ({ ...prev, error: e instanceof Error ? e.message : "Chyba" }));
+    } finally {
+      setResolvingField(null);
+    }
+  };
+
+  const handleDismissApi = async (field: string) => {
+    if (!external_id) return;
+    setResolvingField(field);
+    const id = decodeURIComponent(external_id);
+    try {
+      const res = await fetch(
+        `${API_BASE}/units/${encodeURIComponent(id)}/dismiss-api`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ field }) }
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const u = (await res.json()) as UnitDetail;
+      setUnitState((prev) => ({ ...prev, data: u, error: null }));
+      setOriginalUnit(u);
+    } catch (e) {
+      setUnitState((prev) => ({ ...prev, error: e instanceof Error ? e.message : "Chyba" }));
+    } finally {
+      setResolvingField(null);
+    }
+  };
+
   if (unitState.loading) return <div className="p-4">Načítání…</div>;
   if (unitState.error) {
     return (
@@ -515,6 +582,49 @@ export default function UnitDetailPage() {
       </header>
 
       <main className="mx-auto max-w-6xl space-y-6 p-4">
+        {unit.pending_api_updates && unit.pending_api_updates.length > 0 && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">
+              API poslalo nové údaje
+            </h2>
+            <p className="mb-3 text-sm text-amber-900">
+              U následujících polí přišly z API jiné hodnoty než aktuálně zobrazené. Zvolte, zda použít data z API, nebo ponechat stávající (ručně zadané).
+            </p>
+            <ul className="space-y-3">
+              {unit.pending_api_updates.map((p) => (
+                <li
+                  key={p.field}
+                  className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2"
+                >
+                  <span className="font-medium text-slate-700">
+                    {PENDING_FIELD_LABELS[p.field] ?? p.field}:
+                  </span>
+                  <span className="text-slate-600">
+                    API: {formatPendingApiValue(p.field, p.api_value)}
+                  </span>
+                  <div className="ml-auto flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleAcceptApi(p.field)}
+                      disabled={resolvingField !== null}
+                      className="rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {resolvingField === p.field ? "…" : "Použít API"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDismissApi(p.field)}
+                      disabled={resolvingField !== null}
+                      className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {resolvingField === p.field ? "…" : "Ponechat moje"}
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
         {/* Řádek: Přehled + Mapa vedle sebe */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">

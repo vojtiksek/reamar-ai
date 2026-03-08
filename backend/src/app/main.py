@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, selectinload
 from .column_catalog import get_columns as get_column_definitions
 from .db import check_db_connection, get_db_session
 from .filter_catalog import get_filter_groups
-from .models import Project, Unit, UnitOverride, UnitPriceHistory, ProjectOverride
+from .models import Project, Unit, UnitApiPending, UnitOverride, UnitPriceHistory, ProjectOverride
 from .overrides import (
     OVERRIDEABLE_FIELDS,
     PROJECT_OVERRIDEABLE_FIELDS,
@@ -89,6 +89,15 @@ class OverrideValueBody(BaseModel):
     value: str
 
 
+class PendingApiUpdate(BaseModel):
+    field: str
+    api_value: str
+
+
+class PendingApiActionBody(BaseModel):
+    field: str
+
+
 class UnitResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -115,6 +124,7 @@ class UnitResponse(BaseModel):
     url: str | None
     project: ProjectInfo
     data: dict[str, Any]
+    pending_api_updates: list[PendingApiUpdate] = []
 
 
 class UnitsListResponse(BaseModel):
@@ -188,6 +198,7 @@ DbSession = Annotated[Session, Depends(get_db_session)]
 
 VALID_OVERRIDE_FIELDS = OVERRIDEABLE_FIELDS
 VALID_PROJECT_OVERRIDE_FIELDS = PROJECT_OVERRIDEABLE_FIELDS
+PENDING_API_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
 
 
 def _get_unit_or_404(db: Session, external_id: str) -> Unit:
@@ -259,6 +270,16 @@ def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
         data["project_last_seen"] = agg_row.project_last_seen
         data["max_days_on_market"] = agg_row.max_days_on_market
         d["data"] = data
+
+    pending_rows = (
+        db.execute(
+            select(UnitApiPending).where(UnitApiPending.unit_id == unit.id)
+        )
+        .scalars().all()
+    )
+    d["pending_api_updates"] = [
+        PendingApiUpdate(field=p.field, api_value=p.value) for p in pending_rows
+    ]
 
     return UnitResponse.model_validate(d)
 
@@ -2694,6 +2715,97 @@ def delete_unit_override(
     if field in ("price_czk", "price_per_m2_czk", "available", "floor_area_m2"):
         recompute_project_aggregates(db, [unit.project_id])
 
+    db.commit()
+    db.refresh(unit)
+    return _effective_unit_response(db, unit)
+
+
+@app.post("/units/{external_id}/accept-api", response_model=UnitResponse)
+def accept_pending_api(
+    external_id: str,
+    body: PendingApiActionBody,
+    db: DbSession,
+) -> UnitResponse:
+    """Použít čekající hodnotu z API jako override (pole: price_czk, price_per_m2_czk, availability_status)."""
+    if body.field not in PENDING_API_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid field for accept-api. Allowed: {sorted(PENDING_API_FIELDS)}",
+        )
+    unit = _get_unit_or_404(db, external_id)
+    pending = (
+        db.execute(
+            select(UnitApiPending).where(
+                UnitApiPending.unit_id == unit.id,
+                UnitApiPending.field == body.field,
+            )
+        )
+        .scalars().first()
+    )
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No pending API value for this field")
+    existing = (
+        db.execute(
+            select(UnitOverride).where(
+                UnitOverride.unit_id == unit.id,
+                UnitOverride.field == body.field,
+            )
+        )
+        .scalars().first()
+    )
+    if existing:
+        existing.value = pending.value
+    else:
+        db.add(UnitOverride(unit_id=unit.id, field=body.field, value=pending.value))
+    if body.field == "availability_status":
+        available_val = (pending.value or "").strip().lower() == "available"
+        existing_av = (
+            db.execute(
+                select(UnitOverride).where(
+                    UnitOverride.unit_id == unit.id,
+                    UnitOverride.field == "available",
+                )
+            )
+            .scalars().first()
+        )
+        if existing_av:
+            existing_av.value = "true" if available_val else "false"
+        else:
+            db.add(UnitOverride(unit_id=unit.id, field="available", value="true" if available_val else "false"))
+    db.delete(pending)
+    db.flush()
+    if body.field in ("price_czk", "price_per_m2_czk", "availability_status"):
+        recompute_project_aggregates(db, [unit.project_id])
+    db.commit()
+    db.refresh(unit)
+    return _effective_unit_response(db, unit)
+
+
+@app.post("/units/{external_id}/dismiss-api", response_model=UnitResponse)
+def dismiss_pending_api(
+    external_id: str,
+    body: PendingApiActionBody,
+    db: DbSession,
+) -> UnitResponse:
+    """Zamítnout čekající hodnotu z API a ponechat aktuální (ruční nebo z DB)."""
+    if body.field not in PENDING_API_FIELDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid field for dismiss-api. Allowed: {sorted(PENDING_API_FIELDS)}",
+        )
+    unit = _get_unit_or_404(db, external_id)
+    pending = (
+        db.execute(
+            select(UnitApiPending).where(
+                UnitApiPending.unit_id == unit.id,
+                UnitApiPending.field == body.field,
+            )
+        )
+        .scalars().first()
+    )
+    if pending is None:
+        raise HTTPException(status_code=404, detail="No pending API value for this field")
+    db.delete(pending)
     db.commit()
     db.refresh(unit)
     return _effective_unit_response(db, unit)

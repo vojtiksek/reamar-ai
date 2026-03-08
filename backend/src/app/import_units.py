@@ -12,12 +12,16 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc, select, tuple_
+from sqlalchemy import delete, desc, select, tuple_
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import Project, Unit, UnitPriceHistory, UnitSnapshot
+from .models import Project, Unit, UnitApiPending, UnitOverride, UnitPriceHistory, UnitSnapshot
+from .overrides import OVERRIDEABLE_FIELDS, apply_override, build_override_map
 from .aggregates import recompute_local_price_diffs, recompute_project_aggregates
+
+# Pole, u kterých při rozdílu API vs. aktuální neukládáme přímo, ale do pending (uživatel zvolí).
+API_CONFLICT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
 
 # Canonical mapping: API JSON key -> Unit DB attribute. No duplicate columns; renames only.
 # Keys not listed use _key_to_attr(key) if that column exists. Skip: unique_id, id, project, availability.
@@ -342,6 +346,86 @@ def batch_load_latest_price_history(
     return {r.unit_id: r for r in rows}
 
 
+def batch_load_unit_overrides(
+    db: Session,
+    unit_ids: list[int],
+) -> dict[int, dict[str, str]]:
+    """Load unit overrides for given unit IDs. Returns unit_id -> {field: value}."""
+    if not unit_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(unit_ids))
+    stmt = select(UnitOverride).where(UnitOverride.unit_id.in_(unique_ids))
+    rows = db.execute(stmt).scalars().all()
+    return build_override_map([r for r in rows])
+
+
+def _effective_value(unit: Unit, overrides: dict[str, str], field: str) -> Any:
+    """Aktuální efektivní hodnota pole (override nebo hodnota na jednotce)."""
+    base = getattr(unit, field, None)
+    if field not in overrides:
+        return base
+    return apply_override(field, overrides[field], base, unit.id)
+
+
+def apply_unit_data_respecting_overrides(
+    unit: Unit,
+    unit_data: dict[str, Any],
+    overrides: dict[str, str],
+    pending_list: list[tuple[int, str, str]],
+    *,
+    only_if_present: bool = False,
+) -> None:
+    """Jako apply_unit_data_mapped, ale: u override polí nepřepisujeme; u price_czk, price_per_m2_czk, availability_status při rozdílu API vs. efektivní ukládáme do pending_list místo zápisu."""
+    unit.raw_json = dict(unit_data)
+    table = Unit.__table__
+
+    for key, value in unit_data.items():
+        if key == "availability":
+            if overrides.get("availability_status") is not None:
+                continue
+            new_status = normalize_str(value, 50)
+            new_available = (new_status or "").lower() == "available"
+            if "availability_status" in API_CONFLICT_FIELDS:
+                effective = _effective_value(unit, overrides, "availability_status")
+                if str(new_status or "") != str(effective or ""):
+                    pending_list.append((unit.id, "availability_status", new_status or ""))
+                    continue
+            if not only_if_present or value is not None:
+                unit.availability_status = new_status
+                unit.available = new_available
+            continue
+        if key in ("unique_id", "id"):
+            continue
+        attr = _get_attr_for_json_key(key)
+        if not attr:
+            continue
+        if only_if_present and value is None:
+            continue
+        if attr in OVERRIDEABLE_FIELDS and attr in overrides:
+            if attr not in API_CONFLICT_FIELDS:
+                continue
+            # API conflict field with override: still check if API value differs from effective
+            effective = _effective_value(unit, overrides, attr)
+            col = table.c.get(attr)
+            column_type = col.type if col is not None else None
+            normalized = _normalize_value_for_column(value, column_type)
+            if normalized != effective:
+                pending_list.append((unit.id, attr, str(normalized) if normalized is not None else ""))
+            continue
+        if attr in API_CONFLICT_FIELDS and attr not in overrides:
+            effective = _effective_value(unit, overrides, attr)
+            col = table.c.get(attr)
+            column_type = col.type if col is not None else None
+            normalized = _normalize_value_for_column(value, column_type)
+            if normalized != effective:
+                pending_list.append((unit.id, attr, str(normalized) if normalized is not None else ""))
+                continue
+        col = table.c.get(attr)
+        column_type = col.type if col is not None else None
+        normalized = _normalize_value_for_column(value, column_type)
+        setattr(unit, attr, normalized)
+
+
 def apply_unit_data(
     unit: Unit,
     unit_data: dict[str, Any],
@@ -572,6 +656,8 @@ def import_units(
 
             existing_unit_ids = [u.id for u in units_map.values()]
             latest_history = batch_load_latest_price_history(db, existing_unit_ids) if existing_unit_ids else {}
+            override_map = batch_load_unit_overrides(db, existing_unit_ids)
+            pending_list: list[tuple[int, str, str]] = []
 
             for unit_data, key, external_id in chunk:
                 project = project_key_to_project[key]
@@ -584,7 +670,15 @@ def import_units(
 
                 if is_new:
                     unit = Unit(external_id=external_id, project_id=project_id or 0)
-                apply_unit_data_mapped(unit, unit_data, only_if_present=not is_new)
+                    apply_unit_data_mapped(unit, unit_data, only_if_present=False)
+                else:
+                    apply_unit_data_respecting_overrides(
+                        unit,
+                        unit_data,
+                        override_map.get(unit.id, {}),
+                        pending_list,
+                        only_if_present=True,
+                    )
 
                 if is_new:
                     if dry_run:
@@ -619,6 +713,16 @@ def import_units(
                                 available=unit.available,
                             )
                         )
+
+            if not dry_run and pending_list:
+                for (uid, field, value) in pending_list:
+                    db.execute(
+                        delete(UnitApiPending).where(
+                            UnitApiPending.unit_id == uid,
+                            UnitApiPending.field == field,
+                        )
+                    )
+                    db.add(UnitApiPending(unit_id=uid, field=field, value=value))
 
             if not dry_run:
                 db.flush()
