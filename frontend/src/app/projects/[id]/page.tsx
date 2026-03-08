@@ -377,14 +377,22 @@ export default function ProjectDetailPage() {
   const displayOrDraft = (key: string, fallback: unknown) =>
     draft(key) !== undefined ? draft(key) : fallback;
 
+  const statusPriority = (u: UnitInProject): number => {
+    if (u.available) return 1;
+    const s = String(u.availability_status ?? "").toLowerCase();
+    if (s === "reserved" || s === "rezervované") return 2;
+    if (s === "sold" || s === "prodané") return 3;
+    return 4;
+  };
+
   const sortedUnits = useMemo(() => {
     const list = unitsState.data ?? [];
     const dir = unitsSortDir === "asc" ? 1 : -1;
     const key = unitsSortBy;
     const cmp = (a: UnitInProject, b: UnitInProject): number => {
-      const av = a.available ? 1 : 0;
-      const bv = b.available ? 1 : 0;
-      if (av !== bv) return bv - av;
+      const ap = statusPriority(a);
+      const bp = statusPriority(b);
+      if (ap !== bp) return ap - bp;
       const aVal = key === "unit_name" ? (a.unit_name ?? a.external_id) ?? "" : (a as Record<string, unknown>)[key];
       const bVal = key === "unit_name" ? (b.unit_name ?? b.external_id) ?? "" : (b as Record<string, unknown>)[key];
       const aNum = typeof aVal === "number" ? aVal : Number(aVal);
