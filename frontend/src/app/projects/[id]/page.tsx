@@ -20,6 +20,61 @@ const ProjectDetailMap = dynamic(
   { ssr: false }
 );
 
+/** Překlad hodnot standardů (z API) do češtiny pro zobrazení ve výběrech. */
+const STANDARD_LABELS_CZ: Record<string, Record<string, string>> = {
+  overall_quality: {
+    standard: "Standard",
+    medium: "Střední",
+    high: "Vysoká",
+    low: "Nízká",
+    premium: "Prémiová",
+  },
+  windows: {
+    pvc: "PVC",
+    wood: "Dřevo",
+    aluminum: "Hliník",
+    plastic: "Plast",
+  },
+  partition_walls: {
+    brick: "Cihla",
+    drywall: "Sádrokarton",
+    none: "Bez příček",
+  },
+  heating: {
+    underfloor: "Podlahové",
+    gas: "Plyn",
+    electric: "Elektřina",
+    district: "Dálkové",
+    "central heating": "Ústřední",
+  },
+  category: {
+    house: "Dům",
+    flat: "Byt",
+    apartment: "Byt",
+  },
+  floors: {
+    vinyl: "Vinyl",
+    pvc: "PVC",
+    wood: "Dřevo",
+    laminate: "Laminát",
+    tile: "Dlažba",
+    carpet: "Koberec",
+    parquet: "Parkety",
+    linoleum: "Linoleum",
+  },
+};
+
+function standardLabelToCzech(field: string, value: string): string {
+  if (!value || value === "") return "—";
+  const map = STANDARD_LABELS_CZ[field];
+  if (map) {
+    const lower = value.toLowerCase().trim();
+    const translated = map[lower] ?? map[value];
+    if (translated) return translated;
+  }
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+}
+
 type ProjectDetail = Record<string, unknown>;
 
 type FetchState<T> = {
@@ -747,12 +802,12 @@ export default function ProjectDetailPage() {
                 >
                   <option value="">—</option>
                   {(filterSpecsByKey.get("overall_quality")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>{standardLabelToCzech("overall_quality", String(opt))}</option>
                   ))}
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["overall_quality"] as string | null | undefined) ?? "—"}
+                  {standardLabelToCzech("overall_quality", (project["overall_quality"] as string) ?? "")}
                 </p>
               )}
             </div>
@@ -766,12 +821,12 @@ export default function ProjectDetailPage() {
                 >
                   <option value="">—</option>
                   {(filterSpecsByKey.get("windows")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>{standardLabelToCzech("windows", String(opt))}</option>
                   ))}
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["windows"] as string | null | undefined) ?? "—"}
+                  {standardLabelToCzech("windows", (project["windows"] as string) ?? "")}
                 </p>
               )}
             </div>
@@ -785,12 +840,12 @@ export default function ProjectDetailPage() {
                 >
                   <option value="">—</option>
                   {(filterSpecsByKey.get("partition_walls")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>{standardLabelToCzech("partition_walls", String(opt))}</option>
                   ))}
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["partition_walls"] as string | null | undefined) ?? "—"}
+                  {standardLabelToCzech("partition_walls", (project["partition_walls"] as string) ?? "")}
                 </p>
               )}
             </div>
@@ -804,12 +859,12 @@ export default function ProjectDetailPage() {
                 >
                   <option value="">—</option>
                   {(filterSpecsByKey.get("heating")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>{standardLabelToCzech("heating", String(opt))}</option>
                   ))}
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["heating"] as string | null | undefined) ?? "—"}
+                  {standardLabelToCzech("heating", (project["heating"] as string) ?? "")}
                 </p>
               )}
             </div>
@@ -823,17 +878,17 @@ export default function ProjectDetailPage() {
                 >
                   <option value="">—</option>
                   {(filterSpecsByKey.get("category")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{opt}</option>
+                    <option key={opt} value={opt}>{standardLabelToCzech("category", String(opt))}</option>
                   ))}
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["category"] as string | null | undefined) ?? "—"}
+                  {standardLabelToCzech("category", (project["category"] as string) ?? "")}
                 </p>
               )}
             </div>
             <div>
-              <p className="text-xs font-medium text-slate-500">Podlaží (budovy)</p>
+              <p className="text-xs font-medium text-slate-500">Podlaha</p>
               {editMode ? (
                 (() => {
                   const floorsOpts = filterSpecsByKey.get("floors")?.options as string[] | undefined;
@@ -846,7 +901,7 @@ export default function ProjectDetailPage() {
                       >
                         <option value="">—</option>
                         {floorsOpts.map((opt) => (
-                          <option key={String(opt)} value={String(opt)}>{String(opt)}</option>
+                          <option key={String(opt)} value={String(opt)}>{standardLabelToCzech("floors", String(opt))}</option>
                         ))}
                       </select>
                     );
@@ -862,7 +917,7 @@ export default function ProjectDetailPage() {
                 })()
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {project["floors"] != null && project["floors"] !== "" ? String(project["floors"]) : "—"}
+                  {project["floors"] != null && project["floors"] !== "" ? standardLabelToCzech("floors", String(project["floors"])) : "—"}
                 </p>
               )}
             </div>

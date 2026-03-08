@@ -40,7 +40,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3007;Dispozice;Jednotka;terrace_area;Terasa;ANO;ANO;ANO;m²;1;area_m2;
 3008;Dispozice;Jednotka;garden_area;Zahrada;ANO;ANO;ANO;m²;1;area_m2;
 3009;Dispozice;Jednotka;floor;Podlaží;ANO;ANO;NE;;0;integer;
-3010;Dispozice;Projekt;floors;Podlaží (budovy);ANO;NE;NE;;0;integer;
+3010;Dispozice;Projekt;floors;Podlaha;ANO;NE;NE;;;enum;
 3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
 
