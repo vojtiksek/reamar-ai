@@ -360,7 +360,9 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba po SOSBK</dt>
                   <dd>
                     {formatPercent(
-                      (project["payment_contract"] as number | null | undefined) ?? null
+                      (project["payment_contract"] as number | null | undefined) ?? null,
+                      undefined,
+                      true
                     )}
                   </dd>
                 </div>
@@ -368,7 +370,9 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba při výstavbě</dt>
                   <dd>
                     {formatPercent(
-                      (project["payment_construction"] as number | null | undefined) ?? null
+                      (project["payment_construction"] as number | null | undefined) ?? null,
+                      undefined,
+                      true
                     )}
                   </dd>
                 </div>
@@ -376,7 +380,9 @@ export default function ProjectDetailPage() {
                   <dt className="font-medium text-gray-500">Platba po dokončení</dt>
                   <dd>
                     {formatPercent(
-                      (project["payment_occupancy"] as number | null | undefined) ?? null
+                      (project["payment_occupancy"] as number | null | undefined) ?? null,
+                      undefined,
+                      true
                     )}
                   </dd>
                 </div>

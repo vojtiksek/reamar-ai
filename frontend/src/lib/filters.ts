@@ -96,14 +96,15 @@ export function filtersToUnitsParams(
     if (api.min != null) {
       let vMin = filters[`${key}_min`] as number | undefined;
       let vMax = filters[`${key}_max`] as number | undefined;
-      // Backend očekává payment_* jako 0–1 (zlomek); UI může mít 0–100 (procenta)
+      // Backend očekává payment_* jako 0–1 (zlomek). Ve state máme vždy 0–1 (FiltersDrawer ukládá 10% jako 0.1).
+      // Škálovat jen když hodnota vypadá jako procenta ( > 1 ), jinak by se 0.1 z URL znovu dělilo na 0.001.
       if (
         (key === "payment_contract" || key === "payment_construction" || key === "payment_occupancy") &&
         (vMin != null || vMax != null)
       ) {
-        const scale = (v: number) => (v >= 0 && v <= 100 ? v / 100 : v);
-        if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) vMin = scale(vMin);
-        if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) vMax = scale(vMax);
+        const toFraction = (v: number) => (v > 1 ? v / 100 : v);
+        if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) vMin = toFraction(vMin);
+        if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) vMax = toFraction(vMax);
       }
       if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) out[api.min] = vMin;
       if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) out[api.max!] = vMax;

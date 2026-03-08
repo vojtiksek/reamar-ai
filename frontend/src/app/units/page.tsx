@@ -1085,12 +1085,13 @@ export default function Home() {
                   const asPercent = percentRangeBases.has(base);
                   const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
                   const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
+                  const suf = asPercent ? " %" : "";
                   let value = "";
                   if (dispMin != null) {
-                    value += `od ${dispMin}`;
+                    value += `od ${dispMin}${suf}`;
                   }
                   if (dispMax != null) {
-                    value += value ? ` do ${dispMax}` : `do ${dispMax}`;
+                    value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
                   }
                   badges.push({
                     id: `${base}:${value}`,

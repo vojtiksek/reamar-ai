@@ -902,30 +902,54 @@ def _build_units_query(
         base = base.where(Unit.public_transport_to_center_min >= min_public_transport_to_center_min)
     if max_public_transport_to_center_min is not None:
         base = base.where(Unit.public_transport_to_center_min <= max_public_transport_to_center_min)
-    # Financování: jednotky bez údaje (NULL) filtrem projdou – „—“ = jako by bylo v rozsahu
+    # Financování: jednotky bez údaje (NULL nebo 0 = nevyplněno) filtrem projdou – „—“ = jako by bylo v rozsahu
     if min_payment_contract is not None:
         base = base.where(
-            or_(Unit.payment_contract.is_(None), Unit.payment_contract >= min_payment_contract)
+            or_(
+                Unit.payment_contract.is_(None),
+                Unit.payment_contract == 0,
+                Unit.payment_contract >= min_payment_contract,
+            )
         )
     if max_payment_contract is not None:
         base = base.where(
-            or_(Unit.payment_contract.is_(None), Unit.payment_contract <= max_payment_contract)
+            or_(
+                Unit.payment_contract.is_(None),
+                Unit.payment_contract == 0,
+                Unit.payment_contract <= max_payment_contract,
+            )
         )
     if min_payment_construction is not None:
         base = base.where(
-            or_(Unit.payment_construction.is_(None), Unit.payment_construction >= min_payment_construction)
+            or_(
+                Unit.payment_construction.is_(None),
+                Unit.payment_construction == 0,
+                Unit.payment_construction >= min_payment_construction,
+            )
         )
     if max_payment_construction is not None:
         base = base.where(
-            or_(Unit.payment_construction.is_(None), Unit.payment_construction <= max_payment_construction)
+            or_(
+                Unit.payment_construction.is_(None),
+                Unit.payment_construction == 0,
+                Unit.payment_construction <= max_payment_construction,
+            )
         )
     if min_payment_occupancy is not None:
         base = base.where(
-            or_(Unit.payment_occupancy.is_(None), Unit.payment_occupancy >= min_payment_occupancy)
+            or_(
+                Unit.payment_occupancy.is_(None),
+                Unit.payment_occupancy == 0,
+                Unit.payment_occupancy >= min_payment_occupancy,
+            )
         )
     if max_payment_occupancy is not None:
         base = base.where(
-            or_(Unit.payment_occupancy.is_(None), Unit.payment_occupancy <= max_payment_occupancy)
+            or_(
+                Unit.payment_occupancy.is_(None),
+                Unit.payment_occupancy == 0,
+                Unit.payment_occupancy <= max_payment_occupancy,
+            )
         )
     return base
 
@@ -1704,19 +1728,30 @@ def get_projects_overview(
         min_pay_occupancy = _dec(r.get("min_payment_occupancy"))
         max_pay_occupancy = _dec(r.get("max_payment_occupancy"))
 
-        item["min_payment_contract"] = min_pay_contract
-        item["max_payment_contract"] = max_pay_contract
-        item["min_payment_construction"] = min_pay_construction
-        item["max_payment_construction"] = max_pay_construction
-        item["min_payment_occupancy"] = min_pay_occupancy
-        item["max_payment_occupancy"] = max_pay_occupancy
+        def _financing_or_none(v: Any) -> Any:
+            if v is None or (isinstance(v, (int, float)) and v == 0):
+                return None
+            return float(v) if isinstance(v, Decimal) else v
+
+        item["min_payment_contract"] = _financing_or_none(min_pay_contract)
+        item["max_payment_contract"] = _financing_or_none(max_pay_contract)
+        item["min_payment_construction"] = _financing_or_none(min_pay_construction)
+        item["max_payment_construction"] = _financing_or_none(max_pay_construction)
+        item["min_payment_occupancy"] = _financing_or_none(min_pay_occupancy)
+        item["max_payment_occupancy"] = _financing_or_none(max_pay_occupancy)
 
         def _first_non_none(a: Any, b: Any) -> Any:
             return a if a is not None else b
 
-        item["payment_contract"] = _first_non_none(min_pay_contract, max_pay_contract)
-        item["payment_construction"] = _first_non_none(min_pay_construction, max_pay_construction)
-        item["payment_occupancy"] = _first_non_none(min_pay_occupancy, max_pay_occupancy)
+        item["payment_contract"] = _first_non_none(
+            _financing_or_none(min_pay_contract), _financing_or_none(max_pay_contract)
+        )
+        item["payment_construction"] = _first_non_none(
+            _financing_or_none(min_pay_construction), _financing_or_none(max_pay_construction)
+        )
+        item["payment_occupancy"] = _first_non_none(
+            _financing_or_none(min_pay_occupancy), _financing_or_none(max_pay_occupancy)
+        )
         apply_project_overrides_to_item(
             project_id=item["id"],
             item=item,
@@ -1878,24 +1913,25 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         else:
             out[k] = v
 
-    # Derived single-value financing fields (per project).
+    # Derived single-value financing fields (per project). 0 = nevyplněno, vracíme None.
     def _first_non_none(a, b):
         return a if a is not None else b
 
+    def _financing_or_none(val: Any) -> float | None:
+        if val is None or (isinstance(val, (int, float)) and val == 0):
+            return None
+        if isinstance(val, Decimal):
+            return float(val)
+        return val
+
     pay_contract = _first_non_none(agg.get("min_payment_contract"), agg.get("max_payment_contract"))
-    if isinstance(pay_contract, Decimal):
-        pay_contract = float(pay_contract)
-    out["payment_contract"] = pay_contract
+    out["payment_contract"] = _financing_or_none(pay_contract)
 
     pay_construction = _first_non_none(agg.get("min_payment_construction"), agg.get("max_payment_construction"))
-    if isinstance(pay_construction, Decimal):
-        pay_construction = float(pay_construction)
-    out["payment_construction"] = pay_construction
+    out["payment_construction"] = _financing_or_none(pay_construction)
 
     pay_occupancy = _first_non_none(agg.get("min_payment_occupancy"), agg.get("max_payment_occupancy"))
-    if isinstance(pay_occupancy, Decimal):
-        pay_occupancy = float(pay_occupancy)
-    out["payment_occupancy"] = pay_occupancy
+    out["payment_occupancy"] = _financing_or_none(pay_occupancy)
 
     # Derive project_url from either explicit Project.project_url or a sample unit URL.
     if not out.get("project_url"):
