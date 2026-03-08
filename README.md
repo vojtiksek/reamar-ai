@@ -272,7 +272,7 @@ npm install
 npm run dev
 ```
 
-Frontend běží na `http://localhost:3000`. Pro správnou komunikaci s API musí běžet backend na `http://127.0.0.1:8001` (viz `frontend/src/lib/api.ts` – `API_BASE`).
+Frontend běží na `http://localhost:3000`. Pro správnou komunikaci s API musí běžet backend na `http://127.0.0.1:8001` (viz `frontend/src/lib/api.ts` – `API_BASE`). V produkci nastavte v `frontend/.env.local` proměnnou `NEXT_PUBLIC_API_URL` na URL backendu (např. `https://api.example.com`).
 
 **Hlavní cesty:**
 - `/units` — tabulka jednotek, filtry, řazení, export CSV

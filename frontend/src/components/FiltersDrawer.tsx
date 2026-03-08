@@ -322,6 +322,8 @@ function EnumSearchField({
       const selectedFirst = selected.filter((s) => fromApi.indexOf(s) === -1);
       return [...selectedFirst, ...fromApi];
     }
+    // U projektu při prázdném hledání neukazujeme celý seznam (až 2000 položek) – jen vybrané + hint
+    if (isProjectFilter && !search.trim()) return [];
     if (!search.trim()) return options;
     const q = search.trim().toLowerCase();
     return options.filter((o) => String(o).toLowerCase().includes(q));
@@ -404,6 +406,11 @@ function EnumSearchField({
             </div>
           )}
           <ul className="max-h-48 space-y-0.5 overflow-y-auto rounded-md border border-slate-200 bg-slate-50/60 p-2">
+            {isProjectFilter && !search.trim() && filtered.length === 0 && (
+              <li className="px-1.5 py-2 text-xs text-slate-500">
+                Napište min. 2 znaky pro vyhledání projektů.
+              </li>
+            )}
             {filtered.map((val) => {
               const isChecked = selectedSet.has(val);
               return (

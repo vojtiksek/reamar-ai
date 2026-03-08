@@ -881,6 +881,7 @@ export default function ProjectsPage() {
                   type="button"
                   onClick={() => downloadProjectsCsv(projects, visibleColumns)}
                   disabled={projects.length === 0 || loading}
+                  title="Export aktuální stránky do CSV (UTF-8)"
                   className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Export CSV

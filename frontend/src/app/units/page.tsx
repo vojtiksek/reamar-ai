@@ -852,8 +852,7 @@ export default function Home() {
         if (interactive) return;
       }
 
-      // Ignore modified or non-left clicks
-      if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      if (e.defaultPrevented || e.shiftKey || e.altKey || e.button !== 0) return;
 
       const externalId = getExternalIdForRow(u);
       if (!externalId) {
@@ -861,6 +860,12 @@ export default function Home() {
           // eslint-disable-next-line no-console
           console.warn("[UnitsPage] Missing externalId for row", u);
         }
+        return;
+      }
+
+      // Ctrl/Cmd + klik nebo střední tlačítko → otevřít detail v novém tabu
+      if (e.metaKey || e.ctrlKey || e.button === 1) {
+        window.open(`/units/${encodeURIComponent(externalId)}`, "_blank", "noopener,noreferrer");
         return;
       }
 
@@ -1174,6 +1179,7 @@ export default function Home() {
                   type="button"
                   onClick={() => downloadUnitsCsv(units, visibleColumns)}
                   disabled={units.length === 0 || loading}
+                  title="Export aktuální stránky do CSV (UTF-8)"
                   className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Export CSV
