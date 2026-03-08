@@ -47,7 +47,24 @@ _DECIMAL_FIELDS = frozenset(
 _STR_FIELDS = frozenset({"availability_status", "layout", "orientation", "url"})
 
 # Project-level overrideable fields (catalog column keys) derived from field_catalog.csv
-PROJECT_OVERRIDEABLE_FIELDS = frozenset(get_project_overrideable_fields())
+_PROJECT_OVERRIDEABLE_FROM_CATALOG = frozenset(get_project_overrideable_fields())
+
+# Additional fields that can be overridden at project level (unit-level fields applied to all units)
+# Used for Standardy: user edits on project detail apply to project and to every unit in lists/detail.
+_PROJECT_OVERRIDE_TYPE_FALLBACK: dict[str, str] = {
+    "renovation": "bool",
+    "heating": "enum",
+    "category": "enum",
+    "floors": "text",
+    "air_conditioning": "bool",
+    "cooling_ceilings": "bool",
+    "exterior_blinds": "bool",
+    "smart_home": "bool",
+}
+
+PROJECT_OVERRIDEABLE_FIELDS = _PROJECT_OVERRIDEABLE_FROM_CATALOG | frozenset(
+    _PROJECT_OVERRIDE_TYPE_FALLBACK
+)
 
 
 def _parse_int(value: str) -> int | None:
@@ -193,7 +210,7 @@ def apply_project_overrides_to_item(
     }
 
     for field, raw in overrides.items():
-        data_type = col_types.get(field, "text")
+        data_type = col_types.get(field) or _PROJECT_OVERRIDE_TYPE_FALLBACK.get(field, "text")
         parsed = _parse_project_override_value(raw, data_type)
         if parsed is None and data_type in ("number", "bool"):
             continue
@@ -202,8 +219,8 @@ def apply_project_overrides_to_item(
             if attr is not None and attr in item:
                 item[attr] = parsed
         else:
-            if field in item:
-                item[field] = parsed
+            # Set on item so project and unit dicts get override (e.g. heating on unit data)
+            item[field] = parsed
     return item
 
 

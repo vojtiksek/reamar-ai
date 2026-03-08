@@ -3,11 +3,17 @@
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
-import { formatCurrencyCzk, formatPercent } from "@/lib/format";
+import type { FiltersResponse } from "@/lib/filters";
+import { flattenFilterSpecsByKey } from "@/lib/filters";
+import {
+  formatCurrencyCzk,
+  formatMinutes,
+  formatPercent,
+  formatValue as formatValueLib,
+} from "@/lib/format";
 
 const ProjectDetailMap = dynamic(
   () => import("@/app/units/[external_id]/UnitDetailMap"),
@@ -15,16 +21,6 @@ const ProjectDetailMap = dynamic(
 );
 
 type ProjectDetail = Record<string, unknown>;
-
-type ProjectColumn = {
-  key: string;
-  label: string;
-  data_type: string;
-  unit?: string | null;
-  kind?: "catalog" | "computed";
-  editable?: boolean | string | number | null;
-  entity?: string | null;
-};
 
 type FetchState<T> = {
   data: T | null;
@@ -44,20 +40,6 @@ type UnitInProject = {
   project?: { name?: string };
 };
 
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined || value === "") return "—";
-  if (typeof value === "boolean") return value ? "ANO" : "NE";
-  return String(value);
-}
-
-function parseBool(value: unknown): boolean {
-  if (typeof value === "boolean") return value;
-  const s = String(value ?? "").toLowerCase();
-  if (["true", "1", "yes", "ano", "on"].includes(s)) return true;
-  if (["false", "0", "no", "ne", "off"].includes(s)) return false;
-  return false;
-}
-
 export default function ProjectDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -71,50 +53,51 @@ export default function ProjectDetailPage() {
     loading: true,
     error: null,
   });
-  const [originalProject, setOriginalProject] = useState<ProjectDetail | null>(null);
-  const [columnsState, setColumnsState] = useState<FetchState<ProjectColumn[]>>({
-    data: null,
-    loading: true,
-    error: null,
-  });
-  const [editMode, setEditMode] = useState(false);
-  const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
-  const [saving, setSaving] = useState(false);
   const [unitsState, setUnitsState] = useState<FetchState<UnitInProject[]>>({
     data: null,
     loading: false,
     error: null,
   });
+  const [filtersState, setFiltersState] = useState<FetchState<FiltersResponse>>({
+    data: null,
+    loading: false,
+    error: null,
+  });
+  const [editMode, setEditMode] = useState(false);
+  const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
+  const [saving, setSaving] = useState(false);
+
+  const filterSpecsByKey = useMemo(
+    () => (filtersState.data?.groups ? flattenFilterSpecsByKey(filtersState.data.groups) : new Map()),
+    [filtersState.data]
+  );
 
   useEffect(() => {
     if (!projectId) return;
 
     setProjectState({ data: null, loading: true, error: null });
-    setColumnsState({ data: null, loading: true, error: null });
-
-    Promise.all([
-      fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(res.statusText))
-      ),
-      fetch(`${API_BASE}/columns?view=projects`).then((res) =>
-        res.ok ? res.json() : Promise.reject(new Error(res.statusText))
-      ),
-    ])
-      .then(([projectJson, columnsJson]) => {
+    fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((projectJson) => {
         setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
-        setOriginalProject(projectJson as ProjectDetail);
-        setColumnsState({
-          data: Array.isArray(columnsJson) ? (columnsJson as ProjectColumn[]) : [],
-          loading: false,
-          error: null,
-        });
       })
       .catch((e) => {
         const msg = e instanceof Error ? e.message : "Chyba";
         setProjectState({ data: null, loading: false, error: msg });
-        setColumnsState({ data: null, loading: false, error: msg });
       });
   }, [projectId]);
+
+  useEffect(() => {
+    setFiltersState((prev) => ({ ...prev, loading: true }));
+    fetch(`${API_BASE}/filters`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((data: FiltersResponse) => {
+        setFiltersState({ data, loading: false, error: null });
+      })
+      .catch(() => {
+        setFiltersState({ data: null, loading: false, error: null });
+      });
+  }, []);
 
   // Načíst jednotky v projektu (podle názvu projektu)
   useEffect(() => {
@@ -145,52 +128,6 @@ export default function ProjectDetailPage() {
       });
   }, [projectState.data, projectState.loading]);
 
-  const editableColumns = useMemo(() => {
-    if (!columnsState.data) return [] as ProjectColumn[];
-    const base = columnsState.data.filter((c) => isEditableCatalogColumn(c, { entity: "project" }));
-
-    // Pro financování/parkování chceme pouze jednu hodnotu na projekt (bez "od"/"do").
-    // Skryjeme tedy max_* varianty a u min_* přepíšeme label na finální název pole.
-    const HIDE_KEYS = new Set<string>([
-      "max_parking_indoor_price_czk",
-      "max_parking_outdoor_price_czk",
-      "max_payment_contract",
-      "max_payment_construction",
-      "max_payment_occupancy",
-    ]);
-
-    const SINGLE_VALUE_LABELS: Record<string, string> = {
-      min_parking_indoor_price_czk: "Cena garáže (projekt)",
-      min_parking_outdoor_price_czk: "Cena stání (projekt)",
-      min_payment_contract: "Platba po SOSBK",
-      min_payment_construction: "Platba při výstavbě",
-      min_payment_occupancy: "Platba po dokončení",
-    };
-
-    const cols = base
-      .filter((c) => !HIDE_KEYS.has(c.key))
-      .map((c) =>
-        SINGLE_VALUE_LABELS[c.key]
-          ? { ...c, label: SINGLE_VALUE_LABELS[c.key] }
-          : c
-      );
-
-    if (process.env.NODE_ENV === "development" && debugMode && columnsState.data.length > 0) {
-      // Debug: help diagnose why no editable fields are shown
-      // eslint-disable-next-line no-console
-      console.log(
-        "[ProjectDetail] columns loaded:",
-        columnsState.data.length,
-        "editable (after single-value filtering):",
-        cols.length,
-        "sample:",
-        columnsState.data[0]
-      );
-    }
-
-    return cols;
-  }, [columnsState.data, debugMode]);
-
   const project = projectState.data;
 
   // Name can come from catalog key "project" (alias for name) or "name"
@@ -203,81 +140,163 @@ export default function ProjectDetailPage() {
   const projectGpsLng =
     project != null ? ((project["gps_longitude"] as number | null | undefined) ?? null) : null;
 
-  const handleStartEdit = () => {
-    if (!project) return;
-    const nextDraft: Record<string, unknown> = {};
-    editableColumns.forEach((col) => {
-      if (col.key in project) {
-        const val = project[col.key];
-        if (col.data_type === "bool") {
-          nextDraft[col.key] = parseBool(val);
-        } else {
-          nextDraft[col.key] = val ?? "";
-        }
-      }
-    });
-    setDraftValues(nextDraft);
-    setEditMode(true);
-  };
+  const EDITABLE_PREHLED = ["project_url"] as const;
+  const EDITABLE_FINANCOVANI = [
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
+    "min_parking_indoor_price_czk",
+    "min_parking_outdoor_price_czk",
+  ] as const;
+  const EDITABLE_STANDARDY = [
+    "renovation",
+    "overall_quality",
+    "windows",
+    "partition_walls",
+    "heating",
+    "category",
+    "floors",
+    "air_conditioning",
+    "cooling_ceilings",
+    "exterior_blinds",
+    "smart_home",
+  ] as const;
+  const EDITABLE_OSTATNI = ["amenities"] as const;
 
-  const handleCancel = () => {
+  const fillDraftFromProject = useCallback((p: ProjectDetail) => {
+    const draft: Record<string, unknown> = {};
+    for (const key of EDITABLE_PREHLED) {
+      const v = p[key];
+      draft[key] = v != null && v !== "" ? String(v) : "";
+    }
+    for (const key of EDITABLE_FINANCOVANI) {
+      const v = p[key];
+      if (key.startsWith("payment_")) {
+        const num = typeof v === "number" ? v : Number(v);
+        draft[key] = Number.isNaN(num) ? "" : (num > 1 ? num : num * 100);
+      } else {
+        draft[key] = v != null && v !== "" ? (typeof v === "number" ? v : Math.round(Number(v)) || "") : "";
+      }
+    }
+    for (const key of EDITABLE_STANDARDY) {
+      const v = p[key];
+      if (key === "renovation" || key === "air_conditioning" || key === "cooling_ceilings" || key === "exterior_blinds" || key === "smart_home") {
+        draft[key] = v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano";
+      } else {
+        draft[key] = v != null && v !== "" ? String(v) : "";
+      }
+    }
+    for (const key of EDITABLE_OSTATNI) {
+      const v = p[key];
+      draft[key] = v != null && v !== "" ? String(v) : "";
+    }
+    return draft;
+  }, []);
+
+  const handleStartEdit = useCallback(() => {
+    if (!project) return;
+    setDraftValues(fillDraftFromProject(project));
+    setEditMode(true);
+  }, [project, fillDraftFromProject]);
+
+  const handleCancel = useCallback(() => {
     setEditMode(false);
     setDraftValues({});
-    if (originalProject) {
-      setProjectState((prev) => ({ ...prev, data: originalProject }));
-    }
-  };
+  }, []);
 
-  const handleChangeDraft = (key: string, value: unknown) => {
+  const handleChangeDraft = useCallback((key: string, value: unknown) => {
     setDraftValues((prev) => ({ ...prev, [key]: value }));
-  };
+  }, []);
 
-  const handleSave = async () => {
-    if (!project || !originalProject || !projectId) return;
+  const handleSave = useCallback(async () => {
+    if (!project || !projectId) return;
     setSaving(true);
-    let current: ProjectDetail = project;
-    try {
-      const changedColumns = editableColumns.filter((col) => {
-        const key = col.key;
-        if (!(key in draftValues)) return false;
-        const nextVal = draftValues[key];
-        const prevVal = originalProject[key];
-        return String(nextVal ?? "") !== String(prevVal ?? "");
-      });
+    const allEditable = [
+      ...EDITABLE_PREHLED,
+      ...EDITABLE_FINANCOVANI,
+      ...EDITABLE_STANDARDY,
+      ...EDITABLE_OSTATNI,
+    ];
+    const changes: { key: string; value: string }[] = [];
+    for (const key of allEditable) {
+      const draftVal = draftValues[key];
+      const currentVal = project[key];
+      let isChanged = false;
+      let payload = "";
 
-      for (const col of changedColumns) {
-        const key = col.key;
-        const rawVal = draftValues[key];
-        const payloadValue =
-          rawVal === undefined || rawVal === null ? "" : col.data_type === "bool" ? String(!!rawVal) : String(rawVal);
-
-        const res = await fetch(
-          `${API_BASE}/projects/${encodeURIComponent(projectId)}/overrides/${encodeURIComponent(key)}`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ value: payloadValue }),
+      if (key.startsWith("payment_")) {
+        const draftNum = Number(draftVal);
+        const draftFraction = Number.isNaN(draftNum) ? null : draftNum > 1 ? draftNum / 100 : draftNum;
+        const currentFraction = typeof currentVal === "number" ? currentVal : currentVal != null ? Number(currentVal) : null;
+        if (draftFraction != null && draftFraction >= 0 && draftFraction <= 1) {
+          const same = currentFraction != null && Math.abs(draftFraction - currentFraction) < 1e-6;
+          if (!same) {
+            isChanged = true;
+            payload = String(Math.round(draftFraction * 10000) / 10000);
           }
-        );
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || `Failed to save override for ${key}`);
+        } else if (draftVal === "" && currentVal != null) {
+          isChanged = true;
+          payload = "";
         }
-        const updated = (await res.json()) as ProjectDetail;
-        current = updated;
+      } else if (key === "min_parking_indoor_price_czk" || key === "min_parking_outdoor_price_czk") {
+        const n = draftVal === "" ? null : Math.round(Number(draftVal));
+        const cur = currentVal != null ? Math.round(Number(currentVal)) : null;
+        if (String(n ?? "") !== String(cur ?? "")) {
+          isChanged = true;
+          payload = n != null && !Number.isNaN(n) ? String(n) : "";
+        }
+      } else if (
+        key === "renovation" ||
+        key === "air_conditioning" ||
+        key === "cooling_ceilings" ||
+        key === "exterior_blinds" ||
+        key === "smart_home"
+      ) {
+        const draftBool = draftVal === true || draftVal === "true" || draftVal === "1";
+        const curBool = currentVal === true || currentVal === "true" || currentVal === "1";
+        if (draftBool !== curBool) {
+          isChanged = true;
+          payload = draftBool ? "true" : "false";
+        }
+      } else {
+        const draftStr = draftVal == null ? "" : String(draftVal).trim();
+        const currentStr = currentVal == null ? "" : String(currentVal).trim();
+        if (draftStr !== currentStr) {
+          isChanged = true;
+          payload = draftStr;
+        }
       }
 
-      setProjectState((prev) => ({ ...prev, data: current }));
-      setOriginalProject(current);
+      if (isChanged) {
+        changes.push({ key, value: payload });
+      }
+    }
+    try {
+      let updated = { ...project };
+      for (const { key, value } of changes) {
+        const res = await fetch(
+          `${API_BASE}/projects/${encodeURIComponent(projectId)}/overrides/${encodeURIComponent(key)}`,
+          { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ value }) }
+        );
+        if (!res.ok) throw new Error(await res.text());
+        updated = (await res.json()) as ProjectDetail;
+      }
+      setProjectState((prev) => ({ ...prev, data: updated }));
       setEditMode(false);
       setDraftValues({});
     } catch (e) {
-      const msg = e instanceof Error ? e.message : "Chyba při ukládání";
-      setProjectState((prev) => ({ ...prev, error: msg }));
+      setProjectState((prev) => ({
+        ...prev,
+        error: e instanceof Error ? e.message : "Chyba při ukládání",
+      }));
     } finally {
       setSaving(false);
     }
-  };
+  }, [project, projectId, draftValues]);
+
+  const draft = (key: string) => (editMode && key in draftValues ? draftValues[key] : undefined);
+  const displayOrDraft = (key: string, fallback: unknown) =>
+    draft(key) !== undefined ? draft(key) : fallback;
 
   if (projectState.loading) {
     return (
@@ -353,7 +372,7 @@ export default function ProjectDetailPage() {
                 type="button"
                 onClick={handleStartEdit}
                 disabled={saving}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
               >
                 Editovat
               </button>
@@ -363,9 +382,9 @@ export default function ProjectDetailPage() {
                   type="button"
                   onClick={handleSave}
                   disabled={saving}
-                  className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                 >
-                  Uložit
+                  {saving ? "Ukládám…" : "Uložit"}
                 </button>
                 <button
                   type="button"
@@ -398,16 +417,126 @@ export default function ProjectDetailPage() {
                 <p className="mt-0.5 font-medium text-slate-900">{developer}</p>
               </div>
               <div>
-                <p className="text-xs font-medium text-slate-500">Adresa</p>
-                <p className="mt-0.5 font-medium text-slate-900">{address}</p>
+                <p className="text-xs font-medium text-slate-500">Odkaz projektu</p>
+                {editMode ? (
+                  <input
+                    type="url"
+                    className="mt-0.5 w-full max-w-md rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                    value={(displayOrDraft("project_url", project["project_url"]) as string) ?? ""}
+                    onChange={(e) => handleChangeDraft("project_url", e.target.value)}
+                    placeholder="https://…"
+                  />
+                ) : (project["project_url"] as string | undefined) ? (
+                  <p className="mt-0.5 font-medium text-slate-900">
+                    <a
+                      href={project["project_url"] as string}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600"
+                    >
+                      {(project["project_url"] as string).replace(/^https?:\/\//i, "").replace(/\/$/, "")}
+                    </a>
+                  </p>
+                ) : (
+                  <p className="mt-0.5 font-medium text-slate-900">—</p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Dní na trhu (max)</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["max_days_on_market"] != null ? `${project["max_days_on_market"]} dní` : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">První výskyt</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["project_first_seen"] as string | undefined) ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Poslední výskyt</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["project_last_seen"] as string | undefined) ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Datum prodeje</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["sold_date"] as string | undefined) ?? "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Počet jednotek</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["total_units"] != null ? String(project["total_units"]) : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Dostupných jednotek</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["available_units"] != null ? String(project["available_units"]) : "—"}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Podíl dostupných</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatPercent(
+                    (project["availability_ratio"] as number | null | undefined) ?? null,
+                    undefined,
+                    true
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Min cena</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    (project["min_price_czk"] as number | null | undefined) ?? null
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Max cena</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    (project["max_price_czk"] as number | null | undefined) ?? null
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Průměrná cena</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    (project["avg_price_czk"] as number | null | undefined) ?? null
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Průměrná cena/m²</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    (project["avg_price_per_m2_czk"] as number | null | undefined) ?? null
+                  )}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Průměrná plocha m²</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["avg_floor_area_m2"] != null
+                    ? `${Number(project["avg_floor_area_m2"]).toLocaleString("cs-CZ")} m²`
+                    : "—"}
+                </p>
               </div>
             </div>
           </section>
 
           {projectGpsLat != null && projectGpsLng != null && (
             <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-                Poloha
+              <h2 className="mb-4 text-sm font-semibold tracking-wide text-slate-500">
+                <span className="uppercase">Poloha</span>:{" "}
+                <span className="font-medium normal-case text-slate-900">
+                  {address || name || "—"}
+                </span>
               </h2>
               <ProjectDetailMap
                 lat={projectGpsLat}
@@ -418,140 +547,493 @@ export default function ProjectDetailPage() {
           )}
         </div>
 
-        {/* Shrnutí financování a parkování */}
+        {/* Financování a parkování – celá šířka */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Shrnutí financování a parkování
+            Financování a parkování
           </h2>
-          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Platba po SOSBK</p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Platba po SOSBK (%)</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={
+                    draft("payment_contract") !== undefined
+                      ? String(draft("payment_contract"))
+                      : (project["payment_contract"] as number) != null
+                        ? ((project["payment_contract"] as number) > 1
+                          ? (project["payment_contract"] as number)
+                          : (project["payment_contract"] as number) * 100)
+                        : ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
+                    handleChangeDraft("payment_contract", v);
+                  }}
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatPercent(
+                    (project["payment_contract"] as number | null | undefined) ?? null,
+                    undefined,
+                    true
+                  )}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Platba při výstavbě (%)</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={
+                    draft("payment_construction") !== undefined
+                      ? String(draft("payment_construction"))
+                      : (project["payment_construction"] as number) != null
+                        ? ((project["payment_construction"] as number) > 1
+                          ? (project["payment_construction"] as number)
+                          : (project["payment_construction"] as number) * 100)
+                        : ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
+                    handleChangeDraft("payment_construction", v);
+                  }}
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatPercent(
+                    (project["payment_construction"] as number | null | undefined) ?? null,
+                    undefined,
+                    true
+                  )}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Platba po dokončení (%)</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={
+                    draft("payment_occupancy") !== undefined
+                      ? String(draft("payment_occupancy"))
+                      : (project["payment_occupancy"] as number) != null
+                        ? ((project["payment_occupancy"] as number) > 1
+                          ? (project["payment_occupancy"] as number)
+                          : (project["payment_occupancy"] as number) * 100)
+                        : ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
+                    handleChangeDraft("payment_occupancy", v);
+                  }}
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatPercent(
+                    (project["payment_occupancy"] as number | null | undefined) ?? null,
+                    undefined,
+                    true
+                  )}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Cena garáže (Kč)</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={
+                    (displayOrDraft(
+                      "min_parking_indoor_price_czk",
+                      (project["min_parking_indoor_price_czk"] ?? project["max_parking_indoor_price_czk"]) ?? ""
+                    ) as string) || ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value)));
+                    handleChangeDraft("min_parking_indoor_price_czk", v);
+                  }}
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
+                      (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
+                  )}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Cena stání (Kč)</p>
+              {editMode ? (
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={
+                    (displayOrDraft(
+                      "min_parking_outdoor_price_czk",
+                      (project["min_parking_outdoor_price_czk"] ?? project["max_parking_outdoor_price_czk"]) ?? ""
+                    ) as string) || ""
+                  }
+                  onChange={(e) => {
+                    const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value)));
+                    handleChangeDraft("min_parking_outdoor_price_czk", v);
+                  }}
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(
+                    ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
+                      (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
+                  )}
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Standardy – všechna pole upravitelná, enum z filtrů */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Standardy
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Rekonstrukce</p>
+              {editMode ? (
+                <label className="mt-0.5 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300"
+                    checked={draft("renovation") === true || draft("renovation") === "true"}
+                    onChange={(e) => handleChangeDraft("renovation", e.target.checked)}
+                  />
+                  <span className="text-sm text-slate-900">
+                    {(draft("renovation") === true || draft("renovation") === "true") ? "Ano" : "Ne"}
+                  </span>
+                </label>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatValueLib(project["renovation"], { display_format: "boolean", key: "renovation" })}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Kvalita</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("overall_quality", project["overall_quality"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("overall_quality", e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(filterSpecsByKey.get("overall_quality")?.options as string[] | undefined)?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["overall_quality"] as string | null | undefined) ?? "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Okna</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("windows", project["windows"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("windows", e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(filterSpecsByKey.get("windows")?.options as string[] | undefined)?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["windows"] as string | null | undefined) ?? "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Příčky</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("partition_walls", project["partition_walls"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("partition_walls", e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(filterSpecsByKey.get("partition_walls")?.options as string[] | undefined)?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["partition_walls"] as string | null | undefined) ?? "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Topení</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("heating", project["heating"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("heating", e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(filterSpecsByKey.get("heating")?.options as string[] | undefined)?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["heating"] as string | null | undefined) ?? "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Kategorie</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("category", project["category"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("category", e.target.value)}
+                >
+                  <option value="">—</option>
+                  {(filterSpecsByKey.get("category")?.options as string[] | undefined)?.map((opt) => (
+                    <option key={opt} value={opt}>{opt}</option>
+                  ))}
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {(project["category"] as string | null | undefined) ?? "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Podlaží (budovy)</p>
+              {editMode ? (
+                (() => {
+                  const floorsOpts = filterSpecsByKey.get("floors")?.options as string[] | undefined;
+                  if (floorsOpts?.length) {
+                    return (
+                      <select
+                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={(displayOrDraft("floors", project["floors"]) as string) ?? ""}
+                        onChange={(e) => handleChangeDraft("floors", e.target.value)}
+                      >
+                        <option value="">—</option>
+                        {floorsOpts.map((opt) => (
+                          <option key={String(opt)} value={String(opt)}>{String(opt)}</option>
+                        ))}
+                      </select>
+                    );
+                  }
+                  return (
+                    <input
+                      type="text"
+                      className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      value={(displayOrDraft("floors", project["floors"]) as string) ?? ""}
+                      onChange={(e) => handleChangeDraft("floors", e.target.value)}
+                    />
+                  );
+                })()
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["floors"] != null && project["floors"] !== "" ? String(project["floors"]) : "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Klimatizace</p>
+              {editMode ? (
+                <label className="mt-0.5 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300"
+                    checked={draft("air_conditioning") === true || draft("air_conditioning") === "true"}
+                    onChange={(e) => handleChangeDraft("air_conditioning", e.target.checked)}
+                  />
+                  <span className="text-sm text-slate-900">
+                    {(draft("air_conditioning") === true || draft("air_conditioning") === "true") ? "Ano" : "Ne"}
+                  </span>
+                </label>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatValueLib(project["air_conditioning"], { display_format: "boolean", key: "air_conditioning" })}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Chlazení stropem</p>
+              {editMode ? (
+                <label className="mt-0.5 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300"
+                    checked={draft("cooling_ceilings") === true || draft("cooling_ceilings") === "true"}
+                    onChange={(e) => handleChangeDraft("cooling_ceilings", e.target.checked)}
+                  />
+                  <span className="text-sm text-slate-900">
+                    {(draft("cooling_ceilings") === true || draft("cooling_ceilings") === "true") ? "Ano" : "Ne"}
+                  </span>
+                </label>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatValueLib(project["cooling_ceilings"], { display_format: "boolean", key: "cooling_ceilings" })}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Žaluzie</p>
+              {editMode ? (
+                <label className="mt-0.5 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300"
+                    checked={draft("exterior_blinds") === true || draft("exterior_blinds") === "true"}
+                    onChange={(e) => handleChangeDraft("exterior_blinds", e.target.checked)}
+                  />
+                  <span className="text-sm text-slate-900">
+                    {(draft("exterior_blinds") === true || draft("exterior_blinds") === "true") ? "Ano" : "Ne"}
+                  </span>
+                </label>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatValueLib(project["exterior_blinds"], { display_format: "boolean", key: "exterior_blinds" })}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Smart home</p>
+              {editMode ? (
+                <label className="mt-0.5 flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 rounded border-slate-300"
+                    checked={draft("smart_home") === true || draft("smart_home") === "true"}
+                    onChange={(e) => handleChangeDraft("smart_home", e.target.checked)}
+                  />
+                  <span className="text-sm text-slate-900">
+                    {(draft("smart_home") === true || draft("smart_home") === "true") ? "Ano" : "Ne"}
+                  </span>
+                </label>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatValueLib(project["smart_home"], { display_format: "boolean", key: "smart_home" })}
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Lokalita */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Lokalita
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Autem do centra</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {formatPercent(
-                  (project["payment_contract"] as number | null | undefined) ?? null,
-                  undefined,
-                  true
+                {formatMinutes(
+                  (project["ride_to_center_min"] as number | null | undefined) ??
+                    (project["ride_to_center"] as number | null | undefined) ??
+                    null
                 )}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Platba při výstavbě</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">MHD do centra</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {formatPercent(
-                  (project["payment_construction"] as number | null | undefined) ?? null,
-                  undefined,
-                  true
+                {formatMinutes(
+                  (project["public_transport_to_center_min"] as number | null | undefined) ??
+                    (project["public_transport_to_center"] as number | null | undefined) ??
+                    null
                 )}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Platba po dokončení</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Obec</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {formatPercent(
-                  (project["payment_occupancy"] as number | null | undefined) ?? null,
-                  undefined,
-                  true
-                )}
+                {(project["municipality"] as string | null | undefined) ?? "—"}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Cena garáže (projekt)</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Město</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {formatCurrencyCzk(
-                  ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
-                    (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
-                )}
+                {(project["city"] as string | null | undefined) ?? "—"}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Cena stání (projekt)</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Okres</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {formatCurrencyCzk(
-                  ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
-                    (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
-                )}
+                {(project["district"] as string | null | undefined) ?? "—"}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Dní na trhu (max)</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Katastrální území</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["max_days_on_market"] != null ? `${project["max_days_on_market"]} dní` : "—"}
+                {(project["cadastral_area_iga"] as string | null | undefined) ?? "—"}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">První výskyt (projekt)</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Obvod Prahy</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {(project["project_first_seen"] as string | undefined) ?? "—"}
+                {(project["administrative_district_iga"] as string | null | undefined) ?? "—"}
               </p>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-slate-500">Poslední výskyt (projekt)</p>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Kraj</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {(project["project_last_seen"] as string | undefined) ?? "—"}
+                {(project["region_iga"] as string | null | undefined) ?? "—"}
               </p>
             </div>
           </div>
         </section>
 
-        {/* Data o projektu (upravitelné údaje) */}
+        {/* Ostatní – Zajímavosti upravitelné */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Data o projektu
+            Ostatní
           </h2>
-          {debugMode && (
-            <p className="mb-3 text-xs text-slate-500">
-              Sloupců: {columnsState.data?.length ?? 0}, upravitelných: {editableColumns.length}
-            </p>
-          )}
-          {columnsState.loading ? (
-            <p className="text-sm text-slate-600">Načítání sloupců…</p>
-          ) : editableColumns.length === 0 ? (
-            <p className="text-sm text-slate-600">Žádná upravitelná pole.</p>
-          ) : (
-            <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {editableColumns.map((col) => {
-                const key = col.key;
-                if (!(key in project)) return null;
-                const currentValue = project[key];
-                const draftValue = draftValues[key];
-
-                return (
-                  <div key={key} className="min-w-0">
-                    <p className="text-xs font-medium text-slate-500">{col.label}</p>
-                    {!editMode ? (
-                      <p className="mt-0.5 font-medium text-slate-900">{formatValue(currentValue)}</p>
-                    ) : col.data_type === "bool" ? (
-                      <label className="mt-0.5 flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 rounded border-slate-300"
-                          checked={parseBool(draftValue)}
-                          onChange={(e) => handleChangeDraft(key, e.target.checked)}
-                        />
-                        <span className="text-sm text-slate-900">
-                          {parseBool(draftValue) ? "Ano" : "Ne"}
-                        </span>
-                      </label>
-                    ) : col.data_type === "number" ? (
-                      <input
-                        type="number"
-                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={(draftValue as number | string) ?? ""}
-                        onChange={(e) => handleChangeDraft(key, e.target.value)}
-                      />
-                    ) : (
-                      <input
-                        type="text"
-                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={(draftValue as string) ?? ""}
-                        onChange={(e) => handleChangeDraft(key, e.target.value)}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
+          <div>
+            <p className="text-xs font-medium text-slate-500">Zajímavosti</p>
+            {editMode ? (
+              <textarea
+                className="mt-0.5 w-full max-w-2xl rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                rows={4}
+                value={(displayOrDraft("amenities", project["amenities"]) as string) ?? ""}
+                onChange={(e) => handleChangeDraft("amenities", e.target.value)}
+              />
+            ) : (
+              <p className="mt-0.5 font-medium text-slate-900 whitespace-pre-wrap">
+                {(project["amenities"] as string | null | undefined) ?? "—"}
+              </p>
+            )}
+          </div>
         </section>
 
         {/* Jednotky v projektu */}
