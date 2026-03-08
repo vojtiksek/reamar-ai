@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import asc, case, desc, func, or_, select
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session, aliased, selectinload
 
 from .column_catalog import get_columns as get_column_definitions
 from .db import check_db_connection, get_db_session
@@ -227,6 +227,7 @@ def _get_project_or_404(db: Session, project_id: int) -> Project:
 def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
     """Load overrides for unit and return UnitResponse with overrides applied.
     Injects project aggregates (total_units, available_units, etc.) into data when available.
+    Aplikuje i project overrides – úpravy na stránce projektu se promítnou do jednotky.
     """
     override_rows = (
         db.execute(
@@ -270,6 +271,21 @@ def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
         data["project_last_seen"] = agg_row.project_last_seen
         data["max_days_on_market"] = agg_row.max_days_on_market
         d["data"] = data
+
+    # Aplikovat project overrides – úpravy na stránce projektu se promítnou do jednotky
+    proj_override_rows = (
+        db.execute(
+            select(ProjectOverride).where(
+                ProjectOverride.project_id == unit.project_id,
+                ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    project_override_map = build_project_override_map(proj_override_rows)
+    apply_project_overrides_to_item(unit.project_id, d["data"], project_override_map, attr_keyed=False)
+    apply_project_overrides_to_item(unit.project_id, d["project"], project_override_map, attr_keyed=True)
 
     pending_rows = (
         db.execute(
@@ -856,17 +872,55 @@ def _build_units_query(
     if layout is not None and len(layout) > 0:
         base = base.where(Unit.layout.in_(layout))
     if district is not None and len(district) > 0:
-        base = base.where(Unit.district.in_(district))
+        po_district = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_district,
+            (po_district.project_id == Unit.project_id) & (po_district.field == "district"),
+        )
+        base = base.where(coalesce(po_district.value, Unit.district).in_(district))
     if municipality is not None and len(municipality) > 0:
-        base = base.where(Unit.municipality.in_(municipality))
+        po_municipality = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_municipality,
+            (po_municipality.project_id == Unit.project_id) & (po_municipality.field == "municipality"),
+        )
+        base = base.where(coalesce(po_municipality.value, Unit.municipality).in_(municipality))
     if heating is not None and len(heating) > 0:
-        base = base.where(Unit.heating.in_(heating))
+        po_heating = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_heating,
+            (po_heating.project_id == Unit.project_id) & (po_heating.field == "heating"),
+        )
+        base = base.where(coalesce(po_heating.value, Unit.heating).in_(heating))
     if windows is not None and len(windows) > 0:
-        base = base.where(Unit.windows.in_(windows))
+        po_windows = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_windows,
+            (po_windows.project_id == Unit.project_id) & (po_windows.field == "windows"),
+        )
+        base = base.where(coalesce(po_windows.value, Unit.windows).in_(windows))
     if permit_regular is not None:
-        base = base.where(Unit.permit_regular.is_(permit_regular))
+        po_permit = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_permit,
+            (po_permit.project_id == Unit.project_id) & (po_permit.field == "permit_regular"),
+        )
+        eff_permit = case(
+            (po_permit.value.isnot(None), func.lower(po_permit.value) == "true"),
+            else_=Unit.permit_regular,
+        )
+        base = base.where(eff_permit.is_(permit_regular))
     if renovation is not None:
-        base = base.where(Unit.renovation.is_(renovation))
+        po_renovation = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_renovation,
+            (po_renovation.project_id == Unit.project_id) & (po_renovation.field == "renovation"),
+        )
+        eff_renovation = case(
+            (po_renovation.value.isnot(None), func.lower(po_renovation.value) == "true"),
+            else_=Unit.renovation,
+        )
+        base = base.where(eff_renovation.is_(renovation))
     if air_conditioning is not None:
         base = base.where(Unit.air_conditioning.is_(air_conditioning))
     if cooling_ceilings is not None:
@@ -927,21 +981,61 @@ def _build_units_query(
     if category is not None and len(category) > 0:
         base = base.where(Unit.category.in_(category))
     if overall_quality is not None and len(overall_quality) > 0:
-        base = base.where(Unit.overall_quality.in_(overall_quality))
+        po_overall_quality = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_overall_quality,
+            (po_overall_quality.project_id == Unit.project_id) & (po_overall_quality.field == "overall_quality"),
+        )
+        base = base.where(coalesce(po_overall_quality.value, Unit.overall_quality).in_(overall_quality))
     if partition_walls is not None and len(partition_walls) > 0:
-        base = base.where(Unit.partition_walls.in_(partition_walls))
+        po_partition_walls = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_partition_walls,
+            (po_partition_walls.project_id == Unit.project_id) & (po_partition_walls.field == "partition_walls"),
+        )
+        base = base.where(coalesce(po_partition_walls.value, Unit.partition_walls).in_(partition_walls))
     if city is not None and len(city) > 0:
-        base = base.where(Unit.city.in_(city))
+        po_city = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_city,
+            (po_city.project_id == Unit.project_id) & (po_city.field == "city"),
+        )
+        base = base.where(coalesce(po_city.value, Unit.city).in_(city))
     if cadastral_area_iga is not None and len(cadastral_area_iga) > 0:
-        base = base.where(Unit.cadastral_area_iga.in_(cadastral_area_iga))
+        po_cadastral = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_cadastral,
+            (po_cadastral.project_id == Unit.project_id) & (po_cadastral.field == "cadastral_area_iga"),
+        )
+        base = base.where(coalesce(po_cadastral.value, Unit.cadastral_area_iga).in_(cadastral_area_iga))
     if municipal_district_iga is not None and len(municipal_district_iga) > 0:
-        base = base.where(Unit.municipal_district_iga.in_(municipal_district_iga))
+        po_municipal_district = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_municipal_district,
+            (po_municipal_district.project_id == Unit.project_id) & (po_municipal_district.field == "municipal_district_iga"),
+        )
+        base = base.where(coalesce(po_municipal_district.value, Unit.municipal_district_iga).in_(municipal_district_iga))
     if administrative_district_iga is not None and len(administrative_district_iga) > 0:
-        base = base.where(Unit.administrative_district_iga.in_(administrative_district_iga))
+        po_admin_district = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_admin_district,
+            (po_admin_district.project_id == Unit.project_id) & (po_admin_district.field == "administrative_district_iga"),
+        )
+        base = base.where(coalesce(po_admin_district.value, Unit.administrative_district_iga).in_(administrative_district_iga))
     if region_iga is not None and len(region_iga) > 0:
-        base = base.where(Unit.region_iga.in_(region_iga))
+        po_region = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_region,
+            (po_region.project_id == Unit.project_id) & (po_region.field == "region_iga"),
+        )
+        base = base.where(coalesce(po_region.value, Unit.region_iga).in_(region_iga))
     if developer is not None and len(developer) > 0:
-        base = base.where(Unit.developer.in_(developer))
+        po_developer = aliased(ProjectOverride)
+        base = base.outerjoin(
+            po_developer,
+            (po_developer.project_id == Unit.project_id) & (po_developer.field == "developer"),
+        )
+        base = base.where(coalesce(po_developer.value, Unit.developer).in_(developer))
     if building is not None and len(building) > 0:
         base = base.where(Unit.building.in_(building))
     if project_names is not None and len(project_names) > 0:
@@ -1451,9 +1545,10 @@ def list_units(
     ).scalars().all()
     override_map = build_override_map(override_rows)
 
-    # Load cached project aggregates for all projects present in this page
+    # Load cached project aggregates and project overrides for all projects in this page
     project_ids = {u.project_id for u in units}
     agg_by_project_id: dict[int, Any] = {}
+    project_override_map: dict[int, dict[str, str]] = {}
     if project_ids:
         from .models import ProjectAggregates  # local import to avoid circular
 
@@ -1465,6 +1560,18 @@ def list_units(
             .all()
         )
         agg_by_project_id = {row.project_id: row for row in agg_rows}
+
+        proj_override_rows = (
+            db.execute(
+                select(ProjectOverride).where(
+                    ProjectOverride.project_id.in_(project_ids),
+                    ProjectOverride.field.in_(PROJECT_OVERRIDEABLE_FIELDS),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        project_override_map = build_project_override_map(proj_override_rows)
 
     items: list[UnitResponse] = []
     for u in units:
@@ -1510,6 +1617,10 @@ def list_units(
             data["min_payment_occupancy"] = _dec(agg.min_payment_occupancy)
             data["max_payment_occupancy"] = _dec(agg.max_payment_occupancy)
             d["data"] = data
+
+        # Aplikovat project overrides – úpravy na stránce projektu se promítnou do všech jednotek
+        apply_project_overrides_to_item(u.project_id, d["data"], project_override_map, attr_keyed=False)
+        apply_project_overrides_to_item(u.project_id, d["project"], project_override_map, attr_keyed=True)
 
         items.append(UnitResponse.model_validate(d))
 

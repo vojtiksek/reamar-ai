@@ -1,12 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import dynamic from "next/dynamic";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
 import { formatCurrencyCzk, formatPercent } from "@/lib/format";
+
+const ProjectDetailMap = dynamic(
+  () => import("@/app/units/[external_id]/UnitDetailMap"),
+  { ssr: false }
+);
 
 type ProjectDetail = Record<string, unknown>;
 
@@ -31,6 +37,7 @@ type UnitInProject = {
   unit_name: string | null;
   layout: string | null;
   floor_area_m2: number | null;
+  exterior_area_m2?: number | null;
   price_czk: number | null;
   price_per_m2_czk: number | null;
   available: boolean;
@@ -53,6 +60,7 @@ function parseBool(value: unknown): boolean {
 
 export default function ProjectDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const projectId = params?.id as string | undefined;
 
@@ -190,6 +198,10 @@ export default function ProjectDetailPage() {
     (project && ((project["project"] as string | undefined) ?? (project["name"] as string | undefined))) || "";
   const developer = (project && (project["developer"] as string | undefined)) ?? "—";
   const address = (project && (project["address"] as string | undefined)) ?? "—";
+  const projectGpsLat =
+    project != null ? ((project["gps_latitude"] as number | null | undefined) ?? null) : null;
+  const projectGpsLng =
+    project != null ? ((project["gps_longitude"] as number | null | undefined) ?? null) : null;
 
   const handleStartEdit = () => {
     if (!project) return;
@@ -267,285 +279,348 @@ export default function ProjectDetailPage() {
     }
   };
 
-  return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <header className="sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-gray-200 bg-white px-4 py-2.5 shadow-sm sm:gap-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
-          <div className="relative z-10 flex shrink-0 items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
-            <Link
-              href="/units"
-              className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
-            >
-              Jednotky
-            </Link>
-            <Link
-              href="/projects"
-              className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
-            >
-              Projekty
-            </Link>
-          </div>
+  if (projectState.loading) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <div className="mx-auto max-w-6xl p-4">
+          <p className="text-slate-600">Načítání…</p>
         </div>
-        <div className="flex items-center gap-2">
-          {!editMode ? (
+      </div>
+    );
+  }
+
+  if (projectState.error) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={handleStartEdit}
-              disabled={!project || saving}
-              className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => router.back()}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
             >
-              Editovat
+              ← Zpět
             </button>
-          ) : (
-            <div className="flex items-center gap-2">
+          </div>
+        </header>
+        <main className="mx-auto max-w-6xl p-4">
+          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+            {projectState.error}
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="min-h-screen bg-slate-50">
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              ← Zpět
+            </button>
+          </div>
+        </header>
+        <main className="mx-auto max-w-6xl p-4">
+          <p className="text-slate-600">Projekt nenalezen.</p>
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            >
+              ← Zpět
+            </button>
+            <h1 className="text-lg font-semibold text-slate-900">{name || "Projekt"}</h1>
+          </div>
+          <div className="flex items-center gap-2">
+            {!editMode ? (
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={handleStartEdit}
                 disabled={saving}
-                className="rounded-lg bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Uložit
+                Editovat
               </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                disabled={saving}
-                className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-800 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Zrušit
-              </button>
-            </div>
-          )}
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Uložit
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={saving}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+                >
+                  Zrušit
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {projectState.error && (
-          <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
-            {projectState.error}
-          </div>
-        )}
-
-        <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
-          <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-2 text-base font-semibold text-gray-900">Projekt</h2>
-            {projectState.loading ? (
-              <p className="text-sm text-gray-600">Načítání…</p>
-            ) : !project ? (
-              <p className="text-sm text-gray-600">Projekt nenalezen.</p>
-            ) : (
-              <dl className="grid gap-2 text-sm text-gray-900 sm:grid-cols-3">
-                <div>
-                  <dt className="font-medium text-gray-500">Název</dt>
-                  <dd>{name || "—"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Developer</dt>
-                  <dd>{developer}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Adresa</dt>
-                  <dd>{address}</dd>
-                </div>
-              </dl>
-            )}
+      <main className="mx-auto max-w-6xl space-y-6 p-4">
+        {/* Řádek: Přehled + Mapa vedle sebe */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Přehled
+            </h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div>
+                <p className="text-xs font-medium text-slate-500">Název</p>
+                <p className="mt-0.5 font-medium text-slate-900">{name || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Developer</p>
+                <p className="mt-0.5 font-medium text-slate-900">{developer}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Adresa</p>
+                <p className="mt-0.5 font-medium text-slate-900">{address}</p>
+              </div>
+            </div>
           </section>
 
-          {project && (
-            <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-base font-semibold text-gray-900">Shrnutí financování a parkování</h2>
-              <dl className="grid gap-3 text-sm text-gray-900 sm:grid-cols-2 lg:grid-cols-3">
-                <div>
-                  <dt className="font-medium text-gray-500">Platba po SOSBK</dt>
-                  <dd>
-                    {formatPercent(
-                      (project["payment_contract"] as number | null | undefined) ?? null,
-                      undefined,
-                      true
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Platba při výstavbě</dt>
-                  <dd>
-                    {formatPercent(
-                      (project["payment_construction"] as number | null | undefined) ?? null,
-                      undefined,
-                      true
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Platba po dokončení</dt>
-                  <dd>
-                    {formatPercent(
-                      (project["payment_occupancy"] as number | null | undefined) ?? null,
-                      undefined,
-                      true
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Cena garáže (projekt)</dt>
-                  <dd>
-                    {formatCurrencyCzk(
-                      ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
-                        (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Cena stání (projekt)</dt>
-                  <dd>
-                    {formatCurrencyCzk(
-                      ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
-                        (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
-                    )}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Dní na trhu (max)</dt>
-                  <dd>{project["max_days_on_market"] ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">První výskyt (projekt)</dt>
-                  <dd>{(project["project_first_seen"] as string | undefined) ?? "—"}</dd>
-                </div>
-                <div>
-                  <dt className="font-medium text-gray-500">Poslední výskyt (projekt)</dt>
-                  <dd>{(project["project_last_seen"] as string | undefined) ?? "—"}</dd>
-                </div>
-              </dl>
+          {projectGpsLat != null && projectGpsLng != null && (
+            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+                Poloha
+              </h2>
+              <ProjectDetailMap
+                lat={projectGpsLat}
+                lng={projectGpsLng}
+                label={name || undefined}
+              />
             </section>
           )}
-
-          <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-base font-semibold text-gray-900">Upravitelné údaje</h2>
-            {debugMode && (
-              <p className="mb-2 text-xs text-gray-500">
-                Loaded columns: {columnsState.data?.length ?? 0}, editable: {editableColumns.length}
-              </p>
-            )}
-            {columnsState.loading ? (
-              <p className="text-sm text-gray-600">Načítání sloupců…</p>
-            ) : editableColumns.length === 0 ? (
-              <p className="text-sm text-gray-600">Žádná upravitelná pole.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Pole</th>
-                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Hodnota</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {editableColumns.map((col) => {
-                      const key = col.key;
-                      if (!project || !(key in project)) {
-                        return null;
-                      }
-                      const currentValue = project[key];
-                      const draftValue = draftValues[key];
-
-                      return (
-                        <tr key={key}>
-                          <td className="px-4 py-2 align-top text-gray-900">{col.label}</td>
-                          <td className="px-4 py-2">
-                            {!editMode ? (
-                              <span className="text-gray-900">{formatValue(currentValue)}</span>
-                            ) : col.data_type === "bool" ? (
-                              <input
-                                type="checkbox"
-                                className="h-4 w-4"
-                                checked={parseBool(draftValue)}
-                                onChange={(e) => handleChangeDraft(key, e.target.checked)}
-                              />
-                            ) : col.data_type === "number" ? (
-                              <input
-                                type="number"
-                                className="w-full max-w-xs rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-                                value={draftValue ?? ""}
-                                onChange={(e) => handleChangeDraft(key, e.target.value)}
-                              />
-                            ) : (
-                              <input
-                                type="text"
-                                className="w-full max-w-xs rounded-md border border-gray-300 px-2 py-1.5 text-sm text-gray-900 focus:border-gray-400 focus:outline-none focus:ring-2 focus:ring-black/10"
-                                value={(draftValue as string | undefined) ?? ""}
-                                onChange={(e) => handleChangeDraft(key, e.target.value)}
-                              />
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
-            <h2 className="mb-3 text-base font-semibold text-gray-900">Jednotky v projektu</h2>
-            {unitsState.loading ? (
-              <p className="text-sm text-gray-600">Načítání jednotek…</p>
-            ) : unitsState.error ? (
-              <p className="text-sm text-red-600">{unitsState.error}</p>
-            ) : !unitsState.data || unitsState.data.length === 0 ? (
-              <p className="text-sm text-gray-600">Žádné jednotky.</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-gray-200 text-sm">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Jednotka</th>
-                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Dispozice</th>
-                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Plocha</th>
-                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Cena</th>
-                      <th className="px-4 py-2 text-right font-semibold text-gray-700">Cena/m²</th>
-                      <th className="px-4 py-2 text-left font-semibold text-gray-700">Stav</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {unitsState.data.map((u) => {
-                      const layoutStr =
-                        u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
-                          ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) => (b ? `${a},${b} kk` : `${a} kk`))
-                          : u.layout ?? "—";
-                      return (
-                        <tr key={u.external_id} className="hover:bg-gray-50">
-                          <td className="px-4 py-2">
-                            <Link
-                              href={`/units/${encodeURIComponent(u.external_id)}`}
-                              className="font-mono text-blue-600 hover:underline"
-                            >
-                              {u.unit_name ?? u.external_id}
-                            </Link>
-                          </td>
-                          <td className="px-4 py-2 text-gray-900">{layoutStr}</td>
-                          <td className="px-4 py-2 text-right text-gray-900">
-                            {u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}
-                          </td>
-                          <td className="px-4 py-2 text-right text-gray-900">
-                            {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
-                          </td>
-                          <td className="px-4 py-2 text-right text-gray-900">
-                            {u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}
-                          </td>
-                          <td className="px-4 py-2 text-gray-900">
-                            {u.available ? "Dostupná" : "Prodaná/rezervovaná"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
         </div>
+
+        {/* Shrnutí financování a parkování */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Shrnutí financování a parkování
+          </h2>
+          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Platba po SOSBK</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatPercent(
+                  (project["payment_contract"] as number | null | undefined) ?? null,
+                  undefined,
+                  true
+                )}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Platba při výstavbě</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatPercent(
+                  (project["payment_construction"] as number | null | undefined) ?? null,
+                  undefined,
+                  true
+                )}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Platba po dokončení</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatPercent(
+                  (project["payment_occupancy"] as number | null | undefined) ?? null,
+                  undefined,
+                  true
+                )}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Cena garáže (projekt)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatCurrencyCzk(
+                  ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
+                    (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
+                )}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Cena stání (projekt)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {formatCurrencyCzk(
+                  ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
+                    (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
+                )}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Dní na trhu (max)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["max_days_on_market"] != null ? `${project["max_days_on_market"]} dní` : "—"}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">První výskyt (projekt)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["project_first_seen"] as string | undefined) ?? "—"}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-medium text-slate-500">Poslední výskyt (projekt)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["project_last_seen"] as string | undefined) ?? "—"}
+              </p>
+            </div>
+          </div>
+        </section>
+
+        {/* Data o projektu (upravitelné údaje) */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Data o projektu
+          </h2>
+          {debugMode && (
+            <p className="mb-3 text-xs text-slate-500">
+              Sloupců: {columnsState.data?.length ?? 0}, upravitelných: {editableColumns.length}
+            </p>
+          )}
+          {columnsState.loading ? (
+            <p className="text-sm text-slate-600">Načítání sloupců…</p>
+          ) : editableColumns.length === 0 ? (
+            <p className="text-sm text-slate-600">Žádná upravitelná pole.</p>
+          ) : (
+            <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {editableColumns.map((col) => {
+                const key = col.key;
+                if (!(key in project)) return null;
+                const currentValue = project[key];
+                const draftValue = draftValues[key];
+
+                return (
+                  <div key={key} className="min-w-0">
+                    <p className="text-xs font-medium text-slate-500">{col.label}</p>
+                    {!editMode ? (
+                      <p className="mt-0.5 font-medium text-slate-900">{formatValue(currentValue)}</p>
+                    ) : col.data_type === "bool" ? (
+                      <label className="mt-0.5 flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-slate-300"
+                          checked={parseBool(draftValue)}
+                          onChange={(e) => handleChangeDraft(key, e.target.checked)}
+                        />
+                        <span className="text-sm text-slate-900">
+                          {parseBool(draftValue) ? "Ano" : "Ne"}
+                        </span>
+                      </label>
+                    ) : col.data_type === "number" ? (
+                      <input
+                        type="number"
+                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={(draftValue as number | string) ?? ""}
+                        onChange={(e) => handleChangeDraft(key, e.target.value)}
+                      />
+                    ) : (
+                      <input
+                        type="text"
+                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={(draftValue as string) ?? ""}
+                        onChange={(e) => handleChangeDraft(key, e.target.value)}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        {/* Jednotky v projektu */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Jednotky v projektu
+          </h2>
+          {unitsState.loading ? (
+            <p className="text-sm text-slate-600">Načítání jednotek…</p>
+          ) : unitsState.error ? (
+            <p className="text-sm text-red-600">{unitsState.error}</p>
+          ) : !unitsState.data || unitsState.data.length === 0 ? (
+            <p className="text-sm text-slate-600">Žádné jednotky.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-slate-200 text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Jednotka</th>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Dispozice</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Plocha</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Venek</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Cena</th>
+                    <th className="px-4 py-2 text-right font-semibold text-slate-700">Cena/m²</th>
+                    <th className="px-4 py-2 text-left font-semibold text-slate-700">Stav</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 bg-white">
+                  {unitsState.data.map((u) => {
+                    const layoutStr =
+                      u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
+                        ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) =>
+                            b ? `${a},${b} kk` : `${a} kk`
+                          )
+                        : u.layout ?? "—";
+                    return (
+                      <tr key={u.external_id} className="hover:bg-slate-50">
+                        <td className="px-4 py-2">
+                          <Link
+                            href={`/units/${encodeURIComponent(u.external_id)}`}
+                            className="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600"
+                          >
+                            {u.unit_name ?? u.external_id}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-slate-900">{layoutStr}</td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {u.exterior_area_m2 != null ? `${u.exterior_area_m2.toFixed(1)} m²` : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-right text-slate-900">
+                          {u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}
+                        </td>
+                        <td className="px-4 py-2 text-slate-900">
+                          {u.available ? "Dostupná" : "Prodaná/rezervovaná"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );
