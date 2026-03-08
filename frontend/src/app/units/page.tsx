@@ -357,7 +357,9 @@ function parseSearchParams(params: URLSearchParams): {
     ? limitParam
     : DEFAULT_LIMIT;
   const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
-  const sortBy = params.get("sort_by") ?? DEFAULT_SORT_BY;
+  let sortBy = params.get("sort_by") ?? DEFAULT_SORT_BY;
+  if (sortBy === "ride_to_center") sortBy = "ride_to_center_min";
+  if (sortBy === "public_transport_to_center") sortBy = "public_transport_to_center_min";
   const sortDir = params.get("sort_dir") ?? DEFAULT_SORT_DIR;
   const filters = parseFiltersFromSearchParams(params);
   const polygon = params.get("poly");
@@ -736,21 +738,24 @@ export default function Home() {
     [filters, limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
+  // Mapování backend názvů na klíče v SORT_BY_OPTIONS – do stavu vždy ukládáme klíč z OPTIONS,
+  // aby validSortBy nepadl na DEFAULT_SORT_BY a backendSortBy se správně zmapoval.
+  const BACKEND_TO_SORT_BY_STATE: Record<string, string> = {
+    ride_to_center: "ride_to_center_min",
+    public_transport_to_center: "public_transport_to_center_min",
+  };
+
   const handleSortHeaderClick = useCallback(
     (columnKey: string, accessor: string, _dataType: string) => {
       const backendField = BACKEND_SORT_FIELDS.find(
         (f) => accessor === f || accessor.endsWith(`.${f}`)
       );
       if (!backendField) {
-        // Sloupec neumí globální řazení na backendu – klik ignorujeme,
-        // a tím pádem nikdy neřadíme jen aktuální stránku.
         return;
       }
-      // Do stavu a URL ukládáme klíč z SORT_BY_OPTIONS (např. public_transport_to_center_min),
-      // aby validSortBy nepadl na DEFAULT_SORT_BY a backend dostal správné mapování (backendSortBy).
-      const sortByForState = SORT_BY_OPTIONS.includes(columnKey as (typeof SORT_BY_OPTIONS)[number])
-        ? columnKey
-        : backendField;
+      let sortByForState: string =
+        SORT_BY_OPTIONS.includes(columnKey as (typeof SORT_BY_OPTIONS)[number]) ? columnKey : backendField;
+      sortByForState = BACKEND_TO_SORT_BY_STATE[sortByForState] ?? sortByForState;
       if (sortByForState !== sortBy) {
         setLimitAndSort({ sortBy: sortByForState, sortDir: "asc" });
       } else {
