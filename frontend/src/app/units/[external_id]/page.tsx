@@ -37,6 +37,8 @@ type UnitDetail = {
   price_per_m2_czk: number | null;
   available: boolean;
   availability_status?: string | null;
+  original_price_czk?: number | null;
+  original_price_per_m2_czk?: number | null;
   equivalent_area_m2?: number | null;
   exterior_area_m2?: number | null;
   data?: Record<string, unknown>;
@@ -792,11 +794,34 @@ export default function UnitDetailPage() {
                 </p>
               </div>
               <div>
+                <p className="text-xs font-medium text-slate-500">Původní cena</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(unit.original_price_czk ?? null)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Původní cena m²</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatCurrencyCzk(unit.original_price_per_m2_czk ?? null)}
+                </p>
+              </div>
+              <div>
                 <p className="text-xs font-medium text-slate-500">Dostupnost</p>
-                <p
-                  className={`mt-0.5 font-medium ${unit.available ? "text-green-600" : "text-red-600"}`}
-                >
-                  {unit.available ? "ANO" : "NE"}
+                <p className={`mt-0.5 font-medium ${(() => {
+                  const s = String(unit.availability_status ?? "").toLowerCase();
+                  if (s === "sold" || s === "prodané") return "text-red-600";
+                  if (s === "reserved" || s === "rezervované") return "text-amber-600";
+                  if (s === "available" || s === "volné") return "text-emerald-600";
+                  return "text-slate-700";
+                })()}`}>
+                  {(() => {
+                    const s = String(unit.availability_status ?? "").toLowerCase();
+                    if (s === "available" || s === "volné") return "Volná";
+                    if (s === "reserved" || s === "rezervované") return "Rezervovaná";
+                    if (s === "sold" || s === "prodané") return "Prodaná";
+                    if (s === "unseen") return "Nezobrazovaná";
+                    return unit.available ? "Volná" : "—";
+                  })()}
                 </p>
               </div>
             </div>

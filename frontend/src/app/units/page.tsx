@@ -229,6 +229,30 @@ const BACKEND_SORT_FIELDS = [
   "max_payment_occupancy",
 ] as const;
 
+// Sloupce, které nechceme zobrazovat v tabulce jednotek ani v nabídce „Sloupce“,
+// ale data zůstávají k dispozici pro filtry a detail jednotky.
+const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
+  "original_price_czk",
+  "original_price_per_m2_czk",
+  "avg_price_czk",
+  "avg_price_per_m2_czk",
+  "administrative_district_iga",
+  "municipality",
+  "address",
+  "availability_status",
+  "overall_quality",
+  "project_url",
+  "project.project_url",
+  "project.avg_price_czk",
+  "project.avg_price_per_m2_czk",
+  "unit_name",
+  "building",
+  "url",
+  "unit_url",
+  "id",
+  "external_id",
+]);
+
 type ColumnConfig = {
   key: string;
   label: string;
@@ -533,11 +557,13 @@ export default function Home() {
     if (columnsConfig !== null) return;
     const cols = serverColumns;
     if (!cols || cols.length === 0) return;
-    const defaults: ColumnConfig[] = cols.map((col) => ({
-      key: col.key,
-      label: col.label,
-      visible: true,
-    }));
+    const defaults: ColumnConfig[] = cols
+      .filter((col) => !HIDDEN_TABLE_COLUMN_KEYS.has(col.key))
+      .map((col) => ({
+        key: col.key,
+        label: col.label,
+        visible: true,
+      }));
     if (typeof window === "undefined") {
       setColumnsConfig(defaults);
       return;
