@@ -238,7 +238,16 @@ def get_filter_groups(db: Session) -> dict:
             entity_db, attr = CATALOG_TO_DB[key]
             out["options"] = _get_enum_options(db, entity_db, attr)
         groups[group_name].append(out)
-    return {"groups": [{"name": k, "filters": v} for k, v in sorted(groups.items())]}
+
+    def _group_sort_key(item: tuple[str, list[dict]]) -> tuple[int, str]:
+        name, _ = item
+        # „Stav“ chceme vždy jako první box ve filtrech (nad Cenou atd.).
+        if name == "Stav":
+            return (0, name)
+        return (1, name)
+
+    ordered_groups = [ {"name": name, "filters": flt} for name, flt in sorted(groups.items(), key=_group_sort_key) ]
+    return {"groups": ordered_groups}
 
 
 # Legacy exports for list_units dynamic filters
