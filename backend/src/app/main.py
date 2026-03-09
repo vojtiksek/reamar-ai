@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
 from decimal import Decimal
@@ -10,7 +10,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import asc, case, desc, func, or_, select
+from sqlalchemy import asc, case, desc, func, or_, and_, select
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased, selectinload
@@ -1249,6 +1249,7 @@ def list_units(
     max_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
     min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
+    include_archived: Annotated[bool, Query(description="Include units from fully sold projects older than 6 months")] = False,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -1333,6 +1334,30 @@ def list_units(
         min_payment_occupancy=min_payment_occupancy,
         max_payment_occupancy=max_payment_occupancy,
     )
+    if not include_archived:
+        recent_sold_cutoff = date.today() - timedelta(days=183)
+        first_seen_cutoff = date.today() - timedelta(days=365 * 2)
+        agg = _project_agg_subquery()
+        active_projects_subq = (
+            select(agg.c.project_id)
+            .where(
+                or_(
+                    agg.c.units_available > 0,
+                    and_(
+                        agg.c.sold_date.is_(None),
+                        or_(
+                            agg.c.project_first_seen.is_(None),
+                            agg.c.project_first_seen >= first_seen_cutoff,
+                        ),
+                    ),
+                    and_(
+                        agg.c.sold_date.is_not(None),
+                        agg.c.sold_date >= recent_sold_cutoff,
+                    ),
+                )
+            )
+        )
+        base = base.where(Unit.project_id.in_(active_projects_subq.subquery()))
     base_subq = base.subquery()
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
 
@@ -1829,6 +1854,7 @@ def get_projects_overview(
             func.max(unit_subq.c.payment_construction).label("max_payment_construction"),
             func.min(unit_subq.c.payment_occupancy).label("min_payment_occupancy"),
             func.max(unit_subq.c.payment_occupancy).label("max_payment_occupancy"),
+            func.max(unit_subq.c.sold_date).label("sold_date"),
         )
         .select_from(unit_subq)
         .join(Project, unit_subq.c.project_id == Project.id)
@@ -2062,6 +2088,7 @@ def _project_agg_subquery():
             func.max(Unit.payment_construction).label("max_payment_construction"),
             func.min(Unit.payment_occupancy).label("min_payment_occupancy"),
             func.max(Unit.payment_occupancy).label("max_payment_occupancy"),
+            func.max(Unit.sold_date).label("sold_date"),
             # Fallback GPS pro projekty – průměrná poloha jednotek v projektu
             func.avg(Unit.gps_latitude).label("project_gps_latitude"),
             func.avg(Unit.gps_longitude).label("project_gps_longitude"),
@@ -2483,6 +2510,7 @@ def list_projects(
     q: Annotated[str | None, Query(description="Search in name, developer, address")] = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
+    include_archived: Annotated[bool, Query(description="Include fully sold projects older than 6 months")] = False,
     sort_by: Annotated[str, Query(description="Sort column key (catalog or computed)")] = "avg_price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="asc or desc")] = "asc",
     min_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude >= value")] = None,
@@ -2581,6 +2609,31 @@ def list_projects(
         stmt = stmt.where(Project.gps_longitude >= min_longitude)
     if max_longitude is not None:
         stmt = stmt.where(Project.gps_longitude <= max_longitude)
+
+    # Archivace: standardně skrýváme projekty, které nemají žádné dostupné jednotky
+    # a jejich poslední sold_date je starší než 6 měsíců.
+    if not include_archived:
+        recent_sold_cutoff = date.today() - timedelta(days=183)  # ~6 měsíců
+        first_seen_cutoff = date.today() - timedelta(days=365 * 2)  # ~2 roky
+        stmt = stmt.where(
+            or_(
+                # Projekt má alespoň jednu dostupnou jednotku => vždy aktivní
+                agg_subq.c.units_available > 0,
+                # Projekt bez sold_date: ponechat jen pokud není „starý“
+                and_(
+                    agg_subq.c.sold_date.is_(None),
+                    or_(
+                        agg_subq.c.project_first_seen.is_(None),
+                        agg_subq.c.project_first_seen >= first_seen_cutoff,
+                    ),
+                ),
+                # Projekt se sold_date: ponechat, pokud prodej není starší než 6 měsíců
+                and_(
+                    agg_subq.c.sold_date.is_not(None),
+                    agg_subq.c.sold_date >= recent_sold_cutoff,
+                ),
+            )
+        )
 
     # Pokud jsou nastaveny filtry na jednotky, zobrazíme jen projekty, které mají alespoň jednu jednotku vyhovující filtrům.
     if _has_unit_filters(

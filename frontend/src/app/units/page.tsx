@@ -496,6 +496,7 @@ export default function Home() {
   const [editValue, setEditValue] = useState<string | boolean>("");
   const [savingOverride, setSavingOverride] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
+  const [includeArchived, setIncludeArchived] = useState(() => searchParams?.get("include_archived") === "1");
 
   const rowClickTimeoutRef = useRef<number | null>(null);
   /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL“ přepsat state starou URL (router.replace je async). */
@@ -574,16 +575,18 @@ export default function Home() {
   const syncToUrl = useCallback(
     (f: CurrentFilters, lim: number, off: number, sb: string, sd: string, poly: string | null) => {
       const p = toSearchParams(f, lim, off, sb, sd, poly ?? undefined);
+      if (includeArchived) p.set("include_archived", "1");
       const qs = p.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [router, pathname]
+    [router, pathname, includeArchived]
   );
 
   useEffect(() => {
     const parsed = parseSearchParams(new URLSearchParams(searchParams?.toString() ?? ""));
     setFilters(parsed.filters);
     setPolygon(parsed.polygon ?? null);
+    setIncludeArchived(searchParams?.get("include_archived") === "1");
     if (skipSyncSortPaginationRef.current) {
       skipSyncSortPaginationRef.current = false;
     } else {
@@ -639,6 +642,9 @@ export default function Home() {
         const { minLat, maxLat, minLng, maxLng } = bounds;
         qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
       }
+    }
+    if (includeArchived) {
+      qs += "&include_archived=1";
     }
     fetch(`${API_BASE}/units?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
@@ -977,6 +983,23 @@ export default function Home() {
             {countActiveFilters(filters) > 0 && (
               <span className="ml-1 rounded bg-gray-200 px-1.5 text-xs">{countActiveFilters(filters)}</span>
             )}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIncludeArchived((prev) => {
+                const next = !prev;
+                const p = new URLSearchParams(searchParams?.toString() ?? "");
+                if (next) p.set("include_archived", "1");
+                else p.delete("include_archived");
+                const qs = p.toString();
+                router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+                return next;
+              });
+            }}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+          >
+            {includeArchived ? "Skrýt archiv" : "Zobrazit archiv"}
           </button>
           <button
             type="button"
