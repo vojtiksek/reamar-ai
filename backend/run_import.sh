@@ -15,4 +15,4 @@ if [ -z "$BUILTMIND_API_KEY" ]; then
   exit 1
 fi
 echo "Spouštím fetch + import (BuiltMind API -> DB)..."
-exec python -m app.fetch_builtmind "$@"
+exec PYTHONPATH=src python -m app.fetch_builtmind "$@"
