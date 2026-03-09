@@ -75,6 +75,15 @@ function standardLabelToCzech(field: string, value: string): string {
   return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
 }
 
+function formatBoolOrDash(value: unknown): string {
+  if (value === true || value === "true" || value === "1") return "Ano";
+  if (value === false || value === "false" || value === "0") return "Ne";
+  const s = String(value ?? "").trim().toLowerCase();
+  if (s === "ano") return "Ano";
+  if (s === "ne") return "Ne";
+  return "—";
+}
+
 type ProjectDetail = Record<string, unknown>;
 
 type FetchState<T> = {
@@ -850,7 +859,7 @@ export default function ProjectDetailPage() {
                 </label>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatValueLib(project["renovation"], { display_format: "boolean", key: "renovation" })}
+                  {formatBoolOrDash(project["renovation"])}
                 </p>
               )}
             </div>
@@ -999,7 +1008,7 @@ export default function ProjectDetailPage() {
                 </label>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatValueLib(project["air_conditioning"], { display_format: "boolean", key: "air_conditioning" })}
+                  {formatBoolOrDash(project["air_conditioning"])}
                 </p>
               )}
             </div>
@@ -1019,7 +1028,7 @@ export default function ProjectDetailPage() {
                 </label>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatValueLib(project["cooling_ceilings"], { display_format: "boolean", key: "cooling_ceilings" })}
+                  {formatBoolOrDash(project["cooling_ceilings"])}
                 </p>
               )}
             </div>
@@ -1039,7 +1048,7 @@ export default function ProjectDetailPage() {
                 </label>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatValueLib(project["exterior_blinds"], { display_format: "boolean", key: "exterior_blinds" })}
+                  {formatBoolOrDash(project["exterior_blinds"])}
                 </p>
               )}
             </div>
@@ -1059,7 +1068,7 @@ export default function ProjectDetailPage() {
                 </label>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatValueLib(project["smart_home"], { display_format: "boolean", key: "smart_home" })}
+                  {formatBoolOrDash(project["smart_home"])}
                 </p>
               )}
             </div>

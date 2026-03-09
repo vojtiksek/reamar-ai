@@ -34,6 +34,7 @@ type Unit = {
   public_transport_to_center_min: number | null;
   /** Flat catalog-keyed values (Unit + Project fields) from backend */
   data?: Record<string, unknown>;
+  pending_api_updates?: { field: string; api_value: string }[];
 };
 
 type UnitsListResponse = {
@@ -521,6 +522,7 @@ export default function Home() {
   const [savingOverride, setSavingOverride] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(() => searchParams?.get("include_archived") === "1");
+  const [showOnlyPendingApi, setShowOnlyPendingApi] = useState(() => searchParams?.get("pending_api") === "1");
 
   const rowClickTimeoutRef = useRef<number | null>(null);
   /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL“ přepsat state starou URL (router.replace je async). */
@@ -602,10 +604,11 @@ export default function Home() {
     (f: CurrentFilters, lim: number, off: number, sb: string, sd: string, poly: string | null) => {
       const p = toSearchParams(f, lim, off, sb, sd, poly ?? undefined);
       if (includeArchived) p.set("include_archived", "1");
+      if (showOnlyPendingApi) p.set("pending_api", "1");
       const qs = p.toString();
       router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
     },
-    [router, pathname, includeArchived]
+    [router, pathname, includeArchived, showOnlyPendingApi]
   );
 
   useEffect(() => {
@@ -613,6 +616,7 @@ export default function Home() {
     setFilters(parsed.filters);
     setPolygon(parsed.polygon ?? null);
     setIncludeArchived(searchParams?.get("include_archived") === "1");
+    setShowOnlyPendingApi(searchParams?.get("pending_api") === "1");
     if (skipSyncSortPaginationRef.current) {
       skipSyncSortPaginationRef.current = false;
     } else {
@@ -675,7 +679,10 @@ export default function Home() {
     fetch(`${API_BASE}/units?${qs}`)
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: UnitsListResponse) => {
-        const items = data.items ?? [];
+        let items = data.items ?? [];
+        if (showOnlyPendingApi) {
+          items = items.filter((u: Unit) => (u.pending_api_updates?.length ?? 0) > 0);
+        }
         setUnits(items);
         setTotal(data.total ?? items.length);
         setSummaryOverride({
@@ -1013,15 +1020,28 @@ export default function Home() {
           <button
             type="button"
             onClick={() => {
-              setIncludeArchived((prev) => {
-                const next = !prev;
-                const p = new URLSearchParams(searchParams?.toString() ?? "");
-                if (next) p.set("include_archived", "1");
-                else p.delete("include_archived");
-                const qs = p.toString();
-                router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
-                return next;
-              });
+              const next = !showOnlyPendingApi;
+              setShowOnlyPendingApi(next);
+              const p = new URLSearchParams(searchParams?.toString() ?? "");
+              if (next) p.set("pending_api", "1");
+              else p.delete("pending_api");
+              const qs = p.toString();
+              router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+            }}
+            className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+          >
+            {showOnlyPendingApi ? "Všechny jednotky" : "Jen návrhy z API"}
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !includeArchived;
+              setIncludeArchived(next);
+              const p = new URLSearchParams(searchParams?.toString() ?? "");
+              if (next) p.set("include_archived", "1");
+              else p.delete("include_archived");
+              const qs = p.toString();
+              router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
             }}
             className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
           >

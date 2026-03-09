@@ -164,7 +164,23 @@ function getUnitDisplayValue(unit: UnitDetail, col: UnitColumn): unknown {
     }
     return undefined;
   }
-  const fromData = unit.data && col.key in unit.data ? unit.data[col.key] : undefined;
+  let fromData: unknown = undefined;
+  if (unit.data) {
+    if (col.key && col.key in unit.data) {
+      fromData = unit.data[col.key];
+    } else {
+      const keyWithoutProjectPrefix =
+        col.key && col.key.startsWith("project.") ? col.key.slice("project.".length) : undefined;
+      const accessorWithoutProjectPrefix = accessor.startsWith("project.")
+        ? accessor.slice("project.".length)
+        : undefined;
+      if (keyWithoutProjectPrefix && keyWithoutProjectPrefix in unit.data) {
+        fromData = unit.data[keyWithoutProjectPrefix];
+      } else if (accessorWithoutProjectPrefix && accessorWithoutProjectPrefix in unit.data) {
+        fromData = unit.data[accessorWithoutProjectPrefix];
+      }
+    }
+  }
   if (fromData !== undefined) return fromData;
   const parts = accessor.split(".");
   let v: unknown = u;
@@ -541,6 +557,22 @@ export default function UnitDetailPage() {
     (PROJECT_OVERVIEW_FIELDS as UnitColumn[]).find((c) => c.key === key) ??
     projectColumns.find((c) => c.key === key);
 
+  const findProjectStatColumn = (baseKey: string): UnitColumn | undefined => {
+    // Nejprve zkusíme explicitně definovaná pole v PROJECT_OVERVIEW_FIELDS
+    const fromOverview = getOverviewColumnByKey(baseKey);
+    if (fromOverview) return fromOverview;
+    // Pak sloupce z /columns (projectColumns) – mohou mít prefix "project." nebo ne
+    return (
+      projectColumns.find(
+        (c) =>
+          c.key === baseKey ||
+          c.key === `project.${baseKey}` ||
+          c.accessor === baseKey ||
+          c.accessor === `project.${baseKey}`
+      ) ?? undefined
+    );
+  };
+
   const overviewStandards: UnitColumn[] = [
     "heating",
     "air_conditioning",
@@ -548,6 +580,9 @@ export default function UnitDetailPage() {
     "exterior_blinds",
     "smart_home",
     "floors",
+    "overall_quality",
+    "windows",
+    "partition_walls",
   ]
     .map(getOverviewColumnByKey)
     .filter(Boolean) as UnitColumn[];
@@ -567,9 +602,18 @@ export default function UnitDetailPage() {
     .filter(Boolean) as UnitColumn[];
 
   const overviewUnitsStats: UnitColumn[] = [
-    getOverviewColumnByKey("total_units"),
-    getOverviewColumnByKey("available_units"),
-    getOverviewColumnByKey("availability_ratio"),
+    findProjectStatColumn("total_units"),
+    findProjectStatColumn("available_units"),
+    findProjectStatColumn("availability_ratio"),
+    findProjectStatColumn("project_first_seen"),
+    findProjectStatColumn("max_days_on_market"),
+    findProjectStatColumn("avg_price_czk"),
+    findProjectStatColumn("avg_price_per_m2_czk"),
+    findProjectStatColumn("min_price_czk"),
+    findProjectStatColumn("max_price_czk"),
+    findProjectStatColumn("avg_floor_area_m2"),
+    findProjectStatColumn("project_last_seen"),
+    findProjectStatColumn("sold_date"),
   ].filter(Boolean) as UnitColumn[];
 
   const overviewLocation: UnitColumn[] = [
@@ -604,6 +648,43 @@ export default function UnitDetailPage() {
     "municipal_district_iga",
     "administrative_district_iga",
     "region_iga",
+    // Sloupce, které už máme v jiných boxech („Počet jednotek“, „Lokalita“),
+    // nechceme znovu v sekci „Ostatní“.
+    "total_units",
+    "available_units",
+    "availability_ratio",
+    "project.total_units",
+    "project.available_units",
+    "project.availability_ratio",
+    "ride_to_center_min",
+    "public_transport_to_center_min",
+    "project.ride_to_center_min",
+    "project.public_transport_to_center_min",
+    "max_days_on_market",
+    "project.max_days_on_market",
+    // Tyto statistiky přesouváme do boxu „Statistiky“ a nechceme je v „Ostatní“
+    "avg_price_czk",
+    "avg_price_per_m2_czk",
+    "min_price_czk",
+    "max_price_czk",
+    "avg_floor_area_m2",
+    "project_first_seen",
+    "project_last_seen",
+    "sold_date",
+    "project.avg_price_czk",
+    "project.avg_price_per_m2_czk",
+    "project.min_price_czk",
+    "project.max_price_czk",
+    "project.avg_floor_area_m2",
+    "project.project_first_seen",
+    "project.project_last_seen",
+    "project.sold_date",
+  ]);
+
+  const hiddenOverviewLabels = new Set<string>([
+    "Autem do centra",
+    "MHD do centra",
+    "Dní na trhu",
   ]);
 
   const otherOverviewColumns: UnitColumn[] = [
@@ -618,6 +699,7 @@ export default function UnitDetailPage() {
     if (usedOverviewKeys.has(col.key)) return false;
     if (hiddenFromOverview.has(col.key)) return false;
     if (col.accessor && hiddenFromOverview.has(String(col.accessor))) return false;
+    if (hiddenOverviewLabels.has(col.label)) return false;
     return true;
   });
 
@@ -923,7 +1005,7 @@ export default function UnitDetailPage() {
             {overviewUnitsStats.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
                 <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Počet jednotek
+                  Statistiky
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
                   {overviewUnitsStats.map(renderProjectField)}

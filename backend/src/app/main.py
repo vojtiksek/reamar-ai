@@ -267,9 +267,19 @@ def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
         data["total_units"] = agg_row.total_units
         data["available_units"] = agg_row.available_units
         data["availability_ratio"] = _dec_agg(agg_row.availability_ratio)
+        data["avg_price_czk"] = _dec_agg(agg_row.avg_price_czk)
+        data["min_price_czk"] = agg_row.min_price_czk
+        data["max_price_czk"] = agg_row.max_price_czk
+        data["avg_price_per_m2_czk"] = _dec_agg(agg_row.avg_price_per_m2_czk)
+        data["avg_floor_area_m2"] = _dec_agg(agg_row.avg_floor_area_m2)
         data["project_first_seen"] = agg_row.project_first_seen
         data["project_last_seen"] = agg_row.project_last_seen
         data["max_days_on_market"] = agg_row.max_days_on_market
+        # Agregované datum prodeje projektu – max(sold_date) přes všechny jednotky v projektu
+        sold_date_agg = db.execute(
+            select(func.max(Unit.sold_date)).where(Unit.project_id == unit.project_id)
+        ).scalar_one_or_none()
+        data["sold_date"] = sold_date_agg
         d["data"] = data
 
     # Aplikovat project overrides – úpravy na stránce projektu se promítnou do jednotky
@@ -1570,6 +1580,16 @@ def list_units(
     ).scalars().all()
     override_map = build_override_map(override_rows)
 
+    # Pending API updates (návrhy z importu) pro všechny jednotky na stránce
+    pending_rows = db.execute(
+        select(UnitApiPending).where(UnitApiPending.unit_id.in_(unit_ids))
+    ).scalars().all()
+    pending_by_unit: dict[int, list[PendingApiUpdate]] = {}
+    for p in pending_rows:
+        pending_by_unit.setdefault(p.unit_id, []).append(
+            PendingApiUpdate(field=p.field, api_value=p.value)
+        )
+
     # Load cached project aggregates and project overrides for all projects in this page
     project_ids = {u.project_id for u in units}
     agg_by_project_id: dict[int, Any] = {}
@@ -1601,6 +1621,9 @@ def list_units(
     items: list[UnitResponse] = []
     for u in units:
         d = unit_to_response_dict(u, override_map)
+        pending_list = pending_by_unit.get(u.id, [])
+        if pending_list:
+            d["pending_api_updates"] = pending_list
         agg = agg_by_project_id.get(u.project_id)
         if agg is not None:
             data = dict(d.get("data") or {})
