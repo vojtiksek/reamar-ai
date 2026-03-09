@@ -2281,24 +2281,35 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     out["availability_ratio"] = out["available_ratio"]  # frontend expects availability_ratio
     out["project"] = getattr(project, "name", None)  # frontend column "project" (název projektu)
 
-    # Standardy z jednotek (reprezentativní hodnota), pokud je projekt sám nemá
-    if out.get("category") is None:
-        v = agg.get("sample_category")
-        out["category"] = str(v) if v is not None else None
-    if out.get("floors") is None:
-        v = agg.get("sample_floors")
-        out["floors"] = str(v) if v is not None else None
-    if out.get("air_conditioning") is None:
-        v = agg.get("sample_air_conditioning")
-        out["air_conditioning"] = bool(v) if v is not None else None
-    if out.get("cooling_ceilings") is None:
-        v = agg.get("sample_cooling_ceilings")
-        out["cooling_ceilings"] = bool(v) if v is not None else None
-    if out.get("exterior_blinds") is None:
-        out["exterior_blinds"] = agg.get("sample_exterior_blinds")
-    if out.get("smart_home") is None:
-        v = agg.get("sample_smart_home")
-        out["smart_home"] = bool(v) if v is not None else None
+    # Standardy z jednotek (reprezentativní hodnota) – chceme je brát z agregátů,
+    # aby přehled projektu byl konzistentní s tím, co vidíme na jednotkách.
+    # Projektové sloupce (Project.heating atd.) používáme jen tam, kde nemáme
+    # žádnou informaci z jednotek; overrides zůstávají zachovány (aplikují se později).
+
+    # Kategorie a podlaha – textové hodnoty
+    v = agg.get("sample_category")
+    if v is not None:
+        out["category"] = str(v)
+    v = agg.get("sample_floors")
+    if v is not None:
+        out["floors"] = str(v)
+
+    # Klimatizace / chlazení / smart home – z agregátu bereme jen "Ano", nikdy "Ne".
+    # sample_* je 1, pokud aspoň jedna jednotka má True; 0 jinak.
+    v = agg.get("sample_air_conditioning")
+    if v is not None:
+        out["air_conditioning"] = bool(v) if int(v or 0) == 1 else None
+    v = agg.get("sample_cooling_ceilings")
+    if v is not None:
+        out["cooling_ceilings"] = bool(v) if int(v or 0) == 1 else None
+    v = agg.get("sample_smart_home")
+    if v is not None:
+        out["smart_home"] = bool(v) if int(v or 0) == 1 else None
+
+    # Žaluzie – textová hodnota přímo ze sample_exterior_blinds (true/false/preparation/…)
+    sample_blinds = agg.get("sample_exterior_blinds")
+    if sample_blinds is not None:
+        out["exterior_blinds"] = sample_blinds
 
     raw_layouts = agg.get("layouts_present_raw")
     if raw_layouts is not None and isinstance(raw_layouts, (list, tuple)):

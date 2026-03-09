@@ -76,11 +76,10 @@ function standardLabelToCzech(field: string, value: string): string {
 }
 
 function formatBoolOrDash(value: unknown): string {
-  if (value === true || value === "true" || value === "1") return "Ano";
-  if (value === false || value === "false" || value === "0") return "Ne";
-  const s = String(value ?? "").trim().toLowerCase();
-  if (s === "ano") return "Ano";
-  if (s === "ne") return "Ne";
+  const raw = value as any;
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (raw === true || s === "true" || s === "1" || s === "ano") return "Ano";
+  if (raw === false || s === "false" || s === "0" || s === "ne") return "Ne";
   return "—";
 }
 
@@ -268,8 +267,23 @@ export default function ProjectDetailPage() {
     }
     for (const key of EDITABLE_STANDARDY) {
       const v = p[key];
-      if (key === "renovation" || key === "air_conditioning" || key === "cooling_ceilings" || key === "exterior_blinds" || key === "smart_home") {
-        draft[key] = v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano";
+      if (
+        key === "renovation" ||
+        key === "air_conditioning" ||
+        key === "cooling_ceilings" ||
+        key === "exterior_blinds" ||
+        key === "smart_home"
+      ) {
+        if (v === null || v === undefined || v === "") {
+          draft[key] = "";
+        } else {
+          const isTrue =
+            v === true ||
+            v === "true" ||
+            v === "1" ||
+            String(v).toLowerCase() === "ano";
+          draft[key] = isTrue ? "true" : "false";
+        }
       } else {
         draft[key] = v != null && v !== "" ? String(v) : "";
       }
@@ -340,11 +354,19 @@ export default function ProjectDetailPage() {
         key === "exterior_blinds" ||
         key === "smart_home"
       ) {
-        const draftBool = draftVal === true || draftVal === "true" || draftVal === "1";
-        const curBool = currentVal === true || currentVal === "true" || currentVal === "1";
-        if (draftBool !== curBool) {
+        const v = draftVal;
+        // Tři stavy v UI: "—" (""), "true", "false"
+        if (v === "" || v === null || v === undefined) {
+          // Uživatel zvolil "—" → smažeme případný override na backendu.
           isChanged = true;
-          payload = draftBool ? "true" : "false";
+          payload = "";
+        } else {
+          const draftBool = v === true || v === "true" || v === "1";
+          const curBool = currentVal === true || currentVal === "true" || currentVal === "1";
+          if (draftBool !== curBool) {
+            isChanged = true;
+            payload = draftBool ? "true" : "false";
+          }
         }
       } else {
         const draftStr = draftVal == null ? "" : String(draftVal).trim();
@@ -846,17 +868,20 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Rekonstrukce</p>
               {editMode ? (
-                <label className="mt-0.5 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={draft("renovation") === true || draft("renovation") === "true"}
-                    onChange={(e) => handleChangeDraft("renovation", e.target.checked)}
-                  />
-                  <span className="text-sm text-slate-900">
-                    {(draft("renovation") === true || draft("renovation") === "true") ? "Ano" : "Ne"}
-                  </span>
-                </label>
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("renovation", project["renovation"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("renovation", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
                   {formatBoolOrDash(project["renovation"])}
@@ -995,17 +1020,20 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Klimatizace</p>
               {editMode ? (
-                <label className="mt-0.5 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={draft("air_conditioning") === true || draft("air_conditioning") === "true"}
-                    onChange={(e) => handleChangeDraft("air_conditioning", e.target.checked)}
-                  />
-                  <span className="text-sm text-slate-900">
-                    {(draft("air_conditioning") === true || draft("air_conditioning") === "true") ? "Ano" : "Ne"}
-                  </span>
-                </label>
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("air_conditioning", project["air_conditioning"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("air_conditioning", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
                   {formatBoolOrDash(project["air_conditioning"])}
@@ -1015,17 +1043,20 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Chlazení stropem</p>
               {editMode ? (
-                <label className="mt-0.5 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={draft("cooling_ceilings") === true || draft("cooling_ceilings") === "true"}
-                    onChange={(e) => handleChangeDraft("cooling_ceilings", e.target.checked)}
-                  />
-                  <span className="text-sm text-slate-900">
-                    {(draft("cooling_ceilings") === true || draft("cooling_ceilings") === "true") ? "Ano" : "Ne"}
-                  </span>
-                </label>
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("cooling_ceilings", project["cooling_ceilings"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("cooling_ceilings", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
                   {formatBoolOrDash(project["cooling_ceilings"])}
@@ -1035,17 +1066,20 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Žaluzie</p>
               {editMode ? (
-                <label className="mt-0.5 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={draft("exterior_blinds") === true || draft("exterior_blinds") === "true"}
-                    onChange={(e) => handleChangeDraft("exterior_blinds", e.target.checked)}
-                  />
-                  <span className="text-sm text-slate-900">
-                    {(draft("exterior_blinds") === true || draft("exterior_blinds") === "true") ? "Ano" : "Ne"}
-                  </span>
-                </label>
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("exterior_blinds", project["exterior_blinds"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("exterior_blinds", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
                   {formatBoolOrDash(project["exterior_blinds"])}
@@ -1055,17 +1089,20 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Smart home</p>
               {editMode ? (
-                <label className="mt-0.5 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    className="h-4 w-4 rounded border-slate-300"
-                    checked={draft("smart_home") === true || draft("smart_home") === "true"}
-                    onChange={(e) => handleChangeDraft("smart_home", e.target.checked)}
-                  />
-                  <span className="text-sm text-slate-900">
-                    {(draft("smart_home") === true || draft("smart_home") === "true") ? "Ano" : "Ne"}
-                  </span>
-                </label>
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("smart_home", project["smart_home"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("smart_home", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
                   {formatBoolOrDash(project["smart_home"])}
