@@ -14,5 +14,8 @@ if [ -z "$BUILTMIND_API_KEY" ]; then
   echo "Chybí BUILTMIND_API_KEY. Přidej ho do .env v kořeni projektu."
   exit 1
 fi
+
+# Nastavíme PYTHONPATH, aby byl dostupný balík app (src/app)
+export PYTHONPATH=src
 echo "Spouštím fetch + import (BuiltMind API -> DB)..."
-exec PYTHONPATH=src python -m app.fetch_builtmind "$@"
+exec python -m app.fetch_builtmind "$@"
