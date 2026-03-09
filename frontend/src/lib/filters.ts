@@ -279,6 +279,11 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFi
       if (v !== undefined) filters[key] = v;
     }
   }
+  // Výchozí stav: po otevření aplikace filtrujeme na dostupné / rezervované / neviditelné jednotky.
+  // Pokud v URL není žádný parametr availability, nastavíme implicitně tento stav.
+  if (!("availability" in filters)) {
+    filters.availability = ["available", "unseen", "reserved"];
+  }
   return filters;
 }
 
