@@ -20,6 +20,8 @@ import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 
 type ProjectItem = {
   id: number;
@@ -143,13 +145,23 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return formatMinutes(isNumber ? num : null);
   }
 
-  // Percent-style fields (stored as fraction 0–1)
+  // Percent-style fields (stored as fraction 0–1): platby i min/max; u financování 0 = nevyplněno
   if (
     column.unit === "%" ||
+    column.key === "availability_ratio" ||
     column.key === "available_ratio" ||
-    column.key.startsWith("payment_")
+    column.key.includes("payment_contract") ||
+    column.key.includes("payment_construction") ||
+    column.key.includes("payment_occupancy")
   ) {
-    return formatPercent(isNumber ? num * 100 : null);
+    if (column.key === "availability_ratio" || column.key === "available_ratio") {
+      return formatPercent(isNumber ? num : null, 1);
+    }
+    const isFinancing =
+      column.key.includes("payment_contract") ||
+      column.key.includes("payment_construction") ||
+      column.key.includes("payment_occupancy");
+    return formatPercent(isNumber ? num : null, undefined, isFinancing);
   }
 
   // Dates
@@ -214,7 +226,10 @@ function parseProjectsSearchParams(params: URLSearchParams): {
     ? limitParam
     : DEFAULT_LIMIT;
   const offset = Math.max(0, parseInt(params.get("offset") ?? "0", 10) || 0);
-  const sortBy = params.get("sort_by") ?? "avg_price_per_m2_czk";
+  let sortBy = params.get("sort_by") ?? "avg_price_per_m2_czk";
+  // Kanonické názvy: ride_to_center / public_transport_to_center (ne _min)
+  if (sortBy === "ride_to_center_min") sortBy = "ride_to_center";
+  if (sortBy === "public_transport_to_center_min") sortBy = "public_transport_to_center";
   const sortDir = (params.get("sort_dir") === "desc" ? "desc" : "asc") as "asc" | "desc";
   const filters = parseFiltersFromSearchParams(params);
   const polygon = params.get("poly");
@@ -427,6 +442,17 @@ export default function ProjectsPage() {
     }
   }, [effectiveSortBy, sortBy, filters, limit, offset, sortDir, polygon, syncToUrl]);
 
+  // Přepsat v URL staré sort_by (_min) na kanonické ride_to_center / public_transport_to_center
+  useEffect(() => {
+    const inUrl = searchParams?.get("sort_by");
+    if (
+      (inUrl === "ride_to_center_min" || inUrl === "public_transport_to_center_min") &&
+      (sortBy === "ride_to_center" || sortBy === "public_transport_to_center")
+    ) {
+      syncToUrl(filters, limit, offset, sortBy, sortDir, polygon);
+    }
+  }, [searchParams, sortBy, sortDir, filters, limit, offset, polygon, syncToUrl]);
+
   // Fetch projects list (paginated, server-side sort, with filters)
   useEffect(() => {
     setLoading(true);
@@ -589,6 +615,7 @@ export default function ProjectsPage() {
   const summary = computeProjectsSummary(projects, total);
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const handleRowClick = useCallback(
     (e: React.MouseEvent<HTMLTableRowElement>, projectId: number) => {
@@ -786,12 +813,13 @@ export default function ProjectsPage() {
                   const asPercent = percentRangeBases.has(base);
                   const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
                   const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
+                  const suf = asPercent ? " %" : "";
                   let value = "";
                   if (dispMin != null) {
-                    value += `od ${dispMin}`;
+                    value += `od ${dispMin}${suf}`;
                   }
                   if (dispMax != null) {
-                    value += value ? ` do ${dispMax}` : `do ${dispMax}`;
+                    value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
                   }
                   badges.push({
                     id: `${base}:${value}`,
@@ -969,7 +997,7 @@ export default function ProjectsPage() {
                         const renderValue = () => {
                           if (fieldKey === "payment_contract" || fieldKey === "payment_construction" || fieldKey === "payment_occupancy") {
                             const val = p[fieldKey] as number | null | undefined;
-                            return formatPercent(val != null ? Number(val) : null);
+                            return formatPercent(val != null ? Number(val) : null, undefined, true);
                           }
                           if (fieldKey === "min_parking_indoor_price_czk" || fieldKey === "max_parking_indoor_price_czk") {
                             const val =
@@ -1077,57 +1105,122 @@ export default function ProjectsPage() {
         onReset={onReset}
         onApply={onApply}
       />
-      {columnsOpen && columnsConfig && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/40"
-            aria-hidden
-            onClick={() => setColumnsOpen(false)}
-          />
-          <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-slate-200 bg-white shadow-xl">
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
-              <h2 className="text-sm font-semibold text-slate-900">Sloupce</h2>
-              <button
-                type="button"
+      {columnsConfig && (
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragEnd={({ active, over }) => {
+            if (!over || active.id === over.id) return;
+            setColumnsConfig((prev) => {
+              if (!prev) return prev;
+              const oldIndex = prev.findIndex((c) => c.key === active.id);
+              const newIndex = prev.findIndex((c) => c.key === over.id);
+              if (oldIndex === -1 || newIndex === -1) return prev;
+              return arrayMove(prev, oldIndex, newIndex);
+            });
+          }}
+        >
+          {columnsOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-40 bg-black/40"
+                aria-hidden
                 onClick={() => setColumnsOpen(false)}
-                className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
-                aria-label="Zavřít"
-              >
-                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto px-4 py-4">
-              <div className="space-y-0.5">
-                {columnsConfig.map((cfg) => (
-                  <label
-                    key={cfg.key}
-                    className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-slate-900 transition-colors hover:bg-slate-50"
+              />
+              <div className="fixed top-0 right-0 z-50 flex h-full w-80 flex-col rounded-l-xl border-l border-slate-200 bg-white shadow-xl">
+                <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-5 py-4">
+                  <h2 className="text-sm font-semibold text-slate-900">Sloupce</h2>
+                  <button
+                    type="button"
+                    onClick={() => setColumnsOpen(false)}
+                    className="rounded-lg p-2 text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                    aria-label="Zavřít"
                   >
-                    <input
-                      type="checkbox"
-                      checked={cfg.visible}
-                      onChange={(e) =>
-                        setColumnsConfig((prev) =>
-                          prev
-                            ? prev.map((c) =>
-                                c.key === cfg.key ? { ...c, visible: e.target.checked } : c
-                              )
-                            : prev
-                        )
-                      }
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-500/20"
-                    />
-                    <span className="font-medium text-slate-800">{cfg.label}</span>
-                  </label>
-                ))}
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+                <div className="flex-1 overflow-y-auto px-4 py-4">
+                  <p className="mb-2 text-xs text-slate-500">
+                    Přetáhněte řádky pro změnu pořadí, zrušte zaškrtnutí pro skrytí sloupce.
+                  </p>
+                  <SortableContext
+                    items={columnsConfig.map((c) => c.key)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <ul className="space-y-1.5">
+                      {columnsConfig.map((cfg) => (
+                        <ProjectColumnRow
+                          key={cfg.key}
+                          column={cfg}
+                          onToggleVisible={(visible) =>
+                            setColumnsConfig((prev) =>
+                              prev
+                                ? prev.map((c) =>
+                                    c.key === cfg.key ? { ...c, visible } : c
+                                  )
+                                : prev
+                            )
+                          }
+                        />
+                      ))}
+                    </ul>
+                  </SortableContext>
+                </div>
               </div>
-            </div>
-          </div>
-        </>
+            </>
+          )}
+        </DndContext>
       )}
     </div>
   );
 }
+
+function ProjectColumnRow({
+  column,
+  onToggleVisible,
+}: {
+  column: ProjectColumnConfig;
+  onToggleVisible: (visible: boolean) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id: column.key,
+  });
+  const style: React.CSSProperties = {
+    transform: transform ? `translate3d(${transform.x}px, ${transform.y}px, 0)` : undefined,
+    transition,
+  };
+  return (
+    <li
+      ref={setNodeRef}
+      style={style}
+      className={`flex items-center justify-between rounded border border-slate-200 bg-white px-2 py-1.5 text-sm ${
+        isDragging ? "shadow-lg ring-1 ring-slate-300" : ""
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="cursor-grab text-slate-400 hover:text-slate-600"
+          aria-label="Přesunout"
+        >
+          ⠿
+        </button>
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={column.visible}
+            onChange={(e) => onToggleVisible(e.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-2 focus:ring-slate-500/30"
+          />
+          <span className="text-slate-900">{column.label}</span>
+        </label>
+      </div>
+    </li>
+  );
+}
+
 

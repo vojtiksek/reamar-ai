@@ -1,15 +1,20 @@
 "use client";
 
+import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { API_BASE } from "@/lib/api";
 import {
   buildUnitsQuery,
+  countActiveFilters,
+  filtersToSearchParams,
   parseFiltersFromSearchParams,
   type CurrentFilters,
+  type FilterGroup,
+  type FiltersResponse,
 } from "@/lib/filters";
 import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { LatLngExpression } from "leaflet";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
@@ -43,12 +48,27 @@ export default function ProjectsMapPage() {
   const [projects, setProjects] = useState<ProjectMapItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [onlyAvailable, setOnlyAvailable] = useState(false);
   const [polygon, setPolygon] = useState<LatLng[]>(() =>
     decodePolygon(searchParams?.get("poly") ?? undefined)
   );
   const [drawing, setDrawing] = useState(false);
   const [draftPolygon, setDraftPolygon] = useState<LatLng[]>([]);
+
+  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
+  const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  const filtersInUrl: CurrentFilters = useMemo(
+    () => parseFiltersFromSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
+    [searchParams]
+  );
+
+  useEffect(() => {
+    fetch(`${API_BASE}/filters`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((data: FiltersResponse) => setFilterGroups(data?.groups ?? []))
+      .catch(() => setFilterGroups([]));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -127,13 +147,6 @@ export default function ProjectsMapPage() {
 
   const visibleProjects = useMemo(() => {
     let base = projects;
-    if (onlyAvailable) {
-      base = base.filter((p) => {
-        const available = p.units_available ?? 0;
-        const reserved = p.units_reserved ?? 0;
-        return available + reserved > 0;
-      });
-    }
     const activePoly = polygon;
     if (activePoly.length >= 3) {
       base = base.filter((p) => {
@@ -142,7 +155,7 @@ export default function ProjectsMapPage() {
       });
     }
     return base;
-  }, [projects, onlyAvailable, polygon]);
+  }, [projects, polygon]);
 
   const center: LatLngExpression = useMemo(() => {
     const source = visibleProjects.length > 0 ? visibleProjects : projects;
@@ -155,16 +168,52 @@ export default function ProjectsMapPage() {
     return [latSum / source.length, lonSum / source.length] as LatLngExpression;
   }, [projects, visibleProjects]);
 
+  const applyFiltersToUrl = useCallback(
+    (next: CurrentFilters) => {
+      const params = filtersToSearchParams(next);
+      if (polygon.length >= 3) {
+        params.set("poly", encodePolygon(polygon));
+      }
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, polygon]
+  );
+
   const syncPolygonToUrl = (poly: LatLng[] | null) => {
-    const params = new URLSearchParams(searchParams?.toString() ?? "");
+    const params = filtersToSearchParams(filtersInUrl);
     if (poly && poly.length >= 3) {
       params.set("poly", encodePolygon(poly));
-    } else {
-      params.delete("poly");
     }
     const qs = params.toString();
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
+
+  const openDrawer = useCallback(() => {
+    setCurrentFilters({ ...filtersInUrl });
+    setDrawerOpen(true);
+  }, [filtersInUrl]);
+
+  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+
+  const onChangeFilter = useCallback(
+    (key: string, value: number | number[] | string[] | boolean | undefined) => {
+      setCurrentFilters((prev) => ({ ...prev, [key]: value }));
+    },
+    []
+  );
+
+  const onReset = useCallback(() => setCurrentFilters({}), []);
+
+  const onResetAll = useCallback(() => {
+    setCurrentFilters({});
+    applyFiltersToUrl({});
+  }, [applyFiltersToUrl]);
+
+  const onApply = useCallback(() => {
+    applyFiltersToUrl(currentFilters);
+    closeDrawer();
+  }, [applyFiltersToUrl, currentFilters, closeDrawer]);
 
   const handleMapClick = (lat: number, lng: number) => {
     if (!drawing) return;
@@ -206,7 +255,7 @@ export default function ProjectsMapPage() {
             </Link>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
+          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -257,15 +306,28 @@ export default function ProjectsMapPage() {
           </div>
           <button
             type="button"
-            onClick={() => setOnlyAvailable((v) => !v)}
-            className={
-              "rounded-full border px-3 py-1.5 font-medium transition " +
-              (onlyAvailable
-                ? "border-slate-900 bg-slate-900 text-white hover:bg-slate-800"
-                : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
+            onClick={openDrawer}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50"
+            title={
+              countActiveFilters(filtersInUrl) > 0
+                ? `Aktivní filtry: ${countActiveFilters(filtersInUrl)}`
+                : undefined
             }
           >
-            Jen dostupné
+            Filtry
+            {countActiveFilters(filtersInUrl) > 0 && (
+              <span className="ml-1 rounded bg-gray-200 px-1.5 text-[10px] sm:text-xs">
+                {countActiveFilters(filtersInUrl)}
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={onResetAll}
+            disabled={loading}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Reset
           </button>
           <span className="text-slate-600">
             Zobrazeno projektů s GPS: <span className="font-semibold text-slate-900">{visibleProjects.length}</span>
@@ -367,6 +429,15 @@ export default function ProjectsMapPage() {
           />
         </section>
       </main>
+      <FiltersDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        filterGroups={filterGroups}
+        currentFilters={currentFilters}
+        onChange={onChangeFilter}
+        onReset={onReset}
+        onApply={onApply}
+      />
     </div>
   );
 }

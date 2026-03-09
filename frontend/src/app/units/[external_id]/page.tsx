@@ -68,6 +68,8 @@ const PROJECT_OVERVIEW_FIELDS: Array<{ key: string; label: string; accessor: str
   { key: "cooling_ceilings", label: "Chlazení stropem", accessor: "cooling_ceilings", data_type: "boolean" },
   { key: "exterior_blinds", label: "Žaluzie", accessor: "exterior_blinds", data_type: "text" },
   { key: "smart_home", label: "Smart home", accessor: "smart_home", data_type: "boolean" },
+  // Podlaha – ze standardů projektu (Project.floors)
+  { key: "floors", label: "Podlaha", accessor: "project.floors", data_type: "text" },
   // URL projektu (odvozená z unit URL)
   { key: "project_url", label: "URL projektu", accessor: "project.project_url", data_type: "text" },
   // Z projektu (nebo unit.data po doplnění agregátů na backendu)
@@ -533,6 +535,116 @@ export default function UnitDetailPage() {
   const gpsLat = (unit.project as { gps_latitude?: number | null })?.gps_latitude as number | undefined;
   const gpsLng = (unit.project as { gps_longitude?: number | null })?.gps_longitude as number | undefined;
 
+  const getOverviewColumnByKey = (key: string): UnitColumn | undefined =>
+    (PROJECT_OVERVIEW_FIELDS as UnitColumn[]).find((c) => c.key === key) ??
+    projectColumns.find((c) => c.key === key);
+
+  const overviewStandards: UnitColumn[] = [
+    "heating",
+    "air_conditioning",
+    "cooling_ceilings",
+    "exterior_blinds",
+    "smart_home",
+    "floors",
+  ]
+    .map(getOverviewColumnByKey)
+    .filter(Boolean) as UnitColumn[];
+
+  const overviewFinanceParking: UnitColumn[] = [
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
+    "min_parking_outdoor_price_czk",
+    "min_parking_indoor_price_czk",
+  ]
+    .map((key) =>
+      projectColumns.find(
+        (c) => c.key === key || c.accessor === `project.${key}` || c.accessor === key
+      )
+    )
+    .filter(Boolean) as UnitColumn[];
+
+  const overviewUnitsStats: UnitColumn[] = [
+    getOverviewColumnByKey("total_units"),
+    getOverviewColumnByKey("available_units"),
+    getOverviewColumnByKey("availability_ratio"),
+  ].filter(Boolean) as UnitColumn[];
+
+  const overviewLocation: UnitColumn[] = [
+    // Obec, katastr, adresa z data/projectColumns (pokud existují)
+    projectColumns.find((c) => c.key === "municipality" || c.accessor === "project.municipality"),
+    projectColumns.find(
+      (c) =>
+        c.key === "cadastral_area_iga" || c.accessor === "project.cadastral_area_iga"
+    ),
+    projectColumns.find((c) => c.key === "address" || c.accessor === "project.address"),
+    getOverviewColumnByKey("project.ride_to_center_min"),
+    getOverviewColumnByKey("project.public_transport_to_center_min"),
+  ].filter(Boolean) as UnitColumn[];
+
+  const usedOverviewKeys = new Set(
+    [
+      ...overviewStandards,
+      ...overviewFinanceParking,
+      ...overviewUnitsStats,
+      ...overviewLocation,
+    ].map((c) => c.key)
+  );
+
+  const hiddenFromOverview = new Set<string>([
+    "project.name",
+    "name",
+    "project",
+    "developer",
+    "project.developer",
+    "city",
+    "district",
+    "municipal_district_iga",
+    "administrative_district_iga",
+    "region_iga",
+  ]);
+
+  const otherOverviewColumns: UnitColumn[] = [
+    ...(PROJECT_OVERVIEW_FIELDS as UnitColumn[]),
+    ...projectColumns.filter(
+      (col) =>
+        !(PROJECT_OVERVIEW_FIELDS as UnitColumn[]).some(
+          (f) => f.key === col.key || f.accessor === col.accessor
+        )
+    ),
+  ].filter((col) => {
+    if (usedOverviewKeys.has(col.key)) return false;
+    if (hiddenFromOverview.has(col.key)) return false;
+    if (col.accessor && hiddenFromOverview.has(String(col.accessor))) return false;
+    return true;
+  });
+
+  const renderProjectField = (col: UnitColumn) => {
+    const raw = getUnitDisplayValue(unit, col);
+    const formatted = formatDisplayValue(raw, col);
+    const isLink =
+      (col.key === "project_url" || col.key === "unit_url" || col.accessor === "project.project_url") &&
+      typeof raw === "string" &&
+      /^https?:\/\//i.test(raw);
+    return (
+      <div key={col.key} className="min-w-0">
+        <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
+        {isLink ? (
+          <a
+            href={raw as string}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
+          >
+            {formatted}
+          </a>
+        ) : (
+          <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
@@ -758,64 +870,61 @@ export default function UnitDetailPage() {
         })()}
 
         {/* Data o projektu */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
             Data o projektu
           </h2>
-          <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {PROJECT_OVERVIEW_FIELDS.map((col) => {
-              const raw = getUnitDisplayValue(unit, col);
-              const formatted = formatDisplayValue(raw, col);
-              const isLink =
-                col.key === "project_url" &&
-                typeof raw === "string" &&
-                /^https?:\/\//i.test(raw);
-              return (
-                <div key={col.key} className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
-                  {isLink ? (
-                    <a
-                      href={raw}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
-                    >
-                      {formatted}
-                    </a>
-                  ) : (
-                    <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
-                  )}
+          <div className="space-y-4">
+            {overviewStandards.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Standardy
+                </h3>
+                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                  {overviewStandards.map(renderProjectField)}
                 </div>
-              );
-            })}
-            {projectColumns
-              .filter((col) => !PROJECT_OVERVIEW_FIELDS.some((f) => f.key === col.key || f.accessor === col.accessor))
-              .map((col) => {
-                const raw = getUnitDisplayValue(unit, col);
-                if (raw === undefined && col.key !== "project_url") return null;
-                const formatted = formatDisplayValue(raw, col);
-                const isLink =
-                  (col.key === "project_url") &&
-                  typeof raw === "string" &&
-                  /^https?:\/\//i.test(raw);
-                return (
-                  <div key={col.key} className="min-w-0">
-                    <p className="truncate text-xs font-medium text-slate-500">{col.label}</p>
-                    {isLink ? (
-                      <a
-                        href={raw}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="mt-0.5 block truncate text-sm font-medium text-slate-900 underline decoration-slate-400 underline-offset-2 hover:text-slate-700 hover:decoration-slate-600"
-                      >
-                        {formatted}
-                      </a>
-                    ) : (
-                      <p className="mt-0.5 truncate text-sm font-medium text-slate-900">{formatted}</p>
-                    )}
-                  </div>
-                );
-              })}
+              </div>
+            )}
+            {overviewFinanceParking.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Financování a parkování
+                </h3>
+                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                  {overviewFinanceParking.map(renderProjectField)}
+                </div>
+              </div>
+            )}
+            {overviewUnitsStats.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Počet jednotek
+                </h3>
+                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                  {overviewUnitsStats.map(renderProjectField)}
+                </div>
+              </div>
+            )}
+            {overviewLocation.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Lokalita
+                </h3>
+                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                  {overviewLocation.map(renderProjectField)}
+                </div>
+              </div>
+            )}
+            {otherOverviewColumns.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Ostatní
+                </h3>
+                <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+                  {otherOverviewColumns.map(renderProjectField)}
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
