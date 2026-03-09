@@ -41,14 +41,32 @@ export function formatMinutes(value: number | null | undefined): string {
 }
 
 /**
- * Percent formatter that supports both:
- * - fractions 0..1 (e.g. 0.2 -> 20 %)
- * - already-percent values 0..100 (e.g. 20 -> 20 %)
+ * Formát pro počet dní (např. „Dní na trhu“).
  */
-export function formatPercent(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
+export function formatDays(value: number | null | undefined): string {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+  return `${Math.round(Number(value))} dní`;
+}
+
+/**
+ * Percent formatter for display.
+ * - Fractions 0..1 (e.g. 0.2) are always shown as percent (20 %).
+ * - Values already in 0..100 are shown as-is (20 -> 20 %).
+ * @param fractionDigits - optional number of decimal places (e.g. 1 -> "85.6 %")
+ * @param treatZeroAsEmpty - if true, 0 is shown as "—" (for financing where 0 = nevyplněno)
+ */
+export function formatPercent(
+  value: number | null | undefined,
+  fractionDigits?: number,
+  treatZeroAsEmpty?: boolean
+): string {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
   const n = Number(value);
-  const pct = Math.abs(n) <= 1 ? n * 100 : n;
+  if (treatZeroAsEmpty && n === 0) return "—";
+  const pct = n > 1 ? n : n * 100;
+  if (fractionDigits != null && fractionDigits >= 0) {
+    return `${pct.toFixed(fractionDigits)} %`;
+  }
   return `${Math.round(pct)} %`;
 }
 
@@ -101,6 +119,17 @@ export function formatByDisplayFormat(
 
   if (catalogKey === "layout" && typeof value === "string") return formatLayout(value);
 
+  // Odchylka od trhu je z backendu už v procentech (44.33 = 44,33 %) – nezobrazovat jako 4433 %
+  if (
+    catalogKey != null &&
+    (catalogKey === "local_price_diff_1000m" || catalogKey === "local_price_diff_2000m")
+  ) {
+    const n = Number(value);
+    if (Number.isNaN(n)) return "—";
+    const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+    return `${sign}${Math.abs(n).toFixed(1)} %`;
+  }
+
   switch (displayFormat) {
     case "currency":
       return formatCurrencyCzk(Number(value));
@@ -110,8 +139,16 @@ export function formatByDisplayFormat(
       return formatAreaM2(Number(value));
     case "duration_minutes":
       return formatMinutes(Number(value));
-    case "percent":
-      return formatPercent(Number(value));
+    case "duration_days":
+      return formatDays(Number(value));
+    case "percent": {
+      const isFinancing =
+        catalogKey != null &&
+        (catalogKey.includes("payment_contract") ||
+          catalogKey.includes("payment_construction") ||
+          catalogKey.includes("payment_occupancy"));
+      return formatPercent(Number(value), undefined, isFinancing);
+    }
     case "boolean": {
       const raw = String(value ?? "").toLowerCase();
       const isTrue =
