@@ -405,21 +405,27 @@ def apply_unit_data_respecting_overrides(
     *,
     only_if_present: bool = False,
 ) -> None:
-    """Jako apply_unit_data_mapped, ale: u override polí nepřepisujeme; u price_czk, price_per_m2_czk, availability_status při rozdílu API vs. efektivní ukládáme do pending_list místo zápisu."""
+    """Jako apply_unit_data_mapped, ale:
+    - u override polí (UnitOverride) nepřepisujeme základní hodnoty z API
+    - u price_czk, price_per_m2_czk, availability_status:
+        * pokud je na poli override → rozdíl API vs. efektivní ukládáme do pending_list
+        * pokud override není → hodnotu z API normálně zapíšeme (bez pending)
+    """
     unit.raw_json = dict(unit_data)
     table = Unit.__table__
 
     for key, value in unit_data.items():
         if key == "availability":
-            if overrides.get("availability_status") is not None:
-                continue
             new_status = normalize_str(value, 50)
             new_available = (new_status or "").lower() == "available"
-            if "availability_status" in API_CONFLICT_FIELDS:
+            # Pokud existuje override na availability_status, API do pole přímo nezapisujeme
+            # a případný rozdíl ukládáme jen jako pending návrh.
+            if overrides.get("availability_status") is not None:
                 effective = _effective_value(unit, overrides, "availability_status")
                 if str(new_status or "") != str(effective or ""):
                     pending_list.append((unit.id, "availability_status", new_status or ""))
-                    continue
+                continue
+            # Bez override zapisujeme hodnotu z API přímo (bez pending).
             if not only_if_present or value is not None:
                 unit.availability_status = new_status
                 unit.available = new_available
@@ -431,25 +437,21 @@ def apply_unit_data_respecting_overrides(
             continue
         if only_if_present and value is None:
             continue
+        # Pole s overrides na jednotce nikdy nepřepisujeme přímo – override má přednost.
         if attr in OVERRIDEABLE_FIELDS and attr in overrides:
-            if attr not in API_CONFLICT_FIELDS:
-                continue
-            # API conflict field with override: still check if API value differs from effective
-            effective = _effective_value(unit, overrides, attr)
-            col = table.c.get(attr)
-            column_type = col.type if col is not None else None
-            normalized = _normalize_value_for_column(value, column_type)
-            if normalized != effective:
-                pending_list.append((unit.id, attr, str(normalized) if normalized is not None else ""))
+            # U konfliktních polí (cena, cena/m2, stav) chceme návrhy z API (pending),
+            # u ostatních override polí API ignorujeme úplně.
+            if attr in API_CONFLICT_FIELDS:
+                effective = _effective_value(unit, overrides, attr)
+                col = table.c.get(attr)
+                column_type = col.type if col is not None else None
+                normalized = _normalize_value_for_column(value, column_type)
+                if normalized != effective:
+                    pending_list.append(
+                        (unit.id, attr, str(normalized) if normalized is not None else "")
+                    )
+            # Ať už konflikt byl nebo ne, základní hodnotu na jednotce neměníme.
             continue
-        if attr in API_CONFLICT_FIELDS and attr not in overrides:
-            effective = _effective_value(unit, overrides, attr)
-            col = table.c.get(attr)
-            column_type = col.type if col is not None else None
-            normalized = _normalize_value_for_column(value, column_type)
-            if normalized != effective:
-                pending_list.append((unit.id, attr, str(normalized) if normalized is not None else ""))
-                continue
         col = table.c.get(attr)
         column_type = col.type if col is not None else None
         normalized = _normalize_value_for_column(value, column_type)
