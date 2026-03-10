@@ -1070,8 +1070,11 @@ export default function ProjectDetailPage() {
                   className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
                   value={(() => {
                     const v = displayOrDraft("exterior_blinds", project["exterior_blinds"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
+                    if (v == null || v === "") return "";
+                    const s = String(v).toLowerCase();
+                    if (s === "true" || s === "1" || s === "ano") return "true";
+                    if (s === "false" || s === "0" || s === "ne") return "false";
+                    if (s === "preparation" || s === "priprava" || s === "příprava") return "preparation";
                     return "";
                   })()}
                   onChange={(e) => handleChangeDraft("exterior_blinds", e.target.value)}
@@ -1079,10 +1082,19 @@ export default function ProjectDetailPage() {
                   <option value="">—</option>
                   <option value="true">Ano</option>
                   <option value="false">Ne</option>
+                  <option value="preparation">Příprava</option>
                 </select>
               ) : (
                 <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["exterior_blinds"])}
+                  {(() => {
+                    const v = project["exterior_blinds"];
+                    if (v == null || v === "") return "—";
+                    const s = String(v).toLowerCase();
+                    if (s === "true" || s === "1" || s === "ano") return "Ano";
+                    if (s === "false" || s === "0" || s === "ne") return "Ne";
+                    if (s === "preparation" || s === "priprava" || s === "příprava") return "Příprava";
+                    return "—";
+                  })()}
                 </p>
               )}
             </div>

@@ -1092,6 +1092,32 @@ export default function UnitDetailPage() {
                             </option>
                           ))}
                         </select>
+                      ) : editableCol.key === "layout" ? (
+                        <select
+                          className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2.5 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-500/20"
+                          value={(() => {
+                            const v = (draftVal as string | undefined) ?? (displayVal as string | undefined) ?? "";
+                            if (!v) return "";
+                            // Ukládáme přímo API hodnotu layout_X, pokud už tak vypadá.
+                            if (/^layout_\d+$/i.test(v)) return v;
+                            const m = /^(\d+)\+kk$/i.exec(v.trim());
+                            if (m) {
+                              return `layout_${m[1]}`;
+                            }
+                            return v;
+                          })()}
+                          onChange={(e) => handleChangeDraft(editableCol.overrideField, e.target.value)}
+                        >
+                          <option value="">—</option>
+                          <option value="layout_0">Garsonka</option>
+                          <option value="layout_1">1+kk</option>
+                          <option value="layout_2">2+kk</option>
+                          <option value="layout_3">3+kk</option>
+                          <option value="layout_4">4+kk</option>
+                          <option value="layout_5">5+kk</option>
+                          <option value="layout_6">6+kk</option>
+                          <option value="layout_7">7+kk</option>
+                        </select>
                       ) : editableCol.key === "floor" ? (
                         <input
                           type="number"
