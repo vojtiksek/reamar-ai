@@ -85,7 +85,11 @@ export default function ProjectsMapPage() {
         // a pomocí buildUnitsQuery z nich postavíme dotaz na backend.
         const rawParams = new URLSearchParams(searchParams?.toString() ?? "");
         const filters: CurrentFilters = parseFiltersFromSearchParams(rawParams);
-        const supportedKeys = new Set(Object.keys(filters));
+        // supportedKeys musí být katalogové klíče (price, ride_to_center, …),
+        // ne „ride_to_center_min“ apod., jinak se range filtry (dojezd) nezapíšou.
+        const supportedKeys = new Set(
+          Object.keys(filters).map((k) => k.replace(/_(min|max)$/, ""))
+        );
 
         // Geofilter (obdélník okolo polygonu) přidáme zvlášť, aby se aplikoval
         // globálně (před limitem/offsetem), ale nijak neměnil logiku ostatních filtrů.

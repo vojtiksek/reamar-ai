@@ -235,17 +235,15 @@ const BACKEND_SORT_FIELDS = [
 const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
   "original_price_czk",
   "original_price_per_m2_czk",
-  "avg_price_czk",
-  "avg_price_per_m2_czk",
   "administrative_district_iga",
-  "municipality",
-  "address",
-  "availability_status",
-  "overall_quality",
   "project_url",
   "project.project_url",
-  "project.avg_price_czk",
-  "project.avg_price_per_m2_czk",
+  // Trvale skryté sloupce – nechceme je ani v nabídce „Sloupce“
+  "address",
+  "project.address",
+  "availability_status",
+  "overall_quality",
+  "project.overall_quality",
   "unit_name",
   "building",
   "url",
@@ -253,6 +251,67 @@ const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
   "id",
   "external_id",
 ]);
+
+// Sloupce, které mají být pro nového uživatele výchozím způsobem skryté,
+// ale v nabídce „Sloupce“ je lze znovu zapnout.
+const DEFAULT_HIDDEN_COLUMN_KEYS = new Set<string>([
+  // Projektové počty jednotek
+  "total_units",
+  "available_units",
+  // Ceny stání / garáže (projektové agregáty)
+  "min_parking_outdoor_price_czk", // Cena stání
+  "min_parking_indoor_price_czk",  // Cena garáže
+  // Změna ceny
+  "price_change",
+  // Podíl dostupných
+  "availability_ratio",
+  // Průměrná / min / max cena (projektové agregáty)
+  "avg_price_czk",
+  "avg_price_per_m2_czk",
+  "min_price_czk",
+  "max_price_czk",
+  // Průměrná plocha m2 (projektový agregát)
+  "avg_floor_area_m2",
+  // Lokalita – město, kraj
+  "city",
+  "region_iga",
+  // Plochy
+  "total_area_m2",
+  "balcony_area_m2",
+  "terrace_area_m2",
+  "garden_area_m2",
+  // Orientace
+  "orientation",
+  // První / poslední výskyt, datum prodeje (projekt + jednotka)
+  "project_first_seen",
+  "project_last_seen",
+  "first_seen",
+  "last_seen",
+  "sold_date",
+  // Standardy – jednotkové
+  "heating",
+  "air_conditioning",
+  "cooling_ceilings",
+  "exterior_blinds",
+  "smart_home",
+  "windows",
+  "partition_walls",
+  // Jednotkové financování – v tabulce použijeme sloupec „Financování (a/b/c)“
+  "payment_contract",
+  "payment_construction",
+  "payment_occupancy",
+]);
+
+// Pomocná funkce: vrátí true, pokud má být sloupec (podle svého katalogového klíče)
+// výchozím způsobem skrytý. Bereme v úvahu jak key, tak accessor (např. "project.foo").
+function isDefaultHiddenColumn(col: { key: string; accessor?: string }): boolean {
+  const accessor = col.accessor ?? col.key;
+  const catalogKey =
+    ACCESSOR_TO_CATALOG_KEY[accessor] ??
+    ACCESSOR_TO_CATALOG_KEY[col.key] ??
+    accessor;
+  return DEFAULT_HIDDEN_COLUMN_KEYS.has(catalogKey);
+}
 
 type ColumnConfig = {
   key: string;
@@ -434,6 +493,37 @@ function downloadUnitsCsv(
   const rows = units.map((u) => {
     return visibleColumns
       .map(({ key, accessor, data_type, display_format: df }) => {
+        if (key === "financing_scheme") {
+          const aRaw = getValue(u, "payment_contract", "payment_contract");
+          const bRaw = getValue(u, "payment_construction", "payment_construction");
+          const cRaw = getValue(u, "payment_occupancy", "payment_occupancy");
+          const toPct = (v: unknown): string => {
+            if (v == null || v === "") return "—";
+            const n = typeof v === "number" ? v : Number(v);
+            if (Number.isNaN(n)) return "—";
+            // Hodnoty jsou 0–1 → zobrazíme jako celé procento
+            return `${Math.round(n <= 1 ? n * 100 : n)}`;
+          };
+          const a = toPct(aRaw);
+          const b = toPct(bRaw);
+          const c = toPct(cRaw);
+          const val = `${a}/${b}/${c}`;
+          return escapeCsvCell(val);
+        }
+        if (key === "units_overview") {
+          const totalRaw = getValue(u, "project.total_units", "total_units");
+          const availRaw = getValue(u, "project.available_units", "available_units");
+          const toInt = (v: unknown): string => {
+            if (v == null || v === "") return "—";
+            const n = typeof v === "number" ? v : Number(v);
+            if (Number.isNaN(n)) return "—";
+            return String(Math.round(n));
+          };
+          const total = toInt(totalRaw);
+          const avail = toInt(availRaw);
+          const val = `${total}/${avail}`;
+          return escapeCsvCell(val);
+        }
         const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
         const raw = getValue(u, accessor, catalogKey);
         let formatted = formatValue(raw, { display_format: df ?? data_type, key });
@@ -564,8 +654,21 @@ export default function Home() {
       .map((col) => ({
         key: col.key,
         label: col.label,
-        visible: true,
+        visible: !isDefaultHiddenColumn(col),
       }));
+    // Přidáme syntetické sloupce pro jednotky.
+    defaults.push(
+      {
+        key: "financing_scheme",
+        label: "Financování",
+        visible: true,
+      },
+      {
+        key: "units_overview",
+        label: "Počet jednotek",
+        visible: true,
+      }
+    );
     if (typeof window === "undefined") {
       setColumnsConfig(defaults);
       return;
@@ -584,6 +687,13 @@ export default function Home() {
           ? { ...d, visible: existing.visible, label: existing.label ?? d.label }
           : d;
       });
+      // Pokud starší konfigurace neznala syntetické sloupce, přidáme je.
+      if (!merged.some((c) => c.key === "financing_scheme")) {
+        merged.push({ key: "financing_scheme", label: "Financování", visible: true });
+      }
+      if (!merged.some((c) => c.key === "units_overview")) {
+        merged.push({ key: "units_overview", label: "Počet jednotek", visible: true });
+      }
       setColumnsConfig(merged);
     } catch {
       setColumnsConfig(defaults);
@@ -815,15 +925,65 @@ export default function Home() {
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
       const byKey = new Map(serverColumns.map((c) => [c.key, c]));
+      // Syntetické sloupce: „Financování“ (a/b/c) a „Počet jednotek“ (celkem/dostupné)
+      if (!byKey.has("financing_scheme")) {
+        byKey.set("financing_scheme", {
+          key: "financing_scheme",
+          label: "Financování",
+          entity: "unit",
+          data_type: "text",
+          display_format: "text",
+          sortable: false,
+          filterable: false,
+          accessor: "financing_scheme",
+        } as ColumnDef);
+      }
+      if (!byKey.has("units_overview")) {
+        byKey.set("units_overview", {
+          key: "units_overview",
+          label: "Počet jednotek",
+          entity: "project",
+          data_type: "text",
+          display_format: "text",
+          sortable: false,
+          filterable: false,
+          accessor: "units_overview",
+        } as ColumnDef);
+      }
       const baseConfig =
         columnsConfig ??
         serverColumns.map((c) => ({
           key: c.key,
           label: c.label,
-          visible: true,
+          visible: !isDefaultHiddenColumn(c),
         }));
+      // Preferované pořadí viditelných sloupců (ostatní jdou za nimi ve výchozím pořadí).
+      const ORDER_PREFERENCE: string[] = [
+        // Projekt a developer – podporujeme staré i nové klíče
+        "project.name", // Projekt (nový key)
+        "project", // Projekt (původní key v columnsConfig z localStorage)
+        "project.developer", // Developer (nový key)
+        "developer", // Developer (původní key v columnsConfig)
+        "layout", // Dispozice
+        "floor_area_m2", // Plocha (jen v units přepsaná label)
+        "exterior_area_m2", // Venek
+        "price_czk", // Cena
+        "price_per_m2_czk", // Cena m2
+        "ride_to_center_min", // Autem do centra
+        "public_transport_to_center_min", // MHD do centra
+        "project.municipality", // Obec (municipality)
+        "local_price_diff_2000m", // Odchylka 2 km
+        "financing_scheme", // Financování
+        "units_overview", // Počet jednotek (celkem/dostupné)
+        "renovation", // Rekonstrukce
+      ];
+      const orderIndex = (key: string): number => {
+        const idx = ORDER_PREFERENCE.indexOf(key);
+        return idx === -1 ? ORDER_PREFERENCE.length : idx;
+      };
+      const orderedConfig = [...baseConfig].sort((a, b) => orderIndex(a.key) - orderIndex(b.key));
       const backendSortable = new Set<string>(BACKEND_SORT_FIELDS);
-      let cols = baseConfig
+      let cols = orderedConfig
         .filter((c) => c.visible)
         .map((c) => {
           const col = byKey.get(c.key);
@@ -839,7 +999,16 @@ export default function Home() {
               : "left";
           const withAlign: ColumnDef & { align: "left" | "right" } = {
             ...col,
-            label: c.label || col.label,
+            label: (() => {
+              const baseLabel = c.label || col.label;
+              if (col.key === "project.total_units" || col.key === "total_units") {
+                return "Celkový počet jednotek";
+              }
+              if (col.key === "floor_area_m2") return "Plocha";
+              if (col.key === "local_price_diff_1000m") return "Odchylka 1 km";
+              if (col.key === "local_price_diff_2000m") return "Odchylka 2 km";
+              return baseLabel;
+            })(),
             accessor,
             align,
             // Povolit klikatelné řazení jen pro sloupce, které umí backend sortovat globálně.
@@ -1354,8 +1523,13 @@ export default function Home() {
                               isStickyFirst ? "left-0 z-20" : ""
                             }`}
                           >
-                            <span className="inline-flex items-center gap-1">
-                              {label}
+                            <span
+                              className={key === "project" || key === "project.name" ? "inline-flex max-w-[10rem] items-center gap-1 truncate" : "inline-flex items-center gap-1"}
+                              title={key === "project" || key === "project.name" ? String(label) : undefined}
+                            >
+                              <span className={key === "project" || key === "project.name" ? "truncate" : undefined}>
+                                {label}
+                              </span>
                               {isActive && (
                                 <span className="text-gray-600">
                                   {sortDir === "asc" ? "▲" : "▼"}
@@ -1417,12 +1591,44 @@ export default function Home() {
                         >
                           {visibleColumns.map(
                           ({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
-                            const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
-                            const raw = getValue(u, accessor, catalogKey);
-                            let formatted = formatValue(raw, {
-                              display_format: df ?? data_type,
-                              key,
-                            });
+                            let raw: unknown;
+                            let formatted: string | number | null | undefined;
+                            if (key === "financing_scheme") {
+                              const aRaw = getValue(u, "payment_contract", "payment_contract");
+                              const bRaw = getValue(u, "payment_construction", "payment_construction");
+                              const cRaw = getValue(u, "payment_occupancy", "payment_occupancy");
+                              const toPct = (v: unknown): string => {
+                                if (v == null || v === "") return "—";
+                                const n = typeof v === "number" ? v : Number(v);
+                                if (Number.isNaN(n)) return "—";
+                                return `${Math.round(n <= 1 ? n * 100 : n)}`;
+                              };
+                              const a = toPct(aRaw);
+                              const b = toPct(bRaw);
+                              const c = toPct(cRaw);
+                              raw = `${a}/${b}/${c}`;
+                              formatted = raw as string;
+                            } else if (key === "units_overview") {
+                              const totalRaw = getValue(u, "project.total_units", "total_units");
+                              const availRaw = getValue(u, "project.available_units", "available_units");
+                              const toInt = (v: unknown): number | null => {
+                                if (v == null || v === "") return null;
+                                const n = typeof v === "number" ? v : Number(v);
+                                if (Number.isNaN(n)) return null;
+                                return Math.round(n);
+                              };
+                              const total = toInt(totalRaw);
+                              const avail = toInt(availRaw);
+                              raw = { total, avail };
+                              formatted = null;
+                            } else {
+                              const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
+                              raw = getValue(u, accessor, catalogKey);
+                              formatted = formatValue(raw, {
+                                display_format: df ?? data_type,
+                                key,
+                              });
+                            }
                             const isAvailableCol = key === "available";
                             const isStickyFirst = columnIndex === 0;
                             const isLocalDiffCol =
@@ -1485,7 +1691,33 @@ export default function Home() {
                                   }
                                 }}
                               >
-                                {isEditing && data_type === "bool" ? (
+                                {key === "project" || key === "project.name" ? (
+                                  <span className="group relative inline-block max-w-[8rem] cursor-default">
+                                    <span className="block truncate text-slate-900">
+                                      {formatted ?? "—"}
+                                    </span>
+                                    {formatted != null && formatted !== "" && (
+                                      <span className="pointer-events-none absolute bottom-full left-1/2 z-30 mb-1 w-max -translate-x-1/2 rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100">
+                                        {String(formatted)}
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : key === "units_overview" ? (
+                                  (() => {
+                                    const val = raw as { total: number | null; avail: number | null } | null;
+                                    const total = val?.total;
+                                    const avail = val?.avail;
+                                    const totalStr = total == null ? "—" : String(total);
+                                    const availStr = avail == null ? "—" : String(avail);
+                                    return (
+                                      <span className="inline-flex items-center gap-1">
+                                        <span>{totalStr}</span>
+                                        <span>/</span>
+                                        <span className="font-semibold text-emerald-600">{availStr}</span>
+                                      </span>
+                                    );
+                                  })()
+                                ) : isEditing && data_type === "bool" ? (
                                   <input
                                     type="checkbox"
                                     className="h-4 w-4"
@@ -1641,16 +1873,34 @@ export default function Home() {
                     onClick={() => {
                       const cols = serverColumns;
                       const defaults: ColumnConfig[] = cols
-                        ? cols.map((col) => ({
-                            key: col.key,
-                            label: col.label,
-                            visible: true,
-                          }))
+                        ? cols
+                            .filter((col) => !HIDDEN_TABLE_COLUMN_KEYS.has(col.key))
+                            .map((col) => ({
+                              key: col.key,
+                              label: col.label,
+                              visible: !isDefaultHiddenColumn(col),
+                            }))
                         : FALLBACK_TABLE_COLUMNS.map((c) => ({
                             key: c.key,
                             label: c.label,
                             visible: true,
                           }));
+                      // Po resetu znovu přidáme syntetické sloupce,
+                      // aby nezmizely z konfigurace.
+                      if (!defaults.some((c) => c.key === "financing_scheme")) {
+                        defaults.push({
+                          key: "financing_scheme",
+                          label: "Financování",
+                          visible: true,
+                        });
+                      }
+                      if (!defaults.some((c) => c.key === "units_overview")) {
+                        defaults.push({
+                          key: "units_overview",
+                          label: "Počet jednotek",
+                          visible: true,
+                        });
+                      }
                       setColumnsConfig(defaults);
                       if (typeof window !== "undefined") {
                         window.localStorage.removeItem(COLUMNS_STORAGE_KEY);
