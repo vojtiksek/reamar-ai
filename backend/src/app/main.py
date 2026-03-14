@@ -777,6 +777,15 @@ ALLOWED_SORT_BY = (
     "max_payment_construction",
     "min_payment_occupancy",
     "max_payment_occupancy",
+    "noise_day_db",
+    "noise_night_db",
+    "noise_label",
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+    "micro_location_score",
+    "micro_location_label",
 )
 ALLOWED_SORT_DIR = ("asc", "desc")
 
@@ -1471,6 +1480,15 @@ def list_units(
     project_sort_columns: dict[str, Any] = {
         # Column "Projekt" v jednotkách -> Project.name
         "name": Project.name,
+        "noise_day_db": Project.noise_day_db,
+        "noise_night_db": Project.noise_night_db,
+        "noise_label": Project.noise_label,
+        "distance_to_primary_road_m": Project.distance_to_primary_road_m,
+        "distance_to_tram_tracks_m": Project.distance_to_tram_tracks_m,
+        "distance_to_railway_m": Project.distance_to_railway_m,
+        "distance_to_airport_m": Project.distance_to_airport_m,
+        "micro_location_score": Project.micro_location_score,
+        "micro_location_label": Project.micro_location_label,
     }
 
     order_fn = asc if sort_dir == "asc" else desc
@@ -1732,6 +1750,15 @@ ALLOWED_PROJECT_OVERVIEW_SORT_BY = frozenset({
     "min_payment_occupancy",
     "max_payment_occupancy",
     "project_url",
+    "noise_day_db",
+    "noise_night_db",
+    "noise_label",
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+    "micro_location_score",
+    "micro_location_label",
 })
 ALLOWED_PROJECT_OVERVIEW_SORT_DIR = ("asc", "desc")
 
@@ -2831,6 +2858,26 @@ def get_project(
     else:
         base_item = _project_row_to_item(row[0], row)
 
+    # DEBUG: verify that noise fields are present on the base item
+    print(
+        f"[get_project] base_item noise fields for project_id={project_id}: "
+        f"noise_day_db={base_item.get('noise_day_db')!r}, "
+        f"noise_night_db={base_item.get('noise_night_db')!r}, "
+        f"noise_label={base_item.get('noise_label')!r}"
+    )
+
+    # Ensure noise and micro_location fields are always propagated directly from the Project model
+    # even if catalog mapping/filtering misses them for any reason.
+    base_item["noise_day_db"] = getattr(project, "noise_day_db", None)
+    base_item["noise_night_db"] = getattr(project, "noise_night_db", None)
+    base_item["noise_label"] = getattr(project, "noise_label", None)
+    base_item["distance_to_primary_road_m"] = getattr(project, "distance_to_primary_road_m", None)
+    base_item["distance_to_tram_tracks_m"] = getattr(project, "distance_to_tram_tracks_m", None)
+    base_item["distance_to_railway_m"] = getattr(project, "distance_to_railway_m", None)
+    base_item["distance_to_airport_m"] = getattr(project, "distance_to_airport_m", None)
+    base_item["micro_location_score"] = getattr(project, "micro_location_score", None)
+    base_item["micro_location_label"] = getattr(project, "micro_location_label", None)
+
     # Apply project-level overrides so detail matches list/overview behaviour.
     override_rows = (
         db.execute(
@@ -2843,7 +2890,17 @@ def get_project(
         .all()
     )
     override_map = build_project_override_map(override_rows)
-    return apply_project_overrides_to_item(project.id, dict(base_item), override_map)
+    final_item = apply_project_overrides_to_item(project.id, dict(base_item), override_map)
+
+    # DEBUG: log final payload noise fields to confirm presence in response
+    print(
+        f"[get_project] final_item noise fields for project_id={project_id}: "
+        f"noise_day_db={final_item.get('noise_day_db')!r}, "
+        f"noise_night_db={final_item.get('noise_night_db')!r}, "
+        f"noise_label={final_item.get('noise_label')!r}"
+    )
+
+    return final_item
 
 
 @app.get("/units/{external_id}", response_model=UnitResponse)

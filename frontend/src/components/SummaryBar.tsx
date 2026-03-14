@@ -30,37 +30,37 @@ export function SummaryBar({
   const diffNegative = averageLocalDiff != null && !Number.isNaN(averageLocalDiff) && averageLocalDiff < 0;
 
   const diffCardClasses = diffPositive
-    ? "from-rose-500/10 via-rose-500/5 to-rose-500/0 border-rose-400/60"
+    ? "from-rose-500/30 via-rose-500/10 to-rose-500/0 border-rose-400/60"
     : diffNegative
-      ? "from-emerald-500/10 via-emerald-500/5 to-emerald-500/0 border-emerald-400/60"
-      : "from-slate-500/5 via-slate-500/2 to-slate-500/0 border-slate-200";
+      ? "from-emerald-500/30 via-emerald-500/10 to-emerald-500/0 border-emerald-400/60"
+      : "from-slate-500/10 via-slate-500/3 to-slate-500/0 border-slate-200";
 
   return (
     <div className="grid w-full gap-3 md:grid-cols-3 lg:grid-cols-5">
-      <div className="min-w-0 rounded-xl border border-slate-200 bg-white/90 px-4 py-3 shadow-sm">
+      <div className="min-w-0 glass-card px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{totalLabel}</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">{formatInteger(total)}</p>
       </div>
-      <div className="min-w-0 rounded-xl border border-sky-200 bg-gradient-to-br from-sky-50 via-sky-25 to-white px-4 py-3 shadow-sm">
+      <div className="min-w-0 glass-card bg-gradient-to-br from-sky-500/10 via-sky-500/5 to-white/90 px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Prům. cena za m²</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">
           {formatCurrencyCzk(averagePricePerM2)}
         </p>
       </div>
-      <div className="min-w-0 rounded-xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-indigo-25 to-white px-4 py-3 shadow-sm">
+      <div className="min-w-0 glass-card bg-gradient-to-br from-indigo-500/10 via-indigo-500/5 to-white/90 px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Prům. cena</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">
           {formatCurrencyCzk(averagePrice)}
         </p>
       </div>
-      <div className="min-w-0 rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-emerald-25 to-white px-4 py-3 shadow-sm">
+      <div className="min-w-0 glass-card bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-white/90 px-4 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Dostupných</p>
         <p className="mt-1 text-lg font-semibold text-slate-900">
           {formatInteger(availableCount)}
         </p>
       </div>
       <div
-        className={`min-w-0 rounded-xl border bg-gradient-to-br px-4 py-3 shadow-sm ${diffCardClasses}`}
+        className={`min-w-0 glass-card bg-gradient-to-br px-4 py-3 ${diffCardClasses}`}
       >
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">
           Prům. odchylka od trhu

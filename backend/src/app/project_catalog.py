@@ -29,6 +29,17 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "heating": "heating",
     "partition_walls": "partition_walls",
     "amenities": "amenities",
+    # Noise fields stored directly on Project (computed offline from Prague noise map)
+    "noise_day_db": "noise_day_db",
+    "noise_night_db": "noise_night_db",
+    "noise_label": "noise_label",
+    # Micro-location (distances + score/label from OSM batch)
+    "distance_to_primary_road_m": "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m": "distance_to_tram_tracks_m",
+    "distance_to_railway_m": "distance_to_railway_m",
+    "distance_to_airport_m": "distance_to_airport_m",
+    "micro_location_score": "micro_location_score",
+    "micro_location_label": "micro_location_label",
     "project_url": "project_url",  # from overrides when set
     "project": "name",  # alias for name
     # Financing fields are computed/project-level values living on the overview item dict.

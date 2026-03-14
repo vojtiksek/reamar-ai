@@ -225,11 +225,11 @@ export default function ProjectsMapPage() {
   };
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-2 shadow-sm backdrop-blur">
+    <div className="flex min-h-screen flex-col">
+      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
-          <div className="flex items-center rounded-full border border-slate-200 bg-slate-100/70 p-0.5">
+          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
             <Link
               href={(() => {
                 const qs = searchParams?.toString() ?? "";
@@ -311,7 +311,7 @@ export default function ProjectsMapPage() {
           <button
             type="button"
             onClick={openDrawer}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50"
+            className="glass-pill border border-transparent px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-white/90"
             title={
               countActiveFilters(filtersInUrl) > 0
                 ? `Aktivní filtry: ${countActiveFilters(filtersInUrl)}`
@@ -329,7 +329,7 @@ export default function ProjectsMapPage() {
             type="button"
             onClick={onResetAll}
             disabled={loading}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="glass-pill border border-transparent px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Reset
           </button>

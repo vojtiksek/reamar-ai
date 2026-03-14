@@ -145,6 +145,15 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return formatMinutes(isNumber ? num : null);
   }
 
+  // Hluk (dB) – denní / noční
+  if (column.key === "noise_day_db" || column.key === "noise_night_db") {
+    return isNumber ? `${num} dB` : "—";
+  }
+  // Hluk lokality (klasifikace)
+  if (column.key === "noise_label") {
+    return value != null && String(value).trim() !== "" ? String(value) : "—";
+  }
+
   // Percent-style fields (stored as fraction 0–1): platby i min/max; u financování 0 = nevyplněno
   if (
     column.unit === "%" ||
@@ -667,11 +676,11 @@ export default function ProjectsPage() {
   const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-2 shadow-sm backdrop-blur">
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
-          <div className="flex items-center rounded-full border border-slate-200 bg-slate-100/70 p-0.5">
+          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
             <Link
               href={(() => {
                 const qs = searchParams?.toString() ?? "";
@@ -703,7 +712,7 @@ export default function ProjectsPage() {
           <button
             type="button"
             onClick={openDrawer}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
             title={
               countActiveFilters(filters) > 0
                 ? `Aktivní filtry: ${countActiveFilters(filters)}`
@@ -745,7 +754,7 @@ export default function ProjectsPage() {
                 });
               }
             }}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
             title="Kopírovat odkaz s aktuálními filtry"
           >
             {linkCopied ? "Zkopírováno!" : "Kopírovat odkaz"}

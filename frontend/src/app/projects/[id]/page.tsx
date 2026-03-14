@@ -247,6 +247,17 @@ export default function ProjectDetailPage() {
     "cooling_ceilings",
     "exterior_blinds",
     "smart_home",
+    "ceiling_height",
+    "recuperation",
+    "cooling",
+  ] as const;
+  const EDITABLE_AMENITIES = [
+    "concierge",
+    "reception",
+    "bike_room",
+    "stroller_room",
+    "fitness",
+    "courtyard_garden",
   ] as const;
   const EDITABLE_OSTATNI = ["amenities"] as const;
 
@@ -272,7 +283,9 @@ export default function ProjectDetailPage() {
         key === "air_conditioning" ||
         key === "cooling_ceilings" ||
         key === "exterior_blinds" ||
-        key === "smart_home"
+        key === "smart_home" ||
+        key === "recuperation" ||
+        key === "cooling"
       ) {
         if (v === null || v === undefined || v === "") {
           draft[key] = "";
@@ -286,6 +299,19 @@ export default function ProjectDetailPage() {
         }
       } else {
         draft[key] = v != null && v !== "" ? String(v) : "";
+      }
+    }
+    for (const key of EDITABLE_AMENITIES) {
+      const v = p[key];
+      if (v === null || v === undefined || v === "") {
+        draft[key] = "";
+      } else {
+        const isTrue =
+          v === true ||
+          v === "true" ||
+          v === "1" ||
+          String(v).toLowerCase() === "ano";
+        draft[key] = isTrue ? "true" : "false";
       }
     }
     for (const key of EDITABLE_OSTATNI) {
@@ -317,6 +343,7 @@ export default function ProjectDetailPage() {
       ...EDITABLE_PREHLED,
       ...EDITABLE_FINANCOVANI,
       ...EDITABLE_STANDARDY,
+      ...EDITABLE_AMENITIES,
       ...EDITABLE_OSTATNI,
     ];
     const changes: { key: string; value: string }[] = [];
@@ -1121,6 +1148,217 @@ export default function ProjectDetailPage() {
                 </p>
               )}
             </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Výška stropů</p>
+              {editMode ? (
+                <input
+                  type="text"
+                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("ceiling_height", project["ceiling_height"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("ceiling_height", e.target.value)}
+                  placeholder="např. 2,9 m"
+                />
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {project["ceiling_height"] != null && project["ceiling_height"] !== ""
+                    ? (project["ceiling_height"] as string)
+                    : "—"}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Rekuperace</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("recuperation", project["recuperation"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("recuperation", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["recuperation"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Chlazení podlahou</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("cooling", project["cooling"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("cooling", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["cooling"])}
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* Amenities – nová sekce, jen pro detail projektu */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Amenities
+          </h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Concierge</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("concierge", project["concierge"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("concierge", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["concierge"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Recepce</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("reception", project["reception"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("reception", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["reception"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Kolárna</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("bike_room", project["bike_room"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("bike_room", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["bike_room"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Kočárkárna</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("stroller_room", project["stroller_room"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("stroller_room", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["stroller_room"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Fitness</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("fitness", project["fitness"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("fitness", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["fitness"])}
+                </p>
+              )}
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Vnitroblok / zahrada</p>
+              {editMode ? (
+                <select
+                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(() => {
+                    const v = displayOrDraft("courtyard_garden", project["courtyard_garden"]);
+                    if (v === "true" || v === true) return "true";
+                    if (v === "false" || v === false) return "false";
+                    return "";
+                  })()}
+                  onChange={(e) => handleChangeDraft("courtyard_garden", e.target.value)}
+                >
+                  <option value="">—</option>
+                  <option value="true">Ano</option>
+                  <option value="false">Ne</option>
+                </select>
+              ) : (
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {formatBoolOrDash(project["courtyard_garden"])}
+                </p>
+              )}
+            </div>
           </div>
         </section>
 
@@ -1184,6 +1422,28 @@ export default function ProjectDetailPage() {
               <p className="text-xs font-medium text-slate-500">Kraj</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {(project["region_iga"] as string | null | undefined) ?? "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Denní hluk</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["noise_day_db"] != null
+                  ? `${project["noise_day_db"] as number} dB`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Noční hluk</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["noise_night_db"] != null
+                  ? `${project["noise_night_db"] as number} dB`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Hluk (klasifikace)</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["noise_label"] as string | null | undefined) ?? "—"}
               </p>
             </div>
           </div>

@@ -60,6 +60,16 @@ _PROJECT_OVERRIDE_TYPE_FALLBACK: dict[str, str] = {
     "cooling_ceilings": "bool",
     "exterior_blinds": "text",  # "true" | "false" | "preparation"
     "smart_home": "bool",
+    # Projektové standardy & amenities (manual-first, import jen do Project.*, nikdy do overrides)
+    "ceiling_height": "text",
+    "recuperation": "bool",
+    "cooling": "bool",
+    "concierge": "bool",
+    "reception": "bool",
+    "bike_room": "bool",
+    "stroller_room": "bool",
+    "fitness": "bool",
+    "courtyard_garden": "bool",
 }
 
 PROJECT_OVERRIDEABLE_FIELDS = _PROJECT_OVERRIDEABLE_FROM_CATALOG | frozenset(

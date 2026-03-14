@@ -6,6 +6,7 @@ from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     Date,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -58,6 +59,46 @@ class Project(Base):
     heating: Mapped[str | None] = mapped_column(String(255), nullable=True)
     partition_walls: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amenities: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Projektové standardy – ručně editovaná pole s připravenou podporou pro budoucí import.
+    # Effective hodnota = override (ProjectOverride) pokud existuje, jinak Project.* (import/base).
+    ceiling_height: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    recuperation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    cooling: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # Projektové amenities – booleany; platí stejný princip override > base.
+    concierge: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    reception: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    bike_room: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    stroller_room: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    fitness: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    courtyard_garden: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    # Hluk – numerické hodnoty v dB + metadata o zdroji/výpočtu,
+    # ukládáno pouze pro projekty v Praze (region_iga = 'Hlavní město Praha').
+    noise_day_db: Mapped[float | None] = mapped_column(Float, nullable=True)
+    noise_night_db: Mapped[float | None] = mapped_column(Float, nullable=True)
+    noise_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    noise_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    noise_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    noise_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # Mikro-lokalita / noise exposure – vzdálenosti k dopravě + souhrnné skóre (batch z OSM).
+    distance_to_primary_road_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_to_tram_tracks_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_to_railway_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    distance_to_airport_m: Mapped[float | None] = mapped_column(Float, nullable=True)
+    micro_location_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    micro_location_label: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    micro_location_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+    micro_location_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    micro_location_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     units: Mapped[list["Unit"]] = relationship(
         back_populates="project",

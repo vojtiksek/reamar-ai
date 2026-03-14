@@ -135,6 +135,9 @@ const SORT_BY_OPTIONS = [
   "max_payment_construction",
   "min_payment_occupancy",
   "max_payment_occupancy",
+  "noise_day_db",
+  "noise_night_db",
+  "noise_label",
 ] as const;
 const SORT_DIR_OPTIONS = ["asc", "desc"] as const;
 const DEFAULT_SORT_BY = "price_per_m2_czk";
@@ -228,6 +231,9 @@ const BACKEND_SORT_FIELDS = [
   "max_payment_construction",
   "min_payment_occupancy",
   "max_payment_occupancy",
+  "noise_day_db",
+  "noise_night_db",
+  "noise_label",
 ] as const;
 
 // Sloupce, které nechceme zobrazovat v tabulce jednotek ani v nabídce „Sloupce“,
@@ -382,6 +388,10 @@ const ACCESSOR_TO_CATALOG_KEY: Record<string, string> = {
   "project.max_payment_construction": "max_payment_construction",
   "project.min_payment_occupancy": "min_payment_occupancy",
   "project.max_payment_occupancy": "max_payment_occupancy",
+  // Hluk projektu (project-level)
+  "project.noise_day_db": "noise_day_db",
+  "project.noise_night_db": "noise_night_db",
+  "project.noise_label": "noise_label",
   // Lokální cenová odchylka (percent)
   local_price_diff_1000m: "local_price_diff_1000m",
   local_price_diff_2000m: "local_price_diff_2000m",
@@ -613,6 +623,7 @@ export default function Home() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [includeArchived, setIncludeArchived] = useState(() => searchParams?.get("include_archived") === "1");
   const [showOnlyPendingApi, setShowOnlyPendingApi] = useState(() => searchParams?.get("pending_api") === "1");
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const rowClickTimeoutRef = useRef<number | null>(null);
   /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL“ přepsat state starou URL (router.replace je async). */
@@ -1143,11 +1154,11 @@ export default function Home() {
   );
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden bg-slate-50">
-      <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-slate-200 bg-white/95 px-4 py-2 shadow-sm backdrop-blur">
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
         <div className="flex items-center gap-4">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
-          <div className="flex items-center rounded-full border border-slate-200 bg-slate-100/70 p-0.5">
+          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
             <button
               type="button"
               className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
@@ -1178,12 +1189,14 @@ export default function Home() {
           <button
             type="button"
             onClick={openDrawer}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
             title={countActiveFilters(filters) > 0 ? `Aktivní filtry: ${countActiveFilters(filters)}` : undefined}
           >
             Filtry
             {countActiveFilters(filters) > 0 && (
-              <span className="ml-1 rounded bg-gray-200 px-1.5 text-xs">{countActiveFilters(filters)}</span>
+              <span className="ml-1 rounded-full bg-slate-900/80 px-2 py-[1px] text-[10px] font-semibold text-white">
+                {countActiveFilters(filters)}
+              </span>
             )}
           </button>
           <button
@@ -1197,7 +1210,11 @@ export default function Home() {
               const qs = p.toString();
               router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
             }}
-            className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+            className={`glass-pill px-3 py-1.5 text-sm font-medium ${
+              showOnlyPendingApi
+                ? "border-amber-500 bg-amber-100/80 text-amber-900"
+                : "border-transparent text-amber-800"
+            }`}
           >
             {showOnlyPendingApi ? "Všechny jednotky" : "Jen návrhy z API"}
           </button>
@@ -1212,7 +1229,11 @@ export default function Home() {
               const qs = p.toString();
               router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
             }}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
+            className={`glass-pill px-3 py-1.5 text-sm font-medium ${
+              includeArchived
+                ? "border-emerald-500 bg-emerald-100/80 text-emerald-900"
+                : "border-transparent text-slate-800"
+            }`}
           >
             {includeArchived ? "Skrýt archiv" : "Zobrazit archiv"}
           </button>

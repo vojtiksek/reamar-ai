@@ -1,8 +1,20 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f3ff;
+  --foreground: #111827;
+
+  /* Glass / card tokens */
+  --glass-bg: rgba(255, 255, 255, 0.14);
+  --glass-elevated-bg: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(148, 163, 184, 0.35);
+  --glass-radius-lg: 1.5rem; /* 24px */
+  --glass-radius-md: 1rem;   /* 16px */
+  --glass-shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.20);
+  --glass-shadow-subtle: 0 10px 30px rgba(15, 23, 42, 0.10);
+
+  --accent-primary: #6366f1;
+  --accent-secondary: #ec4899;
 }
 
 @theme inline {
@@ -12,22 +24,91 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+body {
+  @apply antialiased;
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont,
+    "SF Pro Text", "SF Pro Display", sans-serif;
+  min-height: 100vh;
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/* App shell with gradient + blobs */
+.app-root {
+  position: relative;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(99, 102, 241, 0.30), transparent 55%),
+    radial-gradient(circle at bottom right, rgba(236, 72, 153, 0.28), transparent 55%),
+    linear-gradient(135deg, #f1f5f9, #f9fafb);
+}
+
+.app-root::before,
+.app-root::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(40px);
+  opacity: 0.25;
+  pointer-events: none;
+}
+
+.app-root::before {
+  width: 420px;
+  height: 420px;
+  top: -160px;
+  right: -80px;
+  background: radial-gradient(circle at center, #6366f1, transparent 70%);
+}
+
+.app-root::after {
+  width: 380px;
+  height: 380px;
+  bottom: -160px;
+  left: -40px;
+  background: radial-gradient(circle at center, #ec4899, transparent 70%);
+}
+
+.app-shell {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  margin: 0;
+  padding: 1.25rem 1.25rem 2.5rem;
 }
 
 @layer components {
+  .glass-header {
+    backdrop-filter: blur(22px);
+    background: linear-gradient(
+        135deg,
+        rgba(255, 255, 255, 0.90),
+        rgba(255, 255, 255, 0.78)
+      );
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: var(--glass-shadow-subtle);
+  }
+
+  .glass-card {
+    backdrop-filter: blur(26px);
+    background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.42), rgba(248, 250, 252, 0.92));
+    border-radius: var(--glass-radius-lg);
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    box-shadow: var(--glass-shadow-soft);
+  }
+
+  .glass-pill {
+    @apply inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium;
+    background: rgba(255, 255, 255, 0.75);
+    border-color: rgba(148, 163, 184, 0.55);
+    backdrop-filter: blur(14px);
+  }
+
   .data-grid-wrapper {
-    @apply flex min-h-0 flex-1 flex-col rounded-lg border border-gray-200 bg-white;
+    @apply flex min-h-0 flex-1 flex-col;
+    border-radius: var(--glass-radius-lg);
+    border: 1px solid rgba(148, 163, 184, 0.45);
+    background: rgba(248, 250, 252, 0.9);
+    box-shadow: var(--glass-shadow-subtle);
   }
 
   .data-grid-scroll {

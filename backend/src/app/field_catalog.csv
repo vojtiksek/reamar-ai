@@ -60,6 +60,16 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 5007;Standardy;Projekt;windows;Okna;ANO;ANO;ANO;;;enum;
 5008;Standardy;Projekt;partition_walls;Příčky;ANO;ANO;ANO;;;enum;
 5009;Standardy;Projekt;amenities;Zajímavosti;ANO;NE;ANO;;;text;
+5010;Standardy;Projekt;ceiling_height;Výška stropů (beta);ANO;ANO;ANO;;;text;
+5011;Standardy;Projekt;recuperation;Rekuperace (beta);ANO;ANO;ANO;;;boolean;
+5012;Standardy;Projekt;cooling;Chlazení (beta);ANO;ANO;ANO;;;boolean;
+
+5100;Amenities;Projekt;concierge;Concierge (beta);ANO;ANO;ANO;;;boolean;
+5101;Amenities;Projekt;reception;Recepce (beta);ANO;ANO;ANO;;;boolean;
+5102;Amenities;Projekt;bike_room;Kolárna (beta);ANO;ANO;ANO;;;boolean;
+5103;Amenities;Projekt;stroller_room;Kočárkárna (beta);ANO;ANO;ANO;;;boolean;
+5104;Amenities;Projekt;fitness;Fitness (beta);ANO;ANO;ANO;;;boolean;
+5105;Amenities;Projekt;courtyard_garden;Vnitroblok / zahrada (beta);ANO;ANO;ANO;;;boolean;
 
 6001;Projekt;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
 6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
@@ -82,3 +92,12 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 9002;Technické;Projekt;gps_latitude;;NE;NE;NE;;;geo_number;
 9003;Technické;Projekt;gps_longitude;;NE;NE;NE;;;geo_number;
 9004;Technické;Projekt;postal_code;;NE;NE;NE;;;text;
+9005;Technické;Projekt;noise_day_db;Denní hluk (beta);ANO;ANO;ANO;;0;number;
+9006;Technické;Projekt;noise_night_db;Noční hluk (beta);ANO;ANO;ANO;;0;number;
+9007;Technické;Projekt;noise_label;Hluk lokality (beta);ANO;ANO;ANO;;;enum;
+9010;Technické;Projekt;distance_to_primary_road_m;Vzdálenost od hlavní silnice (beta);ANO;ANO;NE;;0;integer;
+9011;Technické;Projekt;distance_to_tram_tracks_m;Vzdálenost od tramvajových kolejí (beta);ANO;ANO;NE;;0;integer;
+9012;Technické;Projekt;distance_to_railway_m;Vzdálenost od železnice (beta);ANO;ANO;NE;;0;integer;
+9013;Technické;Projekt;distance_to_airport_m;Vzdálenost od letiště (beta);ANO;ANO;NE;;0;integer;
+9014;Technické;Projekt;micro_location_score;Mikro-lokalita skóre (beta);ANO;ANO;NE;;0;integer;
+9015;Technické;Projekt;micro_location_label;Mikro-lokalita hodnocení (beta);ANO;ANO;NE;;;enum;

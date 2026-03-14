@@ -152,6 +152,15 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "payment_contract",
     "payment_construction",
     "payment_occupancy",
+    "noise_day_db",
+    "noise_night_db",
+    "noise_label",
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+    "micro_location_score",
+    "micro_location_label",
 })
 
 

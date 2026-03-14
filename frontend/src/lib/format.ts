@@ -130,6 +130,18 @@ export function formatByDisplayFormat(
     return `${sign}${Math.abs(n).toFixed(1)} %`;
   }
 
+  // Hluk (dB) – denní / noční
+  if (catalogKey === "noise_day_db" || catalogKey === "noise_night_db") {
+    const n = Number(value);
+    if (value == null || value === "" || Number.isNaN(n)) return "—";
+    return `${n} dB`;
+  }
+  // Hluk lokality (klasifikace)
+  if (catalogKey === "noise_label") {
+    if (value == null || String(value).trim() === "") return "—";
+    return String(value);
+  }
+
   switch (displayFormat) {
     case "currency":
       return formatCurrencyCzk(Number(value));
