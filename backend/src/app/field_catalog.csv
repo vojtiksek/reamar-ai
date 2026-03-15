@@ -101,3 +101,9 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 9013;Technické;Projekt;distance_to_airport_m;Vzdálenost od letiště (beta);ANO;ANO;NE;;0;integer;
 9014;Technické;Projekt;micro_location_score;Mikro-lokalita skóre (beta);ANO;ANO;NE;;0;integer;
 9015;Technické;Projekt;micro_location_label;Mikro-lokalita hodnocení (beta);ANO;ANO;NE;;;enum;
+9020;Walkability;Projekt;walkability_score;Walkability skóre;ANO;ANO;NE;;0;integer;
+9021;Walkability;Projekt;walkability_label;Walkability hodnocení;ANO;ANO;NE;;;enum;
+9022;Walkability;Projekt;walkability_daily_needs_score;Walkability denní potřeby;ANO;NE;NE;;0;integer;
+9023;Walkability;Projekt;walkability_transport_score;Walkability doprava;ANO;NE;NE;;0;integer;
+9024;Walkability;Projekt;walkability_leisure_score;Walkability volný čas;ANO;NE;NE;;0;integer;
+9025;Walkability;Projekt;walkability_family_score;Walkability rodina;ANO;NE;NE;;0;integer;

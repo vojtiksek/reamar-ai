@@ -32,40 +32,19 @@ body {
   min-height: 100vh;
 }
 
-/* App shell with gradient + blobs */
+/* Global page background: vertical purple gradient (visible in gaps, behind all content) */
 .app-root {
   position: relative;
   min-height: 100vh;
-  background:
-    radial-gradient(circle at top left, rgba(99, 102, 241, 0.30), transparent 55%),
-    radial-gradient(circle at bottom right, rgba(236, 72, 153, 0.28), transparent 55%),
-    linear-gradient(135deg, #f1f5f9, #f9fafb);
-}
-
-.app-root::before,
-.app-root::after {
-  content: "";
-  position: absolute;
-  border-radius: 999px;
-  filter: blur(40px);
-  opacity: 0.25;
-  pointer-events: none;
-}
-
-.app-root::before {
-  width: 420px;
-  height: 420px;
-  top: -160px;
-  right: -80px;
-  background: radial-gradient(circle at center, #6366f1, transparent 70%);
-}
-
-.app-root::after {
-  width: 380px;
-  height: 380px;
-  bottom: -160px;
-  left: -40px;
-  background: radial-gradient(circle at center, #ec4899, transparent 70%);
+  background: linear-gradient(
+    180deg,
+    #cfd2ff 0%,
+    #e5e7ff 25%,
+    #f1f2ff 50%,
+    #f7f8ff 75%,
+    #ffffff 100%
+  );
+  background-attachment: scroll;
 }
 
 .app-shell {

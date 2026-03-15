@@ -142,6 +142,20 @@ export function formatByDisplayFormat(
     return String(value);
   }
 
+  // Vzdálenost v m: do 999 m => "123 m", od 1000 m => "1.2 km", null => "—"
+  const distanceKeys = [
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+  ];
+  if (catalogKey != null && distanceKeys.includes(catalogKey)) {
+    if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+    const m = Number(value);
+    if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+    return `${Math.round(m)} m`;
+  }
+
   switch (displayFormat) {
     case "currency":
       return formatCurrencyCzk(Number(value));

@@ -47,6 +47,13 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "payment_contract": "payment_contract",
     "payment_construction": "payment_construction",
     "payment_occupancy": "payment_occupancy",
+    # Walkability (POI-based; separate from micro_location)
+    "walkability_score": "walkability_score",
+    "walkability_label": "walkability_label",
+    "walkability_daily_needs_score": "walkability_daily_needs_score",
+    "walkability_transport_score": "walkability_transport_score",
+    "walkability_leisure_score": "walkability_leisure_score",
+    "walkability_family_score": "walkability_family_score",
 }
 
 # Computed column keys (kind="computed") in display order.

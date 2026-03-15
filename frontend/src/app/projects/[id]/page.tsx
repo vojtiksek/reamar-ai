@@ -151,6 +151,8 @@ export default function ProjectDetailPage() {
   const [editMode, setEditMode] = useState(false);
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
+  const [recomputingLocation, setRecomputingLocation] = useState(false);
+  const [adminJobState, setAdminJobState] = useState<{ loading: boolean; message: string | null }>({ loading: false, message: null });
   const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");
   const [unitsSortDir, setUnitsSortDir] = useState<"asc" | "desc">("asc");
 
@@ -172,6 +174,138 @@ export default function ProjectDetailPage() {
         const msg = e instanceof Error ? e.message : "Chyba";
         setProjectState({ data: null, loading: false, error: msg });
       });
+  }, [projectId]);
+
+  const handleRecomputeLocationMetrics = useCallback(async () => {
+    if (!projectId) return;
+    setRecomputingLocation(true);
+    try {
+      const res = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/location-metrics/recompute`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
+      setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
+    } catch (e) {
+      setProjectState((prev) => ({ ...prev, error: e instanceof Error ? e.message : "Chyba" }));
+    } finally {
+      setRecomputingLocation(false);
+    }
+  }, [projectId]);
+
+  const handleAdminRecomputeAll = useCallback(async () => {
+    setAdminJobState({ loading: true, message: null });
+    try {
+      const res = await fetch(`${API_BASE}/admin/location-metrics/recompute-all`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      setAdminJobState({ loading: false, message: `Přepočítáno: ${data.processed}/${data.total} projektů (${data.elapsed_seconds}s).` });
+    } catch (e) {
+      setAdminJobState({ loading: false, message: e instanceof Error ? e.message : "Chyba" });
+    }
+  }, []);
+
+  const handleAdminRefreshAndRecompute = useCallback(async () => {
+    setAdminJobState({ loading: true, message: null });
+    try {
+      const res = await fetch(`${API_BASE}/admin/location-sources/refresh-and-recompute`, { method: "POST" });
+      if (!res.ok) throw new Error(await res.text());
+      const data = await res.json();
+      const recompute = data.recompute as { processed?: number; total?: number; elapsed_seconds?: number } | null;
+      const msg = recompute
+        ? `Refresh dokončen. Přepočítáno: ${recompute.processed}/${recompute.total} projektů (${recompute.elapsed_seconds}s).`
+        : "Spuštěno.";
+      setAdminJobState({ loading: false, message: msg });
+    } catch (e) {
+      setAdminJobState({ loading: false, message: e instanceof Error ? e.message : "Chyba" });
+    }
+  }, []);
+
+  const handleAdminWalkabilityRefreshAndRecompute = useCallback(async () => {
+    setAdminJobState({ loading: true, message: null });
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 15 * 60 * 1000);
+      const res = await fetch(`${API_BASE}/admin/walkability-sources/refresh-and-recompute`, {
+        method: "POST",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const body = await res.text();
+      if (!res.ok) {
+        let detail = body;
+        try {
+          const j = JSON.parse(body) as { detail?: string };
+          if (j.detail) detail = j.detail;
+        } catch {
+          // keep body
+        }
+        throw new Error(detail);
+      }
+      const data = JSON.parse(body) as Record<string, unknown>;
+      const recompute = data.recompute as { processed?: number; total?: number; elapsed_seconds?: number } | null;
+      setAdminJobState({
+        loading: false,
+        message: recompute
+          ? `Walkability POI obnoveno. Přepočítáno: ${recompute.processed}/${recompute.total} projektů (${recompute.elapsed_seconds}s).`
+          : "Hotovo.",
+      });
+      if (projectId) {
+        const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
+        setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
+      }
+    } catch (e) {
+      setAdminJobState({ loading: false, message: e instanceof Error ? e.message : "Chyba" });
+      if (projectId) {
+        const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
+        setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
+      }
+    }
+  }, [projectId]);
+
+  const handleAdminDownloadOsmAndRecompute = useCallback(async () => {
+    setAdminJobState({ loading: true, message: null });
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10 * 60 * 1000);
+      const res = await fetch(`${API_BASE}/admin/location-sources/download-osm-and-recompute`, {
+        method: "POST",
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const body = await res.text();
+      if (!res.ok) {
+        let detail = body;
+        try {
+          const j = JSON.parse(body) as { detail?: string };
+          if (j.detail) detail = j.detail;
+        } catch {
+          // keep body
+        }
+        throw new Error(detail);
+      }
+      const data = JSON.parse(body) as Record<string, unknown>;
+      const osm = data.osm as Record<string, number> | undefined;
+      const recompute = data.recompute as { processed?: number; total?: number; elapsed_seconds?: number } | null;
+      const osmParts = osm
+        ? `Staženo: silnice ${osm.primary_roads ?? 0}, tramvaje ${osm.tram_tracks ?? 0}, železnice ${osm.railway ?? 0}, letiště ${osm.airports ?? 0}. `
+        : "";
+      const recPart = recompute
+        ? `Přepočítáno: ${recompute.processed}/${recompute.total} projektů (${recompute.elapsed_seconds}s).`
+        : "Hotovo.";
+      setAdminJobState({ loading: false, message: osmParts + recPart });
+      if (projectId) {
+        const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
+        setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Chyba";
+      const isNetwork = /load failed|failed to fetch|network error|aborted/i.test(msg);
+      setAdminJobState({
+        loading: false,
+        message: isNetwork
+          ? "Požadavek selhal (timeout nebo síť). Stahování OSM trvá 1–2 minuty – zkuste to znovu."
+          : msg,
+      });
+    }
   }, [projectId]);
 
   useEffect(() => {
@@ -475,7 +609,7 @@ export default function ProjectDetailPage() {
 
   if (projectState.loading) {
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen">
         <div className="mx-auto max-w-6xl p-4">
           <p className="text-slate-600">Načítání…</p>
         </div>
@@ -485,7 +619,7 @@ export default function ProjectDetailPage() {
 
   if (projectState.error) {
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
           <div className="flex items-center gap-3">
             <button
@@ -508,7 +642,7 @@ export default function ProjectDetailPage() {
 
   if (!project) {
     return (
-      <div className="min-h-screen bg-slate-50">
+      <div className="min-h-screen">
         <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
           <div className="flex items-center gap-3">
             <button
@@ -528,7 +662,7 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen">
       <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -1446,6 +1580,229 @@ export default function ProjectDetailPage() {
                 {(project["noise_label"] as string | null | undefined) ?? "—"}
               </p>
             </div>
+            {/* Mikro-lokalita */}
+            <div>
+              <p className="text-xs font-medium text-slate-500">Vzdálenost od hlavní silnice</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_primary_road_m"] != null
+                  ? Number(project["distance_to_primary_road_m"]) >= 1000
+                    ? `${(Number(project["distance_to_primary_road_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_primary_road_m"]))} m`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Vzdálenost od tramvajových kolejí</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_tram_tracks_m"] != null
+                  ? Number(project["distance_to_tram_tracks_m"]) >= 1000
+                    ? `${(Number(project["distance_to_tram_tracks_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_tram_tracks_m"]))} m`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Vzdálenost od železnice</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_railway_m"] != null
+                  ? Number(project["distance_to_railway_m"]) >= 1000
+                    ? `${(Number(project["distance_to_railway_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_railway_m"]))} m`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Vzdálenost od letiště</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_airport_m"] != null
+                  ? Number(project["distance_to_airport_m"]) >= 1000
+                    ? `${(Number(project["distance_to_airport_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_airport_m"]))} m`
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Mikro-lokalita skóre</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["micro_location_score"] != null
+                  ? String(Math.round(Number(project["micro_location_score"])))
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Mikro-lokalita hodnocení</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["micro_location_label"] as string | null | undefined) ?? "—"}
+              </p>
+            </div>
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={handleRecomputeLocationMetrics}
+                disabled={recomputingLocation}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {recomputingLocation ? "Přepočítávám…" : "Přepočítat hluk a mikro-lokalitu"}
+              </button>
+            </div>
+          </div>
+        </section>
+
+        {/* Walkability */}
+        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            Walkability
+          </h2>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["walkability_score"] != null ? String(Math.round(Number(project["walkability_score"]))) : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Walkability hodnocení</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["walkability_label"] as string | null | undefined) ?? "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Denní potřeby</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["walkability_daily_needs_score"] != null ? String(project["walkability_daily_needs_score"]) : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Doprava</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["walkability_transport_score"] != null ? String(project["walkability_transport_score"]) : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Volný čas</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["walkability_leisure_score"] != null ? String(project["walkability_leisure_score"]) : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Rodina</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["walkability_family_score"] != null ? String(project["walkability_family_score"]) : "—"}
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500">Supermarket</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_supermarket_m"] != null
+                  ? Number(project["distance_to_supermarket_m"]) >= 1000
+                    ? `${(Number(project["distance_to_supermarket_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_supermarket_m"]))} m`
+                  : "—"}
+                {project["count_supermarket_800m"] != null && Number(project["count_supermarket_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_supermarket_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Lékárna</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_pharmacy_m"] != null
+                  ? Number(project["distance_to_pharmacy_m"]) >= 1000
+                    ? `${(Number(project["distance_to_pharmacy_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_pharmacy_m"]))} m`
+                  : "—"}
+                {project["count_pharmacy_800m"] != null && Number(project["count_pharmacy_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_pharmacy_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Tram zastávka</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["walking_distance_to_tram_stop_m"] ?? project["distance_to_tram_stop_m"]) != null
+                  ? (() => {
+                      const m = Number(project["walking_distance_to_tram_stop_m"] ?? project["distance_to_tram_stop_m"]);
+                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+                    })()
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Bus zastávka</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["walking_distance_to_bus_stop_m"] ?? project["distance_to_bus_stop_m"]) != null
+                  ? (() => {
+                      const m = Number(project["walking_distance_to_bus_stop_m"] ?? project["distance_to_bus_stop_m"]);
+                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+                    })()
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Metro</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {(project["walking_distance_to_metro_station_m"] ?? project["distance_to_metro_station_m"]) != null
+                  ? (() => {
+                      const m = Number(project["walking_distance_to_metro_station_m"] ?? project["distance_to_metro_station_m"]);
+                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+                    })()
+                  : "—"}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Park</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_park_m"] != null
+                  ? Number(project["distance_to_park_m"]) >= 1000
+                    ? `${(Number(project["distance_to_park_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_park_m"]))} m`
+                  : "—"}
+                {project["count_park_800m"] != null && Number(project["count_park_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_park_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Restaurace</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_restaurant_m"] != null
+                  ? Number(project["distance_to_restaurant_m"]) >= 1000
+                    ? `${(Number(project["distance_to_restaurant_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_restaurant_m"]))} m`
+                  : "—"}
+                {project["count_restaurant_800m"] != null && Number(project["count_restaurant_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_restaurant_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Školka</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_kindergarten_m"] != null
+                  ? Number(project["distance_to_kindergarten_m"]) >= 1000
+                    ? `${(Number(project["distance_to_kindergarten_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_kindergarten_m"]))} m`
+                  : "—"}
+                {project["count_kindergarten_800m"] != null && Number(project["count_kindergarten_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_kindergarten_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
+            <div>
+              <p className="text-xs font-medium text-slate-500">Základní škola</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_primary_school_m"] != null
+                  ? Number(project["distance_to_primary_school_m"]) >= 1000
+                    ? `${(Number(project["distance_to_primary_school_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_primary_school_m"]))} m`
+                  : "—"}
+                {project["count_primary_school_800m"] != null && Number(project["count_primary_school_800m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_primary_school_800m"]} v 800 m)</span>
+                )}
+              </p>
+            </div>
           </div>
         </section>
 
@@ -1601,6 +1958,50 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </section>
+
+        {/* Dev: přepočet všech projektů a refresh zdrojových dat */}
+        {debugMode && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">Dev / Admin</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={handleAdminRecomputeAll}
+                disabled={adminJobState.loading}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                {adminJobState.loading ? "…" : "Přepočítat všechny projekty"}
+              </button>
+              <button
+                type="button"
+                onClick={handleAdminRefreshAndRecompute}
+                disabled={adminJobState.loading}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                {adminJobState.loading ? "…" : "Obnovit zdrojová data + přepočítat vše"}
+              </button>
+              <button
+                type="button"
+                onClick={handleAdminDownloadOsmAndRecompute}
+                disabled={adminJobState.loading}
+                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+              >
+                {adminJobState.loading ? "Stahování OSM… (1–2 min)" : "Stáhnout OSM infrastrukturu + přepočítat projekty"}
+              </button>
+              <button
+                type="button"
+                onClick={handleAdminWalkabilityRefreshAndRecompute}
+                disabled={adminJobState.loading}
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {adminJobState.loading ? "…" : "Obnovit walkability POI + přepočítat"}
+              </button>
+            </div>
+            {adminJobState.message != null && (
+              <p className="mt-2 text-sm text-amber-900">{adminJobState.message}</p>
+            )}
+          </section>
+        )}
       </main>
     </div>
   );

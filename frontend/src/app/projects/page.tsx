@@ -154,6 +154,28 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return value != null && String(value).trim() !== "" ? String(value) : "—";
   }
 
+  // Vzdálenost v m: do 999 m => "123 m", od 1000 m => "1.2 km", null => "—"
+  const distanceKeys = [
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+  ];
+  if (distanceKeys.includes(column.key)) {
+    if (value == null || value === "" || !isNumber) return "—";
+    const m = Number(value);
+    if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+    return `${Math.round(m)} m`;
+  }
+
+  // Mikro-lokalita: skóre (číslo) a hodnocení (text)
+  if (column.key === "micro_location_score") {
+    return isNumber ? String(Math.round(num)) : "—";
+  }
+  if (column.key === "micro_location_label") {
+    return value != null && String(value).trim() !== "" ? String(value) : "—";
+  }
+
   // Percent-style fields (stored as fraction 0–1): platby i min/max; u financování 0 = nevyplněno
   if (
     column.unit === "%" ||
@@ -675,12 +697,23 @@ export default function ProjectsPage() {
 
   const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
 
+  const [recomputingLocationMetrics, setRecomputingLocationMetrics] = useState(false);
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) setActionsOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, []);
+
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
+    <div className="flex min-h-screen flex-col">
       <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
-          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+          <h1 className="text-lg font-semibold tracking-tight text-slate-900 shrink-0">Reamar</h1>
+          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur shrink-0">
             <Link
               href={(() => {
                 const qs = searchParams?.toString() ?? "";
@@ -712,7 +745,7 @@ export default function ProjectsPage() {
           <button
             type="button"
             onClick={openDrawer}
-            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 shrink-0"
             title={
               countActiveFilters(filters) > 0
                 ? `Aktivní filtry: ${countActiveFilters(filters)}`
@@ -724,44 +757,70 @@ export default function ProjectsPage() {
               <span className="ml-1 rounded bg-gray-200 px-1.5 text-xs">{countActiveFilters(filters)}</span>
             )}
           </button>
-          <button
-            type="button"
-            onClick={() => setColumnsOpen(true)}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
-          >
-            Sloupce
-          </button>
-          <button
-            type="button"
-            onClick={onResetAll}
-            disabled={loading}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Reset
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const qs = searchParams?.toString() ?? "";
-              const url =
-                typeof window !== "undefined"
-                  ? `${window.location.origin}${pathname}${qs ? `?${qs}` : ""}`
-                  : "";
-              if (url && navigator.clipboard?.writeText) {
-                navigator.clipboard.writeText(url).then(() => {
-                  setLinkCopied(true);
-                  window.setTimeout(() => setLinkCopied(false), 2000);
-                });
-              }
-            }}
-            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
-            title="Kopírovat odkaz s aktuálními filtry"
-          >
-            {linkCopied ? "Zkopírováno!" : "Kopírovat odkaz"}
-          </button>
-        </div>
-
-        <div className="flex flex-col items-end gap-1">
+          <div className="relative shrink-0" ref={actionsRef}>
+            <button
+              type="button"
+              onClick={() => setActionsOpen((o) => !o)}
+              className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
+            >
+              Akce
+            </button>
+            {actionsOpen && (
+              <div className="absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-slate-200 bg-white/95 py-1.5 shadow-lg backdrop-blur">
+                <button
+                  type="button"
+                  onClick={() => { setColumnsOpen(true); setActionsOpen(false); }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100"
+                >
+                  Sloupce
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { onResetAll(); setActionsOpen(false); }}
+                  disabled={loading}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  Reset
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const qs = searchParams?.toString() ?? "";
+                    const url = typeof window !== "undefined" ? `${window.location.origin}${pathname}${qs ? `?${qs}` : ""}` : "";
+                    if (url && navigator.clipboard?.writeText) {
+                      navigator.clipboard.writeText(url).then(() => {
+                        setLinkCopied(true);
+                        window.setTimeout(() => setLinkCopied(false), 2000);
+                      });
+                    }
+                    setActionsOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100"
+                >
+                  {linkCopied ? "Zkopírováno!" : "Kopírovat odkaz"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setRecomputingLocationMetrics(true);
+                    try {
+                      const res = await fetch(`${API_BASE}/admin/location-metrics/recompute-all`, { method: "POST" });
+                      if (!res.ok) throw new Error(await res.text());
+                    } catch {
+                      // optional: setError or toast
+                    } finally {
+                      setRecomputingLocationMetrics(false);
+                      setActionsOpen(false);
+                    }
+                  }}
+                  disabled={recomputingLocationMetrics || loading}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  {recomputingLocationMetrics ? "Přepočítávám…" : "Přepočítat mikro-lokalitu a hluk"}
+                </button>
+              </div>
+            )}
+          </div>
           {countActiveFilters(filters) > 0 && (
             <div className="flex flex-wrap gap-1 text-[11px] text-gray-700">
               {(() => {

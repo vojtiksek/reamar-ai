@@ -19,6 +19,10 @@ from .db import get_db
 from .models import Project, Unit, UnitApiPending, UnitOverride, UnitPriceHistory, UnitSnapshot
 from .overrides import OVERRIDEABLE_FIELDS, apply_override, build_override_map
 from .aggregates import recompute_local_price_diffs, recompute_project_aggregates
+from .project_location_metrics import (
+    enrich_project_location_metrics,
+    should_enrich_after_project_change,
+)
 
 # Pole, u kterých při rozdílu API vs. aktuální neukládáme přímo, ale do pending (uživatel zvolí).
 API_CONFLICT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
@@ -690,6 +694,17 @@ def import_units(
             override_map = batch_load_unit_overrides(db, existing_unit_ids)
             pending_list: list[tuple[int, str, str]] = []
 
+            # Track which projects need location-metrics enrichment (new or gps/region changed)
+            old_project_location: dict[tuple[str | None, str, str | None], tuple[Any, Any, Any]] = {}
+            for key in project_key_to_project:
+                if key in projects_map:
+                    p = project_key_to_project[key]
+                    old_project_location[key] = (p.gps_latitude, p.gps_longitude, p.region_iga)
+            enrich_project_ids: set[int] = set()
+            for key in project_key_to_project:
+                if key not in projects_map and project_key_to_project[key].id is not None:
+                    enrich_project_ids.add(project_key_to_project[key].id)
+
             for unit_data, key, external_id in chunk:
                 project = project_key_to_project[key]
                 project_id = project.id  # None in dry-run for new projects; we don't persist then
@@ -762,8 +777,26 @@ def import_units(
                     )
                     db.add(UnitApiPending(unit_id=uid, field=field, value=value))
 
+            # Mark existing projects for enrichment when gps or region changed
+            for key in project_key_to_project:
+                if key in projects_map:
+                    p = project_key_to_project[key]
+                    old = old_project_location.get(key)
+                    if old is not None and p.id is not None and should_enrich_after_project_change(
+                        is_new_project=False,
+                        old_lat=old[0],
+                        old_lon=old[1],
+                        old_region=old[2],
+                        new_lat=p.gps_latitude,
+                        new_lon=p.gps_longitude,
+                        new_region=p.region_iga,
+                    ):
+                        enrich_project_ids.add(p.id)
+
             if not dry_run:
                 db.flush()
+                for pid in sorted(enrich_project_ids):
+                    enrich_project_location_metrics(db, pid)
 
         if not dry_run:
             # Recompute cached project aggregates for all affected projects in this import

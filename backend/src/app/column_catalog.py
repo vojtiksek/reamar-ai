@@ -161,6 +161,12 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "distance_to_airport_m",
     "micro_location_score",
     "micro_location_label",
+    "walkability_score",
+    "walkability_label",
+    "walkability_daily_needs_score",
+    "walkability_transport_score",
+    "walkability_leisure_score",
+    "walkability_family_score",
 })
 
 

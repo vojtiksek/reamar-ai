@@ -34,6 +34,19 @@ from .project_catalog import (
     get_allowed_sort_keys as get_projects_sort_keys,
     get_project_columns,
 )
+from .project_location_metrics import (
+    LOCATION_METRICS_ENRICHMENT_TRIGGER_FIELDS,
+    enrich_project_location_metrics,
+    recompute_all_project_location_metrics,
+)
+from .location_sources import (
+    refresh_all_location_sources_and_recompute,
+    download_osm_sources_and_recompute,
+)
+from .walkability_sources import (
+    refresh_walkability_sources_and_recompute,
+    recompute_all_project_walkability as recompute_all_walkability,
+)
 
 
 app = FastAPI(title="Reamar AI Backend")
@@ -1759,6 +1772,8 @@ ALLOWED_PROJECT_OVERVIEW_SORT_BY = frozenset({
     "distance_to_airport_m",
     "micro_location_score",
     "micro_location_label",
+    "walkability_score",
+    "walkability_label",
 })
 ALLOWED_PROJECT_OVERVIEW_SORT_DIR = ("asc", "desc")
 
@@ -1871,6 +1886,22 @@ def get_projects_overview(
         Project.heating,
         Project.partition_walls,
         Project.amenities,
+        # Noise and micro-location (computed on Project)
+        Project.noise_day_db,
+        Project.noise_night_db,
+        Project.noise_label,
+        Project.distance_to_primary_road_m,
+        Project.distance_to_tram_tracks_m,
+        Project.distance_to_railway_m,
+        Project.distance_to_airport_m,
+        Project.micro_location_score,
+        Project.micro_location_label,
+        Project.walkability_score,
+        Project.walkability_label,
+        Project.walkability_daily_needs_score,
+        Project.walkability_transport_score,
+        Project.walkability_leisure_score,
+        Project.walkability_family_score,
     ]
     agg_stmt = (
         select(
@@ -2858,14 +2889,6 @@ def get_project(
     else:
         base_item = _project_row_to_item(row[0], row)
 
-    # DEBUG: verify that noise fields are present on the base item
-    print(
-        f"[get_project] base_item noise fields for project_id={project_id}: "
-        f"noise_day_db={base_item.get('noise_day_db')!r}, "
-        f"noise_night_db={base_item.get('noise_night_db')!r}, "
-        f"noise_label={base_item.get('noise_label')!r}"
-    )
-
     # Ensure noise and micro_location fields are always propagated directly from the Project model
     # even if catalog mapping/filtering misses them for any reason.
     base_item["noise_day_db"] = getattr(project, "noise_day_db", None)
@@ -2877,6 +2900,34 @@ def get_project(
     base_item["distance_to_airport_m"] = getattr(project, "distance_to_airport_m", None)
     base_item["micro_location_score"] = getattr(project, "micro_location_score", None)
     base_item["micro_location_label"] = getattr(project, "micro_location_label", None)
+    # Walkability (separate from micro_location)
+    for attr in (
+        "walkability_score",
+        "walkability_label",
+        "walkability_daily_needs_score",
+        "walkability_transport_score",
+        "walkability_leisure_score",
+        "walkability_family_score",
+        "distance_to_supermarket_m",
+        "distance_to_pharmacy_m",
+        "distance_to_tram_stop_m",
+        "distance_to_bus_stop_m",
+        "distance_to_metro_station_m",
+        "walking_distance_to_tram_stop_m",
+        "walking_distance_to_bus_stop_m",
+        "walking_distance_to_metro_station_m",
+        "distance_to_park_m",
+        "distance_to_restaurant_m",
+        "distance_to_kindergarten_m",
+        "distance_to_primary_school_m",
+        "count_supermarket_800m",
+        "count_pharmacy_800m",
+        "count_restaurant_800m",
+        "count_park_800m",
+        "count_kindergarten_800m",
+        "count_primary_school_800m",
+    ):
+        base_item[attr] = getattr(project, attr, None)
 
     # Apply project-level overrides so detail matches list/overview behaviour.
     override_rows = (
@@ -2891,15 +2942,6 @@ def get_project(
     )
     override_map = build_project_override_map(override_rows)
     final_item = apply_project_overrides_to_item(project.id, dict(base_item), override_map)
-
-    # DEBUG: log final payload noise fields to confirm presence in response
-    print(
-        f"[get_project] final_item noise fields for project_id={project_id}: "
-        f"noise_day_db={final_item.get('noise_day_db')!r}, "
-        f"noise_night_db={final_item.get('noise_night_db')!r}, "
-        f"noise_label={final_item.get('noise_label')!r}"
-    )
-
     return final_item
 
 
@@ -3131,6 +3173,10 @@ def put_project_override(
         db.add(ProjectOverride(project_id=project.id, field=field, value=body.value))
     db.commit()
 
+    if field in LOCATION_METRICS_ENRICHMENT_TRIGGER_FIELDS:
+        enrich_project_location_metrics(db, project_id)
+        db.commit()
+
     override_rows = (
         db.execute(
             select(ProjectOverride).where(
@@ -3173,6 +3219,10 @@ def delete_project_override(
         db.delete(existing)
         db.commit()
 
+    if field in LOCATION_METRICS_ENRICHMENT_TRIGGER_FIELDS:
+        enrich_project_location_metrics(db, project_id)
+        db.commit()
+
     override_rows = (
         db.execute(
             select(ProjectOverride).where(
@@ -3186,4 +3236,92 @@ def delete_project_override(
     override_map = build_project_override_map(override_rows)
     base_item = get_project(project_id=project.id, db=db)
     return apply_project_overrides_to_item(project.id, dict(base_item), override_map)
+
+
+# ---------------------------------------------------------------------------
+# Location metrics: per-project enrichment and full recompute (scheduler-ready)
+# ---------------------------------------------------------------------------
+
+@app.post("/projects/{project_id}/location-metrics/recompute")
+def recompute_project_location_metrics(
+    project_id: int,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Recompute noise + micro-location for this project only. Use after manual edit of GPS/region."""
+    _get_project_or_404(db, project_id)
+    computed = enrich_project_location_metrics(db, project_id)
+    db.commit()
+    return {"project_id": project_id, "computed": computed}
+
+
+@app.post("/admin/location-metrics/recompute-all")
+def admin_recompute_all_location_metrics(db: DbSession) -> dict[str, Any]:
+    """Recompute noise + micro-location for all projects with GPS. Use after source data refresh or manual run."""
+    result = recompute_all_project_location_metrics(db)
+    return result
+
+
+@app.post("/admin/location-sources/refresh-and-recompute")
+def admin_refresh_sources_and_recompute(db: DbSession) -> dict[str, Any]:
+    """Refresh noise + OSM source data from configured paths (if set), then full recompute. For weekly/monthly scheduler."""
+    from pathlib import Path
+    from .settings import settings
+    noise_day = Path(settings.location_source_noise_day_path) if settings.location_source_noise_day_path else None
+    noise_night = Path(settings.location_source_noise_night_path) if settings.location_source_noise_night_path else None
+    osm_paths: dict[str, Path] = {}
+    if settings.location_source_osm_primary_roads_path:
+        osm_paths["primary_roads"] = Path(settings.location_source_osm_primary_roads_path)
+    if settings.location_source_osm_tram_tracks_path:
+        osm_paths["tram_tracks"] = Path(settings.location_source_osm_tram_tracks_path)
+    if settings.location_source_osm_railway_path:
+        osm_paths["railway"] = Path(settings.location_source_osm_railway_path)
+    if settings.location_source_osm_airports_path:
+        osm_paths["airports"] = Path(settings.location_source_osm_airports_path)
+    result = refresh_all_location_sources_and_recompute(
+        db,
+        noise_day_path=noise_day,
+        noise_night_path=noise_night,
+        osm_paths=osm_paths if osm_paths else None,
+    )
+    return result
+
+
+@app.post("/admin/location-sources/download-osm-and-recompute")
+def admin_download_osm_and_recompute(db: DbSession) -> dict[str, Any]:
+    """
+    Download OSM data from Overpass API (primary roads, tram, railway, airports) for Praha,
+    fill osm_* tables, then run full recompute of project location metrics.
+    No env or file paths required. Suitable for cron and UI button.
+    Can take 1–2 minutes; frontend should use a long timeout.
+    """
+    try:
+        result = download_osm_sources_and_recompute(db)
+        return result
+    except Exception as e:
+        import logging
+        logging.exception("OSM download failed")
+        msg = str(e) if str(e) else repr(e)
+        raise HTTPException(status_code=503, detail=f"OSM download failed: {msg}")
+
+
+@app.post("/admin/walkability-sources/refresh-and-recompute")
+def admin_walkability_refresh_and_recompute(db: DbSession) -> dict[str, Any]:
+    """
+    Download walkability POI from Overpass (17 categories), fill osm_* POI tables,
+    then recompute walkability for all projects with GPS.
+    Scheduler-ready; can take several minutes.
+    """
+    try:
+        return refresh_walkability_sources_and_recompute(db)
+    except Exception as e:
+        import logging
+        logging.exception("Walkability refresh failed")
+        msg = str(e) if str(e) else repr(e)
+        raise HTTPException(status_code=503, detail=f"Walkability refresh failed: {msg}")
+
+
+@app.post("/admin/walkability/recompute-all")
+def admin_walkability_recompute_all(db: DbSession) -> dict[str, Any]:
+    """Recompute walkability for all projects with GPS (uses existing POI data)."""
+    return recompute_all_walkability(db)
 

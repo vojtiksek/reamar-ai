@@ -107,6 +107,8 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "distance_to_airport_m": ("Project", "distance_to_airport_m"),
     "micro_location_score": ("Project", "micro_location_score"),
     "micro_location_label": ("Project", "micro_location_label"),
+    "walkability_score": ("Project", "walkability_score"),
+    "walkability_label": ("Project", "walkability_label"),
     # Lokální cenová odchylka (p.b., vypočtená offline)
     "local_price_diff_500m": ("Unit", "local_price_diff_500m"),
     "local_price_diff_1000m": ("Unit", "local_price_diff_1000m"),
