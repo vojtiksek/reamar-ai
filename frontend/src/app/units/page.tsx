@@ -28,6 +28,7 @@ import {
   resetPreferences as resetWalkPrefs,
   isPersonalizedActive,
   getNonDefaultChips,
+  getDefaultPreferences,
 } from "@/lib/walkabilityPreferences";
 
 type Unit = {
@@ -660,6 +661,12 @@ export default function Home() {
   const [recomputingLocalDiffs, setRecomputingLocalDiffs] = useState(false);
   const [recomputingWalkability, setRecomputingWalkability] = useState(false);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
+  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
+  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => getDefaultPreferences());
+  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(false);
+  const [personalizedScores, setPersonalizedScores] = useState<
+    Map<number, { score: number | null; label: string | null }>
+  >(new Map());
 
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
@@ -1061,7 +1068,7 @@ export default function Home() {
     }
 
     return units;
-  }, [units, sortBy, sortDir, personalizedModeEnabled, personalizedScores, resolveProjectId, getUnitDefaultWalkabilityScore]);
+  }, [units, sortBy, sortDir, personalizedScores, resolveProjectId, getUnitDefaultWalkabilityScore]);
 
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
@@ -1285,14 +1292,6 @@ export default function Home() {
 
   const [recomputingLocationMetrics, setRecomputingLocationMetrics] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
-  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => loadWalkPrefs());
-  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(() =>
-    isPersonalizedActive(loadWalkPrefs())
-  );
-  const [personalizedScores, setPersonalizedScores] = useState<
-    Map<number, { score: number | null; label: string | null }>
-  >(new Map());
 
   // Personalized scores for projects visible in current units page
   useEffect(() => {
