@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import type { WalkabilityPreferences } from "@/lib/walkabilityPreferences";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
-import { ClientLocationMap } from "@/components/ClientLocationMap";
+import { ClientLocationMap, type LocationProjectPoint } from "@/components/ClientLocationMap";
 import {
   getDefaultPreferences,
   loadPreferences as loadWalkPrefs,
@@ -81,6 +81,21 @@ type MarketFitAnalysis = {
   relaxation_suggestions: RelaxationSuggestion[];
 };
 
+type AreaMarketAnalysis = {
+  client_id: number;
+  projects_count: number;
+  active_units_count: number;
+  matching_units_count: number;
+  avg_price_czk: number | null;
+  avg_price_per_m2_czk: number | null;
+  min_price_czk: number | null;
+  max_price_czk: number | null;
+  avg_floor_area_m2: number | null;
+  layout_distribution: Record<string, number>;
+  budget_fit_units_count: number;
+  area_fit_units_count: number;
+};
+
 export default function ClientDetailPage() {
   const params = useParams();
   const router = useRouter();
@@ -103,6 +118,7 @@ export default function ClientDetailPage() {
   const [token, setToken] = useState<string | null>(null);
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [marketFit, setMarketFit] = useState<MarketFitAnalysis | null>(null);
+  const [areaMarket, setAreaMarket] = useState<AreaMarketAnalysis | null>(null);
 
   type Priority = "must" | "prefer" | "ignore";
 
@@ -120,6 +136,7 @@ export default function ClientDetailPage() {
       ideal_area?: number | null;
       min_area?: number | null;
       tolerate_minus_10?: boolean;
+      payment_schedule?: "upfront" | "during_construction" | "on_completion" | "ignore";
     };
     standards?: {
       rekuperace?: Priority;
@@ -128,6 +145,37 @@ export default function ClientDetailPage() {
       air_conditioning?: Priority;
       cellar?: Priority;
       parking?: Priority;
+    };
+    outdoor?: {
+      balcony?: Priority;
+      terrace?: Priority;
+      garden?: Priority;
+      anything_ok?: Priority;
+      min_outdoor_area_m2?: number | null;
+      preferred_floor?: "ground" | "low" | "middle" | "high" | "ignore";
+      ground_floor_sensitive?: Priority;
+      orientation?: {
+        south?: Priority;
+        west?: Priority;
+        east?: Priority;
+        north?: Priority;
+      };
+    };
+    noise?: {
+      quiet_area?: Priority;
+      main_road?: Priority;
+      tram?: Priority;
+      railway?: Priority;
+      airport?: Priority;
+    };
+    house_amenities?: {
+      parking?: Priority;
+      cellar?: Priority;
+      bike_room?: Priority;
+      stroller_room?: Priority;
+      fitness?: Priority;
+      shared_garden?: Priority;
+      concierge?: Priority;
     };
     character?: {
       project_size?: "small" | "medium" | "large" | "ignore";
@@ -153,6 +201,7 @@ export default function ClientDetailPage() {
   const [wizardExtras, setWizardExtras] = useState<WizardExtras>({});
   const [locationPolygons, setLocationPolygons] = useState<{ lat: number; lng: number }[][]>([]);
   const [activeAreaIndex, setActiveAreaIndex] = useState<number>(0);
+  const [locationProjects, setLocationProjects] = useState<LocationProjectPoint[]>([]);
 
   useEffect(() => {
     const stored = loadWalkPrefs();
@@ -284,12 +333,45 @@ export default function ClientDetailPage() {
       fetch(`${API_BASE}/clients/${clientId}/market-fit-analysis`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_BASE}/clients/${clientId}/area-market-analysis`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => (r.ok ? r.json() : null)),
+      fetch(`${API_BASE}/projects/overview?limit=300&sort_by=avg_price_per_m2_czk&sort_dir=asc`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => (r.ok ? r.json() : null)),
     ])
-      .then(([clientJson, profileJson, recsJson, marketFitJson]) => {
+      .then(
+        ([
+          clientJson,
+          profileJson,
+          recsJson,
+          marketFitJson,
+          areaMarketJson,
+          projectsOverviewJson,
+        ]) => {
         setClient(clientJson as ClientSummary);
         setProfile((profileJson || null) as ClientProfile | null);
         setRecs((recsJson || []) as RecommendationItem[]);
         setMarketFit((marketFitJson || null) as MarketFitAnalysis | null);
+        setAreaMarket((areaMarketJson || null) as AreaMarketAnalysis | null);
+          const items = (projectsOverviewJson?.items ?? []) as any[];
+          const withGps: LocationProjectPoint[] = items
+            .filter(
+              (p) =>
+                typeof p.gps_latitude === "number" &&
+                typeof p.gps_longitude === "number" &&
+                Number.isFinite(p.gps_latitude) &&
+                Number.isFinite(p.gps_longitude)
+            )
+            .map((p) => ({
+              id: p.id as number,
+              project: (p.project_name as string) ?? null,
+              municipality: (p.municipality as string) ?? null,
+              city: (p.city as string) ?? null,
+              gps_latitude: p.gps_latitude as number,
+              gps_longitude: p.gps_longitude as number,
+            }));
+          setLocationProjects(withGps);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
@@ -382,6 +464,141 @@ export default function ClientDetailPage() {
     }
   };
 
+  const mustHaveSummary: string[] = [];
+  const preferSummary: string[] = [];
+
+  const standardLabels: Record<string, string> = {
+    rekuperace: "Rekuperace",
+    floor_heating: "Podlahové vytápění",
+    external_blinds: "Předokenní žaluzie",
+    air_conditioning: "Klimatizace",
+    cellar: "Sklep",
+    parking: "Parkování",
+  };
+
+  if (wizardExtras.standards) {
+    Object.entries(wizardExtras.standards).forEach(([key, value]) => {
+      const label = standardLabels[key] ?? key;
+      if (value === "must") {
+        mustHaveSummary.push(`${label}: musí být`);
+      } else if (value === "prefer") {
+        preferSummary.push(`${label}: preferuji`);
+      }
+    });
+  }
+
+  const outdoorLabels: Record<string, string> = {
+    balcony: "Balkon",
+    terrace: "Terasa",
+    garden: "Zahrada",
+    anything_ok: "Je to jedno",
+  };
+
+  if (wizardExtras.outdoor) {
+    Object.entries(outdoorLabels).forEach(([key, label]) => {
+      const value = (wizardExtras.outdoor as any)[key] as Priority | undefined;
+      if (value === "must") {
+        mustHaveSummary.push(`${label}: musí být`);
+      } else if (value === "prefer") {
+        preferSummary.push(`${label}: preferuji`);
+      }
+    });
+
+    if (wizardExtras.outdoor.min_outdoor_area_m2 != null) {
+      preferSummary.push(
+        `Minimální venkovní plocha: ${wizardExtras.outdoor.min_outdoor_area_m2} m²`
+      );
+    }
+
+    if (wizardExtras.outdoor.preferred_floor && wizardExtras.outdoor.preferred_floor !== "ignore") {
+      const floorMap: Record<string, string> = {
+        ground: "Přízemí",
+        low: "Nižší patra",
+        middle: "Střední patra",
+        high: "Vyšší patra",
+      };
+      const label = floorMap[wizardExtras.outdoor.preferred_floor];
+      if (label) {
+        preferSummary.push(`Preferované patro: ${label}`);
+      }
+    }
+
+    if (wizardExtras.outdoor.ground_floor_sensitive === "must") {
+      mustHaveSummary.push("Vadí přízemí: musí se vyhnout přízemí");
+    } else if (wizardExtras.outdoor.ground_floor_sensitive === "prefer") {
+      preferSummary.push("Vadí přízemí: preferuje vyšší patro");
+    }
+
+    if (wizardExtras.outdoor.orientation) {
+      const orientationLabels: Record<string, string> = {
+        south: "Jih",
+        west: "Západ",
+        east: "Východ",
+        north: "Sever",
+      };
+      Object.entries(orientationLabels).forEach(([key, label]) => {
+        const value = (wizardExtras.outdoor!.orientation as any)[key] as Priority | undefined;
+        if (value === "must") {
+          mustHaveSummary.push(`Orientace ${label}: musí být`);
+        } else if (value === "prefer") {
+          preferSummary.push(`Orientace ${label}: preferuji`);
+        }
+      });
+    }
+  }
+
+  const noiseLabels: Record<string, string> = {
+    quiet_area: "Klidná lokalita",
+    main_road: "Hlavní silnice",
+    tram: "Tramvaj",
+    railway: "Železnice",
+    airport: "Letiště",
+  };
+
+  if (wizardExtras.noise) {
+    Object.entries(noiseLabels).forEach(([key, label]) => {
+      const value = (wizardExtras.noise as any)[key] as Priority | undefined;
+      if (value === "must") {
+        mustHaveSummary.push(`${label}: musí být / musí se vyhnout`);
+      } else if (value === "prefer") {
+        preferSummary.push(`${label}: preferuji`);
+      }
+    });
+  }
+
+  const houseAmenityLabels: Record<string, string> = {
+    parking: "Parkování",
+    cellar: "Sklep",
+    bike_room: "Kolárna",
+    stroller_room: "Kočárkárna",
+    fitness: "Fitness v projektu",
+    shared_garden: "Společná zahrada / vnitroblok",
+    concierge: "Recepce / concierge",
+  };
+
+  if (wizardExtras.house_amenities) {
+    Object.entries(houseAmenityLabels).forEach(([key, label]) => {
+      const value = (wizardExtras.house_amenities as any)[key] as Priority | undefined;
+      if (value === "must") {
+        mustHaveSummary.push(`${label}: musí být`);
+      } else if (value === "prefer") {
+        preferSummary.push(`${label}: preferuji`);
+      }
+    });
+  }
+
+  if (wizardExtras.budget?.payment_schedule && wizardExtras.budget.payment_schedule !== "ignore") {
+    const paymentLabels: Record<string, string> = {
+      upfront: "Vyšší část při podpisu",
+      during_construction: "Více během výstavby",
+      on_completion: "Co nejvíce až po dokončení",
+    };
+    const label = paymentLabels[wizardExtras.budget.payment_schedule];
+    if (label) {
+      preferSummary.push(`Financování: ${label}`);
+    }
+  }
+
   if (!hydrated) {
     // Stejný výstup pro SSR i první klientský render – vyhneme se hydration mismatch.
     return (
@@ -409,7 +626,6 @@ export default function ClientDetailPage() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      DEBUG WRITE TEST
       <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4">
         {loading ? (
           <p className="text-sm text-slate-600">Načítání…</p>
@@ -489,6 +705,7 @@ export default function ClientDetailPage() {
                       <ClientLocationMap
                         areas={locationPolygons}
                         activeAreaIndex={activeAreaIndex}
+                        projects={locationProjects}
                         onChange={(next) => {
                           setLocationPolygons(next);
                           if (activeAreaIndex >= next.length) {
@@ -658,6 +875,33 @@ export default function ClientDetailPage() {
                           />
                         </div>
                       </div>
+                      <div>
+                        <label className="block text-xs font-medium text-slate-600">
+                          Preferovaný platební kalendář
+                        </label>
+                        <select
+                          value={wizardExtras.budget?.payment_schedule ?? "ignore"}
+                          onChange={(e) =>
+                            setWizardExtras((prev) => ({
+                              ...prev,
+                              budget: {
+                                ...(prev.budget ?? {}),
+                                payment_schedule: e.target.value as
+                                  | "upfront"
+                                  | "during_construction"
+                                  | "on_completion"
+                                  | "ignore",
+                              },
+                            }))
+                          }
+                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                        >
+                          <option value="ignore">Neřeším</option>
+                          <option value="upfront">Vyšší část při podpisu</option>
+                          <option value="during_construction">Více během výstavby</option>
+                          <option value="on_completion">Co nejvíce až po dokončení</option>
+                        </select>
+                      </div>
                     </div>
                   )}
 
@@ -738,10 +982,160 @@ export default function ClientDetailPage() {
                       </div>
                       <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-3">
                         <h5 className="text-xs font-semibold text-slate-900">Venkovní prostor</h5>
-                        <p className="text-xs text-slate-600">
-                          Projděte s klientem, jak důležitý je pro něj balkon, terasa, předzahrádka
-                          nebo jiné venkovní zázemí a jaké kompromisy jsou přijatelné.
-                        </p>
+                        <div className="space-y-2 text-xs">
+                          {[
+                            ["balcony", "Balkon"],
+                            ["terrace", "Terasa"],
+                            ["garden", "Zahrada"],
+                            ["anything_ok", "Je to jedno"],
+                          ].map(([key, label]) => (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span className="text-slate-700">{label}</span>
+                              <select
+                                value={
+                                  (wizardExtras.outdoor as any)?.[key] ??
+                                  ("ignore" as Priority | "ignore")
+                                }
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    outdoor: {
+                                      ...(prev.outdoor ?? {}),
+                                      [key]: e.target.value as Priority,
+                                    },
+                                  }))
+                                }
+                                className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              >
+                                <option value="ignore">Neřeším</option>
+                                <option value="prefer">Preferuji</option>
+                                <option value="must">Musí být</option>
+                              </select>
+                            </div>
+                          ))}
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600">
+                                Minimální venkovní plocha (m²)
+                              </label>
+                              <input
+                                type="number"
+                                value={wizardExtras.outdoor?.min_outdoor_area_m2 ?? ""}
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    outdoor: {
+                                      ...(prev.outdoor ?? {}),
+                                      min_outdoor_area_m2: e.target.value
+                                        ? Number(e.target.value)
+                                        : null,
+                                    },
+                                  }))
+                                }
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                                placeholder="Např. 10"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-xs font-medium text-slate-600">
+                                Preferované patro
+                              </label>
+                              <select
+                                value={wizardExtras.outdoor?.preferred_floor ?? "ignore"}
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    outdoor: {
+                                      ...(prev.outdoor ?? {}),
+                                      preferred_floor: e.target.value as
+                                        | "ground"
+                                        | "low"
+                                        | "middle"
+                                        | "high"
+                                        | "ignore",
+                                    },
+                                  }))
+                                }
+                                className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                              >
+                                <option value="ignore">Neřeším</option>
+                                <option value="ground">Přízemí</option>
+                                <option value="low">Nižší patra</option>
+                                <option value="middle">Střední patra</option>
+                                <option value="high">Vyšší patra</option>
+                              </select>
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-700">Vadí přízemí</span>
+                            <select
+                              value={
+                                wizardExtras.outdoor?.ground_floor_sensitive ??
+                                ("ignore" as Priority | "ignore")
+                              }
+                              onChange={(e) =>
+                                setWizardExtras((prev) => ({
+                                  ...prev,
+                                  outdoor: {
+                                    ...(prev.outdoor ?? {}),
+                                    ground_floor_sensitive: e.target.value as Priority,
+                                  },
+                                }))
+                              }
+                              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              <option value="ignore">Neřeším</option>
+                              <option value="prefer">Spíše vadí</option>
+                              <option value="must">Musí se vyhnout</option>
+                            </select>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            <p className="text-[11px] font-medium text-slate-700">
+                              Preferovaná orientace
+                            </p>
+                            <div className="grid grid-cols-2 gap-2">
+                              {[
+                                ["south", "Jih"],
+                                ["west", "Západ"],
+                                ["east", "Východ"],
+                                ["north", "Sever"],
+                              ].map(([key, label]) => (
+                                <div
+                                  key={key}
+                                  className="flex items-center justify-between gap-2"
+                                >
+                                  <span className="text-slate-700">{label}</span>
+                                  <select
+                                    value={
+                                      (wizardExtras.outdoor?.orientation as any)?.[key] ??
+                                      ("ignore" as Priority | "ignore")
+                                    }
+                                    onChange={(e) =>
+                                      setWizardExtras((prev) => ({
+                                        ...prev,
+                                        outdoor: {
+                                          ...(prev.outdoor ?? {}),
+                                          orientation: {
+                                            ...(prev.outdoor?.orientation ?? {}),
+                                            [key]: e.target.value as Priority,
+                                          },
+                                        },
+                                      }))
+                                    }
+                                    className="w-28 rounded-md border border-slate-300 px-2 py-1 text-[11px]"
+                                  >
+                                    <option value="ignore">Neřeším</option>
+                                    <option value="prefer">Preferuji</option>
+                                    <option value="must">Musí být</option>
+                                  </select>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -795,6 +1189,24 @@ export default function ClientDetailPage() {
                               >
                                 Odebrat
                               </button>
+                            </div>
+                            <div className="mt-1">
+                              <label className="block text-[11px] font-medium text-slate-600">
+                                Adresa / popis místa
+                              </label>
+                              <input
+                                type="text"
+                                value={p.address ?? ""}
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => {
+                                    const points = [...(prev.commute?.points ?? [])];
+                                    points[idx] = { ...points[idx], address: e.target.value || null };
+                                    return { ...prev, commute: { points } };
+                                  })
+                                }
+                                placeholder="Např. Václavské náměstí 1, Praha"
+                                className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              />
                             </div>
                             <div className="mt-1 grid grid-cols-2 gap-2">
                               <input
@@ -1005,10 +1417,33 @@ export default function ClientDetailPage() {
                       ))}
                       <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-3">
                         <h5 className="text-xs font-semibold text-slate-900">Financování</h5>
-                        <p className="text-xs text-slate-600">
-                          Ujistěte se, že klient rozumí svému finančnímu rámci, možnostem hypotéky a
-                          tomu, jak případné změny profilu ovlivní dostupné projekty.
-                        </p>
+                        <div className="space-y-2 text-xs">
+                          <p className="text-[11px] text-slate-600">
+                            Jaký platební kalendář je klientovi nejbližší?
+                          </p>
+                          <select
+                            value={wizardExtras.budget?.payment_schedule ?? "ignore"}
+                            onChange={(e) =>
+                              setWizardExtras((prev) => ({
+                                ...prev,
+                                budget: {
+                                  ...(prev.budget ?? {}),
+                                  payment_schedule: e.target.value as
+                                    | "upfront"
+                                    | "during_construction"
+                                    | "on_completion"
+                                    | "ignore",
+                                },
+                              }))
+                            }
+                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-xs"
+                          >
+                            <option value="ignore">Neřeším</option>
+                            <option value="upfront">Vyšší část při podpisu</option>
+                            <option value="during_construction">Více během výstavby</option>
+                            <option value="on_completion">Co nejvíce až po dokončení</option>
+                          </select>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1099,19 +1534,92 @@ export default function ClientDetailPage() {
                         <h5 className="text-xs font-semibold text-slate-900">
                           Klid a hlučnost lokality
                         </h5>
-                        <p className="text-xs text-slate-600">
-                          Pomozte klientovi popsat, jak moc je citlivý na hluk z ulice, MHD nebo
-                          nightlife a kde vede hranici mezi živým a rušivým prostředím.
-                        </p>
+                        <div className="space-y-2 text-xs">
+                          <p className="text-[11px] text-slate-600">
+                            Jaké typy hluku jsou pro klienta citlivé a které naopak nevadí?
+                          </p>
+                          {[
+                            ["quiet_area", "Klidná lokalita"],
+                            ["main_road", "Hlavní silnice"],
+                            ["tram", "Tramvaj"],
+                            ["railway", "Železnice"],
+                            ["airport", "Letiště"],
+                          ].map(([key, label]) => (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span className="text-slate-700">{label}</span>
+                              <select
+                                value={
+                                  (wizardExtras.noise as any)?.[key] ??
+                                  ("ignore" as Priority | "ignore")
+                                }
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    noise: {
+                                      ...(prev.noise ?? {}),
+                                      [key]: e.target.value as Priority,
+                                    },
+                                  }))
+                                }
+                                className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              >
+                                <option value="ignore">Neřeším</option>
+                                <option value="prefer">Preferuji</option>
+                                <option value="must">Musí být / Musí se vyhnout</option>
+                              </select>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                       <div className="space-y-3 rounded-lg bg-slate-50 p-3">
                         <h5 className="text-xs font-semibold text-slate-900">
                           Zázemí domu a praktické potřeby
                         </h5>
-                        <p className="text-xs text-slate-600">
-                          Proberte praktické detaily jako úložné prostory, kočárkárna, kolárna nebo
-                          sdílené prostory v domě, které mohou ovlivnit každodenní komfort.
-                        </p>
+                        <div className="space-y-2 text-xs">
+                          <p className="text-[11px] text-slate-600">
+                            Jaké prvky zázemí domu jsou pro klienta nutné, které jsou výhodou a co
+                            nehraje roli?
+                          </p>
+                          {[
+                            ["parking", "Parkování"],
+                            ["cellar", "Sklep"],
+                            ["bike_room", "Kolárna"],
+                            ["stroller_room", "Kočárkárna"],
+                            ["fitness", "Fitness v projektu"],
+                            ["shared_garden", "Společná zahrada / vnitroblok"],
+                            ["concierge", "Recepce / concierge"],
+                          ].map(([key, label]) => (
+                            <div
+                              key={key}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span className="text-slate-700">{label}</span>
+                              <select
+                                value={
+                                  (wizardExtras.house_amenities as any)?.[key] ??
+                                  ("ignore" as Priority | "ignore")
+                                }
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    house_amenities: {
+                                      ...(prev.house_amenities ?? {}),
+                                      [key]: e.target.value as Priority,
+                                    },
+                                  }))
+                                }
+                                className="w-40 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              >
+                                <option value="ignore">Neřeším</option>
+                                <option value="prefer">Preferuji</option>
+                                <option value="must">Musí být</option>
+                              </select>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     </div>
                   )}
@@ -1125,10 +1633,9 @@ export default function ClientDetailPage() {
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
                         <p className="mb-1 font-semibold text-slate-800">Must-have</p>
                         <ul className="list-disc pl-4 text-slate-700">
-                          {wizardExtras.standards &&
-                            Object.entries(wizardExtras.standards)
-                              .filter(([, v]) => v === "must")
-                              .map(([k]) => <li key={k}>{k}</li>)}
+                          {mustHaveSummary.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
                           {selectedLayouts.length > 0 && (
                             <li>Dispozice: {selectedLayouts.join(", ")}</li>
                           )}
@@ -1137,10 +1644,9 @@ export default function ClientDetailPage() {
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
                         <p className="mb-1 font-semibold text-slate-800">Preference</p>
                         <ul className="list-disc pl-4 text-slate-700">
-                          {wizardExtras.standards &&
-                            Object.entries(wizardExtras.standards)
-                              .filter(([, v]) => v === "prefer")
-                              .map(([k]) => <li key={k}>{k}</li>)}
+                          {preferSummary.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
                         </ul>
                       </div>
                       <div className="rounded-lg bg-slate-50 px-3 py-2 text-xs">
@@ -1180,6 +1686,117 @@ export default function ClientDetailPage() {
                     </button>
                   </div>
                 </div>
+              </section>
+
+              <section className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="mb-3">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Trh v hledané oblasti
+                  </h3>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Přehled projektů a jednotek, které leží uvnitř vybrané oblasti v mapě.
+                  </p>
+                </div>
+                {locationPolygons.length === 0 || locationPolygons[0].length < 3 ? (
+                  <p className="text-xs text-slate-500">
+                    Pro zobrazení trhu vyberte oblast v kroku &quot;Lokalita a prostředí&quot; a
+                    uložte profil klienta.
+                  </p>
+                ) : !areaMarket ? (
+                  <p className="text-xs text-slate-500">
+                    Načítám data o trhu v hledané oblasti…
+                  </p>
+                ) : areaMarket.projects_count === 0 ? (
+                  <p className="text-xs text-slate-500">
+                    V aktuálně zvolené oblasti nejsou žádné aktivní projekty s dostupnými jednotkami.
+                  </p>
+                ) : (
+                  <div className="grid gap-4 md:grid-cols-3 text-xs text-slate-700">
+                    <div className="space-y-2">
+                      <p>
+                        <span className="font-semibold text-slate-900">
+                          {areaMarket.projects_count}
+                        </span>{" "}
+                        projektů v oblasti
+                      </p>
+                      <p>
+                        <span className="font-semibold text-slate-900">
+                          {areaMarket.active_units_count}
+                        </span>{" "}
+                        aktivních jednotek (k prodeji / rezervovaných)
+                      </p>
+                      <p>
+                        <span className="font-semibold text-slate-900">
+                          {areaMarket.matching_units_count}
+                        </span>{" "}
+                        jednotek odpovídá aktuálnímu profilu klienta.
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-900">Ceny v oblasti</p>
+                      <p>
+                        Průměrná cena:{" "}
+                        {areaMarket.avg_price_czk != null
+                          ? `${areaMarket.avg_price_czk.toLocaleString("cs-CZ")} Kč`
+                          : "—"}
+                      </p>
+                      <p>
+                        Průměrná cena/m²:{" "}
+                        {areaMarket.avg_price_per_m2_czk != null
+                          ? `${areaMarket.avg_price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²`
+                          : "—"}
+                      </p>
+                      <p>
+                        Rozptyl cen:{" "}
+                        {areaMarket.min_price_czk != null
+                          ? `${areaMarket.min_price_czk.toLocaleString("cs-CZ")} Kč`
+                          : "—"}{" "}
+                        –{" "}
+                        {areaMarket.max_price_czk != null
+                          ? `${areaMarket.max_price_czk.toLocaleString("cs-CZ")} Kč`
+                          : "—"}
+                      </p>
+                      <p>
+                        Průměrná plocha jednotky:{" "}
+                        {areaMarket.avg_floor_area_m2 != null
+                          ? `${areaMarket.avg_floor_area_m2.toFixed(1)} m²`
+                          : "—"}
+                      </p>
+                    </div>
+                    <div className="space-y-1">
+                      <p className="font-semibold text-slate-900">Dispozice a profil</p>
+                      <p>
+                        Jednotky v rozpočtu klienta:{" "}
+                        <span className="font-semibold text-slate-900">
+                          {areaMarket.budget_fit_units_count}
+                        </span>
+                      </p>
+                      <p>
+                        Jednotky v ploše klienta:{" "}
+                        <span className="font-semibold text-slate-900">
+                          {areaMarket.area_fit_units_count}
+                        </span>
+                      </p>
+                      {Object.keys(areaMarket.layout_distribution).length > 0 && (
+                        <div className="mt-1 space-y-0.5">
+                          <p>Rozložení dispozic:</p>
+                          <ul className="list-disc pl-4">
+                            {Object.entries(areaMarket.layout_distribution).map(
+                              ([layout, count]) => (
+                                <li key={layout}>
+                                  {layout}:{" "}
+                                  <span className="font-semibold text-slate-900">
+                                    {count}
+                                  </span>
+                                </li>
+                              )
+                            )}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </section>
 
               <section className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">

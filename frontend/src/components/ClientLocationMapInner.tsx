@@ -1,8 +1,9 @@
 "use client";
 
-import { MapContainer, TileLayer, Polygon, Marker, useMapEvents, useMap } from "react-leaflet";
-import L, { type LatLngExpression, type LatLngBoundsExpression } from "leaflet";
+import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
+import L, { type LatLngExpression, type LatLngBoundsExpression, type DivIcon } from "leaflet";
 import "leaflet/dist/leaflet.css";
+import type { LocationProjectPoint } from "./ClientLocationMap";
 
 // Fix default marker icons so they render correctly in bundlers.
 // eslint-disable-next-line @typescript-eslint/ban-ts-comment
@@ -22,6 +23,7 @@ type EditorProps = {
   onChange: (areas: Area[]) => void;
   activeAreaIndex: number;
   onActiveAreaChange: (index: number) => void;
+  projects: LocationProjectPoint[];
 };
 
 function FitBounds({ areas }: { areas: Area[] }) {
@@ -39,11 +41,19 @@ function FitBounds({ areas }: { areas: Area[] }) {
   return null;
 }
 
+const projectMarkerIcon: DivIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:14px;height:14px;border-radius:9999px;background:#0f766e;border:2px solid #ffffff;box-shadow:0 0 0 1px rgba(15,23,42,0.35);"></div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+
 export function ClientLocationMapInner({
   areas,
   onChange,
   activeAreaIndex,
   onActiveAreaChange,
+  projects,
 }: EditorProps) {
   const hasAny = areas.some((a) => a.length >= 3);
   const firstPoint = areas.find((a) => a.length > 0)?.[0];
@@ -105,6 +115,26 @@ export function ClientLocationMapInner({
               />
             ))
           )}
+          {projects
+            .filter((p) => p.gps_latitude != null && p.gps_longitude != null)
+            .map((p) => (
+              <Marker
+                key={`project-${p.id}`}
+                position={[p.gps_latitude as number, p.gps_longitude as number]}
+                icon={projectMarkerIcon}
+              >
+                <Popup>
+                  <div className="space-y-0.5 text-xs">
+                    <div className="font-semibold text-slate-900">
+                      {p.project ?? "Projekt bez názvu"}
+                    </div>
+                    <div className="text-slate-700">
+                      {[p.city, p.municipality].filter(Boolean).join(", ") || "—"}
+                    </div>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
           <FitBounds areas={areas} />
           <ClickInsert
             areas={areas}

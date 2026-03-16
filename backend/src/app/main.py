@@ -5,12 +5,14 @@ from typing import Annotated, Any
 
 from decimal import Decimal
 from urllib.parse import urlparse
+import json
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import asc, case, desc, func, or_, and_, select
+import sqlalchemy as sa
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, aliased, selectinload
@@ -18,7 +20,20 @@ from sqlalchemy.orm import Session, aliased, selectinload
 from .column_catalog import get_columns as get_column_definitions
 from .db import check_db_connection, get_db_session
 from .filter_catalog import get_filter_groups
-from .models import Project, Unit, UnitApiPending, UnitOverride, UnitPriceHistory, ProjectOverride
+from .models import (
+    Project,
+    Unit,
+    UnitApiPending,
+    UnitOverride,
+    UnitPriceHistory,
+    ProjectOverride,
+    Broker,
+    Client,
+    ClientProfile,
+    ClientRecommendation,
+    ClientUnitMatch,
+    UnitEvent,
+)
 from .overrides import (
     OVERRIDEABLE_FIELDS,
     PROJECT_OVERRIDEABLE_FIELDS,
@@ -50,6 +65,7 @@ from .walkability import (
     compute_personalized_walkability_score,
     project_to_raw_metrics,
 )
+from .routing_provider import get_cached_travel_time_minutes
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -235,11 +251,179 @@ class ProjectsListResponse(BaseModel):
     offset: int
 
 
+class AreaMarketAnalysisResponse(BaseModel):
+    client_id: int
+    projects_count: int
+    active_units_count: int
+    matching_units_count: int
+    avg_price_czk: float | None
+    avg_price_per_m2_czk: float | None
+    min_price_czk: int | None
+    max_price_czk: int | None
+    avg_floor_area_m2: float | None
+    layout_distribution: dict[str, int]
+    budget_fit_units_count: int
+    area_fit_units_count: int
+
+
+class ClientSummary(BaseModel):
+    id: int
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    status: str
+    broker_id: int
+    created_at: datetime
+    updated_at: datetime
+    recommendations_count: int = 0
+
+
+class ClientCreateBody(BaseModel):
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    status: str = "new"
+    notes: str | None = None
+
+
+class ClientUpdateBody(BaseModel):
+    name: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    status: str | None = None
+    notes: str | None = None
+
+
+class ClientProfileBody(BaseModel):
+    budget_min: int | None = None
+    budget_max: int | None = None
+    area_min: float | None = None
+    area_max: float | None = None
+    layouts: dict | None = None
+    property_type: str | None = None
+    purchase_purpose: str | None = None
+    walkability_preferences_json: dict | None = None
+    filter_json: dict | None = None
+    polygon_geojson: str | None = None
+    commute_points_json: dict | None = None
+
+
+class ClientRecommendationItem(BaseModel):
+    unit_external_id: str | None = None
+    project_id: int | None = None
+    project_name: str | None = None
+    layout: str | None = None
+    floor_area_m2: float | None = None
+    price_czk: int | None = None
+    price_per_m2_czk: int | None = None
+    floor: int | None = None
+    layout_label: str | None = None
+    score: float
+    budget_fit: float
+    walkability_fit: float
+    location_fit: float
+    layout_fit: float
+    area_fit: float
+    reason: dict[str, Any] | None = None
+
+
+class BrokerMatchItem(BaseModel):
+    id: int
+    client_id: int
+    client_name: str
+    unit_external_id: str
+    project_name: str | None = None
+    layout_label: str | None = None
+    price_czk: int | None = None
+    score: float
+    event_type: str | None = None
+    price_old: int | None = None
+    price_new: int | None = None
+
+
+class MarketFitBlocker(BaseModel):
+    key: str
+    label: str
+    blocked_count: int
+    blocked_percentage: float
+
+
+class RelaxationSuggestion(BaseModel):
+    label: str
+    matching_units_count: int
+    delta_vs_current: int
+
+
+class MarketFitAnalysisResponse(BaseModel):
+    client_id: int
+    matching_units_count: int
+    available_units_count: int
+    top_blockers: list[MarketFitBlocker]
+    relaxation_suggestions: list[RelaxationSuggestion]
+
+
+class ClientWithoutInventoryItem(BaseModel):
+    client_id: int
+    client_name: str
+    budget_max: int | None = None
+    layouts: list[str] = []
+    area_min: float | None = None
+    area_max: float | None = None
+    matching_units: int
+    available_units: int
+
+
 DbSession = Annotated[Session, Depends(get_db_session)]
 
 VALID_OVERRIDE_FIELDS = OVERRIDEABLE_FIELDS
 VALID_PROJECT_OVERRIDE_FIELDS = PROJECT_OVERRIDEABLE_FIELDS
 PENDING_API_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
+
+
+# ---------------------------------------------------------------------------
+# Broker auth (MVP): email+password with SHA256 hashing and opaque session token.
+# ---------------------------------------------------------------------------
+
+AUTH_HEADER = "Authorization"
+
+
+def _hash_password(password: str) -> str:
+    import hashlib
+    salt = "reamar_broker_salt_v1"
+    return hashlib.sha256((salt + password).encode("utf-8")).hexdigest()
+
+
+def _generate_session_token() -> str:
+    import secrets
+    return secrets.token_urlsafe(32)
+
+
+class BrokerLoginBody(BaseModel):
+    email: str
+    password: str
+
+
+class BrokerInfo(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    token: str
+
+
+def get_current_broker(
+    db: DbSession,
+    authorization: str | None = Header(default=None, alias=AUTH_HEADER),
+) -> Broker:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
+    token = authorization.split(" ", 1)[1].strip()
+    broker = db.execute(
+        select(Broker).where(Broker.session_token == token)
+    ).scalars().first()
+    if not broker:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    return broker
 
 
 def _get_unit_or_404(db: Session, external_id: str) -> Unit:
@@ -263,6 +447,1253 @@ def _get_project_or_404(db: Session, project_id: int) -> Project:
     if project is None:
         raise HTTPException(status_code=404, detail="Project not found")
     return project
+
+
+def _point_in_polygon(lat: float, lon: float, polygon: list[tuple[float, float]]) -> bool:
+    """Ray casting algorithm for point in polygon (lat,lon vs [(lat,lon),...])."""
+    inside = False
+    n = len(polygon)
+    if n < 3:
+        return False
+    x, y = lon, lat
+    for i in range(n):
+        x1, y1 = polygon[i - 1][1], polygon[i - 1][0]
+        x2, y2 = polygon[i][1], polygon[i][0]
+        if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-9) + x1):
+            inside = not inside
+    return inside
+
+
+def _parse_polygon_geojson(polygon_geojson: str | None) -> list[tuple[float, float]] | None:
+    if not polygon_geojson:
+        return None
+    try:
+        data = json.loads(polygon_geojson)
+        coords = None
+        if data.get("type") == "Polygon":
+            coords = data.get("coordinates", [])[0]
+        elif data.get("type") == "Feature" and data.get("geometry", {}).get("type") == "Polygon":
+            coords = data["geometry"].get("coordinates", [])[0]
+        if not coords:
+            return None
+        pts: list[tuple[float, float]] = []
+        for lng, lat in coords:
+            pts.append((float(lat), float(lng)))
+        return pts
+    except Exception:
+        return None
+
+
+def _parse_polygon_or_multipolygon_geojson(
+    polygon_geojson: str | None,
+) -> list[list[tuple[float, float]]]:
+    if not polygon_geojson:
+        return []
+    try:
+        data = json.loads(polygon_geojson)
+        polygons: list[list[tuple[float, float]]] = []
+
+        def _ring_to_pts(ring: list[list[float]]) -> list[tuple[float, float]]:
+            pts: list[tuple[float, float]] = []
+            for lng, lat in ring:
+                pts.append((float(lat), float(lng)))
+            return pts
+
+        if data.get("type") == "Polygon":
+            ring = (data.get("coordinates") or [])[0] or []
+            pts = _ring_to_pts(ring)
+            if len(pts) >= 3:
+                polygons.append(pts)
+        elif data.get("type") == "MultiPolygon":
+            for poly in data.get("coordinates") or []:
+                ring = (poly or [])[0] or []
+                pts = _ring_to_pts(ring)
+                if len(pts) >= 3:
+                    polygons.append(pts)
+        elif data.get("type") == "Feature":
+            geom = data.get("geometry") or {}
+            gtype = geom.get("type")
+            if gtype == "Polygon":
+                ring = (geom.get("coordinates") or [])[0] or []
+                pts = _ring_to_pts(ring)
+                if len(pts) >= 3:
+                    polygons.append(pts)
+            elif gtype == "MultiPolygon":
+                for poly in geom.get("coordinates") or []:
+                    ring = (poly or [])[0] or []
+                    pts = _ring_to_pts(ring)
+                    if len(pts) >= 3:
+                        polygons.append(pts)
+
+        return polygons
+    except Exception:
+        return []
+
+
+def _point_in_any_polygon(
+    lat: float,
+    lon: float,
+    polygons: list[list[tuple[float, float]]],
+) -> bool:
+    for poly in polygons:
+        if _point_in_polygon(lat, lon, poly):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Auth & Brokers / Clients API
+# ---------------------------------------------------------------------------
+
+
+@app.post("/auth/login", response_model=BrokerInfo)
+def broker_login(body: BrokerLoginBody, db: DbSession) -> BrokerInfo:
+    broker = db.execute(
+        select(Broker).where(Broker.email == body.email)
+    ).scalars().first()
+    if not broker or broker.password_hash != _hash_password(body.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not broker.session_token:
+        broker.session_token = _generate_session_token()
+        db.add(broker)
+        db.commit()
+        db.refresh(broker)
+    return BrokerInfo(
+        id=broker.id,
+        name=broker.name,
+        email=broker.email,
+        role=broker.role,
+        token=broker.session_token,
+    )
+
+
+@app.get("/clients", response_model=list[ClientSummary])
+def list_clients(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[ClientSummary]:
+    rows = (
+        db.execute(
+            select(Client, func.count(ClientRecommendation.id))
+            .outerjoin(ClientRecommendation, ClientRecommendation.client_id == Client.id)
+            .where(Client.broker_id == broker.id)
+            .group_by(Client.id)
+        )
+        .all()
+    )
+    out: list[ClientSummary] = []
+    for client, rec_count in rows:
+        out.append(
+            ClientSummary(
+                id=client.id,
+                name=client.name,
+                email=client.email,
+                phone=client.phone,
+                status=client.status,
+                broker_id=client.broker_id,
+                created_at=client.created_at,
+                updated_at=client.updated_at,
+                recommendations_count=int(rec_count or 0),
+            )
+        )
+    return out
+
+
+@app.post("/clients", response_model=ClientSummary)
+def create_client(
+    body: ClientCreateBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientSummary:
+    client = Client(
+        broker_id=broker.id,
+        name=body.name,
+        email=body.email,
+        phone=body.phone,
+        status=body.status,
+        notes=body.notes,
+    )
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    return ClientSummary(
+        id=client.id,
+        name=client.name,
+        email=client.email,
+        phone=client.phone,
+        status=client.status,
+        broker_id=client.broker_id,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+        recommendations_count=0,
+    )
+
+
+def _get_client_for_broker(db: Session, client_id: int, broker: Broker) -> Client:
+    client = db.get(Client, client_id)
+    if not client or client.broker_id != broker.id:
+        raise HTTPException(status_code=404, detail="Client not found")
+    return client
+
+
+@app.get("/clients/{client_id}", response_model=ClientSummary)
+def get_client(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientSummary:
+    client = _get_client_for_broker(db, client_id, broker)
+    rec_count = db.execute(
+        select(func.count(ClientRecommendation.id)).where(ClientRecommendation.client_id == client.id)
+    ).scalar_one()
+    return ClientSummary(
+        id=client.id,
+        name=client.name,
+        email=client.email,
+        phone=client.phone,
+        status=client.status,
+        broker_id=client.broker_id,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+        recommendations_count=int(rec_count or 0),
+    )
+
+
+@app.patch("/clients/{client_id}", response_model=ClientSummary)
+def update_client(
+    client_id: int,
+    body: ClientUpdateBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientSummary:
+    client = _get_client_for_broker(db, client_id, broker)
+    if body.name is not None:
+        client.name = body.name
+    if body.email is not None:
+        client.email = body.email
+    if body.phone is not None:
+        client.phone = body.phone
+    if body.status is not None:
+        client.status = body.status
+    if body.notes is not None:
+        client.notes = body.notes
+    db.add(client)
+    db.commit()
+    db.refresh(client)
+    rec_count = db.execute(
+        select(func.count(ClientRecommendation.id)).where(ClientRecommendation.client_id == client.id)
+    ).scalar_one()
+    return ClientSummary(
+        id=client.id,
+        name=client.name,
+        email=client.email,
+        phone=client.phone,
+        status=client.status,
+        broker_id=client.broker_id,
+        created_at=client.created_at,
+        updated_at=client.updated_at,
+        recommendations_count=int(rec_count or 0),
+    )
+
+
+@app.delete("/clients/{client_id}", status_code=204)
+def delete_client(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    client = _get_client_for_broker(db, client_id, broker)
+    db.delete(client)
+    db.commit()
+
+
+@app.get("/clients/{client_id}/profile", response_model=ClientProfileBody | None)
+def get_client_profile(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientProfileBody | None:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        return None
+    return ClientProfileBody(
+        budget_min=profile.budget_min,
+        budget_max=profile.budget_max,
+        area_min=profile.area_min,
+        area_max=profile.area_max,
+        layouts=profile.layouts,
+        property_type=profile.property_type,
+        purchase_purpose=profile.purchase_purpose,
+        walkability_preferences_json=profile.walkability_preferences_json,
+        filter_json=profile.filter_json,
+        polygon_geojson=profile.polygon_geojson,
+        commute_points_json=profile.commute_points_json,
+    )
+
+
+@app.post("/clients/{client_id}/profile", response_model=ClientProfileBody)
+@app.patch("/clients/{client_id}/profile", response_model=ClientProfileBody)
+def upsert_client_profile(
+    client_id: int,
+    body: ClientProfileBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientProfileBody:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        profile = ClientProfile(client_id=client.id)
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(profile, field, value)
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return ClientProfileBody(
+        budget_min=profile.budget_min,
+        budget_max=profile.budget_max,
+        area_min=profile.area_min,
+        area_max=profile.area_max,
+        layouts=profile.layouts,
+        property_type=profile.property_type,
+        purchase_purpose=profile.purchase_purpose,
+        walkability_preferences_json=profile.walkability_preferences_json,
+        filter_json=profile.filter_json,
+        polygon_geojson=profile.polygon_geojson,
+        commute_points_json=profile.commute_points_json,
+    )
+
+
+def _compute_unit_match_score(
+    unit: Unit,
+    project: Project,
+    profile: ClientProfile | None,
+    db: Session | None = None,
+) -> tuple[float, dict[str, float]]:
+    """MVP matching: combine budget, walkability, location, layout, area, commute."""
+    price = unit.price_czk
+    area = float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None
+    budget_fit = 0.0
+    if profile and price is not None:
+        if profile.budget_min is None and profile.budget_max is None:
+            budget_fit = 100.0
+        else:
+            lo = profile.budget_min or 0
+            hi = profile.budget_max or price
+            if lo <= price <= hi:
+                budget_fit = 100.0
+            else:
+                # linear decay up to 50 % outside range
+                center = (lo + hi) / 2 if hi > lo else hi or lo or 1
+                diff_ratio = abs(price - center) / max(center, 1)
+                budget_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+
+    # Walkability: use personalized scoring if preferences present
+    walk_fit = 0.0
+    try:
+        raw = project_to_raw_metrics(project)
+        prefs = (profile.walkability_preferences_json if profile else None) or {}
+        result = compute_personalized_walkability_score(raw, prefs)
+        if result.get("score") is not None:
+            walk_fit = float(result["score"])
+    except Exception:
+        walk_fit = 0.0
+
+    # Location fit: inside polygon bonus
+    loc_fit = 0.0
+    if project.gps_latitude is not None and project.gps_longitude is not None and profile:
+        poly = _parse_polygon_geojson(profile.polygon_geojson)
+        if poly:
+            inside = _point_in_polygon(
+                float(project.gps_latitude),
+                float(project.gps_longitude),
+                poly,
+            )
+            loc_fit = 100.0 if inside else 60.0
+        else:
+            loc_fit = 70.0
+
+    # Layout fit – compare normalized layout bucket (e.g. "1kk", "2kk") with profile preferences.
+    layout_fit = 0.0
+    if profile and profile.layouts and "values" in profile.layouts and unit.layout:
+        pref_values = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
+        unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
+        layout_fit = 100.0 if unit_bucket in pref_values else 50.0
+
+    # Area fit
+    area_fit = 0.0
+    if profile and area is not None:
+        lo = profile.area_min or 0.0
+        hi = profile.area_max or area
+        if lo <= area <= hi:
+            area_fit = 100.0
+        else:
+            center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
+            diff_ratio = abs(area - center) / max(center, 1.0)
+            area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+
+    # Commute fit – based on client commute_points_json.
+    commute_fit = 0.0
+    commute_details: list[dict[str, Any]] = []
+    if (
+        profile
+        and profile.commute_points_json
+        and project.gps_latitude is not None
+        and project.gps_longitude is not None
+        and db is not None
+    ):
+        points = profile.commute_points_json or []
+        if isinstance(points, dict):
+            # allow wrapper like {"points": [...]}
+            points = points.get("points") or []
+        hard_failed = False
+        per_point_scores: list[float] = []
+        for cp in points:
+            try:
+                label = str(cp.get("label") or "")
+                dest_lat = float(cp.get("lat"))
+                dest_lng = float(cp.get("lng"))
+                mode = str(cp.get("mode") or "drive")
+                max_minutes = float(cp.get("max_minutes"))
+            except Exception:
+                continue
+            priority = str(cp.get("priority") or "ignore")
+            tol = cp.get("tolerance_minutes")
+            tolerance_minutes = float(tol) if tol is not None else 0.0
+            travel_min = get_cached_travel_time_minutes(db, project, cp)
+            if travel_min is None:
+                continue
+            limit = max_minutes + tolerance_minutes
+            if priority == "must_have" and travel_min > limit:
+                # Hard fail – jednotka nevyhovuje klíčovému dojezdu.
+                commute_details.append(
+                    {
+                        "label": label,
+                        "mode": mode,
+                        "minutes": travel_min,
+                        "max_minutes": max_minutes,
+                        "priority": priority,
+                        "passed": False,
+                    }
+                )
+                hard_failed = True
+                break
+            if priority in ("must_have", "prefer"):
+                if travel_min <= max_minutes:
+                    score = 100.0
+                elif travel_min > limit and limit > 0:
+                    score = 0.0
+                elif limit > max_minutes:
+                    ratio = (travel_min - max_minutes) / max(1.0, limit - max_minutes)
+                    score = max(0.0, 100.0 * (1.0 - ratio))
+                else:
+                    score = 0.0
+                per_point_scores.append(score)
+                commute_details.append(
+                    {
+                        "label": label,
+                        "mode": mode,
+                        "minutes": travel_min,
+                        "max_minutes": max_minutes,
+                        "priority": priority,
+                        "passed": travel_min <= limit,
+                    }
+                )
+        if hard_failed:
+            return 0.0, {
+                "budget_fit": budget_fit,
+                "walkability_fit": walk_fit,
+                "location_fit": loc_fit,
+                "layout_fit": layout_fit,
+                "area_fit": area_fit,
+                "commute_fit": 0.0,
+                "commute_details": commute_details,
+            }
+        if per_point_scores:
+            # Use the worst (min) point score so jeden špatný dojezd nezanikne v průměru.
+            commute_fit = min(per_point_scores)
+
+    # Aggregate score (weights) – přidán commute_fit
+    total = (
+        0.30 * budget_fit
+        + 0.20 * walk_fit
+        + 0.20 * loc_fit
+        + 0.10 * layout_fit
+        + 0.10 * area_fit
+        + 0.10 * commute_fit
+    )
+    return total, {
+        "budget_fit": budget_fit,
+        "walkability_fit": walk_fit,
+        "location_fit": loc_fit,
+        "layout_fit": layout_fit,
+        "area_fit": area_fit,
+        "commute_fit": commute_fit,
+        "commute_details": commute_details,
+    }
+
+
+@app.post("/clients/{client_id}/recommendations/recompute")
+def recompute_client_recommendations(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+
+    # Base query: only active units (available + reserved) with price and floor area
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+    )
+    if profile:
+        if profile.budget_min is not None:
+            q = q.where(Unit.price_czk >= profile.budget_min)
+        if profile.budget_max is not None:
+            q = q.where(Unit.price_czk <= profile.budget_max)
+        if profile.area_min is not None:
+            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+        if profile.area_max is not None:
+            q = q.where(Unit.floor_area_m2 <= profile.area_max)
+
+    rows = db.execute(q.limit(500)).all()
+
+    # If client has explicit layout preferences, compute preferred buckets once.
+    pref_layout_buckets: list[str] = []
+    if profile and profile.layouts and "values" in profile.layouts:
+        pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
+
+    scored: list[tuple[float, Unit, Project, dict[str, float]]] = []
+    for unit, project in rows:
+        # Optional hard filter by layout: keep only units whose bucket matches profile preferences.
+        if pref_layout_buckets:
+            if unit.layout is None:
+                continue
+            unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
+            if unit_bucket not in pref_layout_buckets:
+                continue
+        score, parts = _compute_unit_match_score(unit, project, profile, db)
+        if score <= 0:
+            continue
+        scored.append((score, unit, project, parts))
+
+        # For strong matches (score >= 80), record client-unit match (if not already present).
+        if score >= 80.0:
+            existing = db.execute(
+                select(ClientUnitMatch).where(
+                    ClientUnitMatch.client_id == client.id,
+                    ClientUnitMatch.unit_id == unit.id,
+                )
+            ).scalars().first()
+            if not existing:
+                match = ClientUnitMatch(
+                    client_id=client.id,
+                    unit_id=unit.id,
+                    score=score,
+                )
+                db.add(match)
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    top = scored[:100]
+
+    # Delete existing non-pinned suggestions
+    db.execute(
+        sa.delete(ClientRecommendation).where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.pinned_by_broker.is_(False),
+        )
+    )
+
+    for score, unit, project, parts in top:
+        rec = ClientRecommendation(
+            client_id=client.id,
+            unit_id=unit.id,
+            project_id=project.id,
+            score=score,
+            reason_json=parts,
+        )
+        db.add(rec)
+    db.commit()
+
+    return {
+        "client_id": client.id,
+        "total_candidates": len(rows),
+        "created": len(top),
+    }
+
+
+@app.get(
+    "/clients/{client_id}/market-fit-analysis",
+    response_model=MarketFitAnalysisResponse,
+)
+def market_fit_analysis(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> MarketFitAnalysisResponse:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+
+    # Base set: only active units (available + reserved) for this broker's market
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+    )
+    rows = db.execute(q.limit(1000)).all()
+    available_units_count = len(rows)
+
+    if not profile or available_units_count == 0:
+        return MarketFitAnalysisResponse(
+            client_id=client.id,
+            matching_units_count=0,
+            available_units_count=available_units_count,
+            top_blockers=[],
+            relaxation_suggestions=[],
+        )
+
+    # Precompute layout buckets
+    pref_layout_buckets: list[str] = []
+    if profile.layouts and "values" in profile.layouts:
+        pref_layout_buckets = [
+            str(v).strip().lower() for v in (profile.layouts.get("values") or [])
+        ]
+
+    def eval_constraints(
+        prof: ClientProfile,
+    ) -> tuple[int, dict[str, int]]:
+        """Return (matching_count, blocked_by_key)."""
+        blocked_by = {
+            "budget": 0,
+            "area": 0,
+            "layout": 0,
+            "location": 0,
+            "commute": 0,
+            "standards": 0,
+        }
+        matching = 0
+
+        # Pre-parse polygon once
+        poly = _parse_polygon_geojson(prof.polygon_geojson)
+
+        for unit, project in rows:
+            price = unit.price_czk
+            area = (
+                float(unit.floor_area_m2)
+                if unit.floor_area_m2 is not None
+                else None
+            )
+
+            passes_budget = True
+            if price is not None:
+                if prof.budget_min is not None and price < prof.budget_min:
+                    passes_budget = False
+                if prof.budget_max is not None and price > prof.budget_max:
+                    passes_budget = False
+
+            passes_area = True
+            if area is not None:
+                if prof.area_min is not None and area < prof.area_min:
+                    passes_area = False
+                if prof.area_max is not None and area > prof.area_max:
+                    passes_area = False
+
+            passes_layout = True
+            if pref_layout_buckets:
+                if unit.layout is None:
+                    passes_layout = False
+                else:
+                    unit_bucket = _layout_group(str(unit.layout)) or str(
+                        unit.layout
+                    ).strip().lower()
+                    passes_layout = unit_bucket in pref_layout_buckets
+
+            passes_location = True
+            if poly and project.gps_latitude is not None and project.gps_longitude is not None:
+                inside = _point_in_polygon(
+                    float(project.gps_latitude),
+                    float(project.gps_longitude),
+                    poly,
+                )
+                passes_location = inside
+
+            # Commute: reuse hard-filter semantics from scoring.
+            passes_commute = True
+            if (
+                prof.commute_points_json
+                and project.gps_latitude is not None
+                and project.gps_longitude is not None
+            ):
+                points = prof.commute_points_json or []
+                if isinstance(points, dict):
+                    points = points.get("points") or []
+                for cp in points:
+                    try:
+                        max_minutes = float(cp.get("max_minutes"))
+                    except Exception:
+                        continue
+                    priority = str(cp.get("priority") or "ignore")
+                    tol = cp.get("tolerance_minutes")
+                    tolerance_minutes = float(tol) if tol is not None else 0.0
+                    travel_min = get_cached_travel_time_minutes(db, project, cp)
+                    if travel_min is None:
+                        continue
+                    limit = max_minutes + tolerance_minutes
+                    if priority == "must_have" and travel_min > limit:
+                        passes_commute = False
+                        break
+
+            passes_standards = True  # MVP – zatím bez tvrdého filtru
+
+            passes_all = (
+                passes_budget
+                and passes_area
+                and passes_layout
+                and passes_location
+                and passes_commute
+                and passes_standards
+            )
+
+            if passes_all:
+                matching += 1
+                continue
+
+            # Attribute units to the first blocking constraint where others pass.
+            if not passes_budget and all(
+                [passes_area, passes_layout, passes_location, passes_commute, passes_standards]
+            ):
+                blocked_by["budget"] += 1
+            elif not passes_area and all(
+                [passes_budget, passes_layout, passes_location, passes_commute, passes_standards]
+            ):
+                blocked_by["area"] += 1
+            elif not passes_layout and all(
+                [passes_budget, passes_area, passes_location, passes_commute, passes_standards]
+            ):
+                blocked_by["layout"] += 1
+            elif not passes_location and all(
+                [passes_budget, passes_area, passes_layout, passes_commute, passes_standards]
+            ):
+                blocked_by["location"] += 1
+            elif not passes_commute and all(
+                [passes_budget, passes_area, passes_layout, passes_location, passes_standards]
+            ):
+                blocked_by["commute"] += 1
+            elif not passes_standards and all(
+                [passes_budget, passes_area, passes_layout, passes_location, passes_commute]
+            ):
+                blocked_by["standards"] += 1
+
+        return matching, blocked_by
+
+    matching_units_count, blocked_by = eval_constraints(profile)
+
+    # Build blockers list with percentages
+    labels = {
+        "budget": "Budget",
+        "area": "Area",
+        "layout": "Layout",
+        "location": "Location (polygon)",
+        "commute": "Commute",
+        "standards": "Standards",
+    }
+    top_blockers: list[MarketFitBlocker] = []
+    for key, count in blocked_by.items():
+        if count <= 0:
+            continue
+        top_blockers.append(
+            MarketFitBlocker(
+                key=key,
+                label=labels.get(key, key),
+                blocked_count=count,
+                blocked_percentage=float(count) / float(max(1, available_units_count)),
+            )
+        )
+    top_blockers.sort(key=lambda b: b.blocked_percentage, reverse=True)
+
+    # Relaxation suggestions (simple scenarios)
+    suggestions: list[RelaxationSuggestion] = []
+
+    def add_suggestion(label: str, prof_mutator: callable):
+        new_profile = ClientProfile(
+            client_id=profile.client_id,
+            budget_min=profile.budget_min,
+            budget_max=profile.budget_max,
+            area_min=profile.area_min,
+            area_max=profile.area_max,
+            layouts=profile.layouts.copy() if profile.layouts else None,
+            property_type=profile.property_type,
+            purchase_purpose=profile.purchase_purpose,
+            walkability_preferences_json=profile.walkability_preferences_json,
+            filter_json=profile.filter_json,
+            polygon_geojson=profile.polygon_geojson,
+            commute_points_json=profile.commute_points_json,
+        )
+        prof_mutator(new_profile)
+        new_matching, _ = eval_constraints(new_profile)
+        suggestions.append(
+            RelaxationSuggestion(
+                label=label,
+                matching_units_count=new_matching,
+                delta_vs_current=new_matching - matching_units_count,
+            )
+        )
+
+    # Budget relaxations
+    if profile.budget_max:
+        add_suggestion(
+            "Increase budget by 5%",
+            lambda p: setattr(p, "budget_max", int(profile.budget_max * 1.05)),
+        )
+        add_suggestion(
+            "Increase budget by 10%",
+            lambda p: setattr(p, "budget_max", int(profile.budget_max * 1.10)),
+        )
+
+    # Area relaxation
+    if profile.area_min:
+        add_suggestion(
+            "Decrease minimum area by 5%",
+            lambda p: setattr(p, "area_min", float(profile.area_min) * 0.95),
+        )
+
+    # Layout relaxation – allow 2kk if not already selected
+    if profile.layouts and "values" in profile.layouts:
+        current = [str(v) for v in (profile.layouts.get("values") or [])]
+        if "2kk" not in current:
+            def _add_2kk(p: ClientProfile) -> None:
+                vals = list((p.layouts or {}).get("values") or [])
+                vals.append("2kk")
+                p.layouts = {"values": vals}
+
+            add_suggestion("Allow also 2kk", _add_2kk)
+
+    # Commute relaxation – +10 minutes on all points
+    if profile.commute_points_json:
+        def _relax_commute(p: ClientProfile) -> None:
+            points = p.commute_points_json or {}
+            if isinstance(points, dict):
+                arr = points.get("points") or []
+                for cp in arr:
+                    try:
+                        cp["max_minutes"] = float(cp.get("max_minutes") or 0.0) + 10.0
+                    except Exception:
+                        continue
+                p.commute_points_json = {"points": arr}
+
+        add_suggestion("Relax commute by +10 minutes", _relax_commute)
+
+    # Sort suggestions by delta, descending
+    suggestions.sort(key=lambda s: s.delta_vs_current, reverse=True)
+
+    return MarketFitAnalysisResponse(
+        client_id=client.id,
+        matching_units_count=matching_units_count,
+        available_units_count=available_units_count,
+        top_blockers=top_blockers,
+        relaxation_suggestions=suggestions,
+    )
+
+
+@app.get(
+    "/clients/{client_id}/area-market-analysis",
+    response_model=AreaMarketAnalysisResponse,
+)
+def area_market_analysis(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> AreaMarketAnalysisResponse:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+
+    if not profile:
+        return AreaMarketAnalysisResponse(
+            client_id=client.id,
+            projects_count=0,
+            active_units_count=0,
+            matching_units_count=0,
+            avg_price_czk=None,
+            avg_price_per_m2_czk=None,
+            min_price_czk=None,
+            max_price_czk=None,
+            avg_floor_area_m2=None,
+            layout_distribution={},
+            budget_fit_units_count=0,
+            area_fit_units_count=0,
+        )
+
+    polygons = _parse_polygon_or_multipolygon_geojson(profile.polygon_geojson)
+
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+    )
+
+    rows_raw: list[tuple[Unit, Project]] = db.execute(q.limit(5000)).all()
+
+    rows: list[tuple[Unit, Project]] = []
+    if polygons:
+        for unit, project in rows_raw:
+            if project.gps_latitude is None or project.gps_longitude is None:
+                continue
+            if _point_in_any_polygon(
+                float(project.gps_latitude),
+                float(project.gps_longitude),
+                polygons,
+            ):
+                rows.append((unit, project))
+    else:
+        rows = rows_raw
+
+    if not rows:
+        return AreaMarketAnalysisResponse(
+            client_id=client.id,
+            projects_count=0,
+            active_units_count=0,
+            matching_units_count=0,
+            avg_price_czk=None,
+            avg_price_per_m2_czk=None,
+            min_price_czk=None,
+            max_price_czk=None,
+            avg_floor_area_m2=None,
+            layout_distribution={},
+            budget_fit_units_count=0,
+            area_fit_units_count=0,
+        )
+
+    projects: set[int] = set()
+    prices: list[int] = []
+    prices_per_m2: list[float] = []
+    areas: list[float] = []
+    layout_distribution: dict[str, int] = {}
+    budget_fit_units_count = 0
+    area_fit_units_count = 0
+    matching_units_count = 0
+
+    pref_layout_buckets: list[str] = []
+    if profile.layouts and "values" in profile.layouts:
+        pref_layout_buckets = [
+            str(v).strip().lower() for v in (profile.layouts.get("values") or [])
+        ]
+
+    for unit, project in rows:
+        projects.add(project.id)
+
+        if unit.price_czk is not None:
+            prices.append(int(unit.price_czk))
+        if unit.price_per_m2_czk is not None:
+            prices_per_m2.append(float(unit.price_per_m2_czk))
+        if unit.floor_area_m2 is not None:
+            areas.append(float(unit.floor_area_m2))
+
+        layout_label = None
+        if unit.layout is not None:
+            layout_label = _layout_group(str(unit.layout)) or str(unit.layout).strip()
+            layout_distribution[layout_label] = layout_distribution.get(layout_label, 0) + 1
+
+        price = float(unit.price_czk) if unit.price_czk is not None else None
+        area_val = float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None
+
+        budget_ok = True
+        if profile.budget_min is not None and (price is None or price < profile.budget_min):
+            budget_ok = False
+        if profile.budget_max is not None and (price is None or price > profile.budget_max):
+            budget_ok = False
+
+        area_ok = True
+        if (profile.area_min is not None or profile.area_max is not None) and area_val is None:
+            area_ok = False
+        else:
+            if profile.area_min is not None and area_val is not None and area_val < profile.area_min:
+                area_ok = False
+            if profile.area_max is not None and area_val is not None and area_val > profile.area_max:
+                area_ok = False
+
+        layout_ok = True
+        if pref_layout_buckets:
+            if unit.layout is None:
+                layout_ok = False
+            else:
+                bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
+                if bucket not in pref_layout_buckets:
+                    layout_ok = False
+
+        if budget_ok:
+            budget_fit_units_count += 1
+        if area_ok:
+            area_fit_units_count += 1
+        if budget_ok and area_ok and layout_ok:
+            matching_units_count += 1
+
+    active_units_count = len(rows)
+
+    avg_price_czk = float(sum(prices) / len(prices)) if prices else None
+    avg_price_per_m2_czk = (
+        float(sum(prices_per_m2) / len(prices_per_m2)) if prices_per_m2 else None
+    )
+    min_price_czk = int(min(prices)) if prices else None
+    max_price_czk = int(max(prices)) if prices else None
+    avg_floor_area_m2 = float(sum(areas) / len(areas)) if areas else None
+
+    return AreaMarketAnalysisResponse(
+        client_id=client.id,
+        projects_count=len(projects),
+        active_units_count=active_units_count,
+        matching_units_count=matching_units_count,
+        avg_price_czk=avg_price_czk,
+        avg_price_per_m2_czk=avg_price_per_m2_czk,
+        min_price_czk=min_price_czk,
+        max_price_czk=max_price_czk,
+        avg_floor_area_m2=avg_floor_area_m2,
+        layout_distribution=layout_distribution,
+        budget_fit_units_count=budget_fit_units_count,
+        area_fit_units_count=area_fit_units_count,
+    )
+
+
+@app.get("/clients/{client_id}/recommendations", response_model=list[ClientRecommendationItem])
+def list_client_recommendations(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[ClientRecommendationItem]:
+    client = _get_client_for_broker(db, client_id, broker)
+    recs = (
+        db.execute(
+            select(ClientRecommendation, Unit, Project)
+            .join(Unit, ClientRecommendation.unit_id == Unit.id)
+            .join(Project, ClientRecommendation.project_id == Project.id)
+            .where(
+                ClientRecommendation.client_id == client.id,
+                ClientRecommendation.hidden_by_broker.is_(False),
+            )
+            .order_by(ClientRecommendation.score.desc())
+        )
+        .all()
+    )
+    items: list[ClientRecommendationItem] = []
+    for rec, unit, project in recs:
+        reason = rec.reason_json or {}
+        raw_layout = str(unit.layout) if unit.layout is not None else None
+        layout_label = _layout_group(raw_layout) or (raw_layout if raw_layout is not None else None)
+        items.append(
+            ClientRecommendationItem(
+                unit_external_id=unit.external_id,
+                project_id=project.id,
+                project_name=project.name,
+                layout=unit.layout,
+                floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+                price_czk=unit.price_czk,
+                price_per_m2_czk=unit.price_per_m2_czk,
+                floor=unit.floor,
+                layout_label=layout_label,
+                score=rec.score,
+                budget_fit=float(reason.get("budget_fit", 0.0)),
+                walkability_fit=float(reason.get("walkability_fit", 0.0)),
+                location_fit=float(reason.get("location_fit", 0.0)),
+                layout_fit=float(reason.get("layout_fit", 0.0)),
+                area_fit=float(reason.get("area_fit", 0.0)),
+                reason=reason,
+            )
+        )
+    return items
+
+
+@app.get("/brokers/match-feed", response_model=dict[int, list[BrokerMatchItem]])
+def broker_match_feed(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[int, list[BrokerMatchItem]]:
+    """
+    Return latest unseen matches grouped by client_id for the current broker.
+    Response shape: { client_id: [BrokerMatchItem, ...], ... } for easier consumption.
+    """
+    subq = (
+        select(UnitEvent)
+        .where(UnitEvent.unit_id == ClientUnitMatch.unit_id)
+        .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+        .limit(1)
+        .subquery()
+    )
+    rows = (
+        db.execute(
+            select(ClientUnitMatch, Client, Unit, Project, subq.c.old_value, subq.c.new_value)
+            .join(Client, ClientUnitMatch.client_id == Client.id)
+            .join(Unit, ClientUnitMatch.unit_id == Unit.id)
+            .join(Project, Unit.project_id == Project.id)
+            .outerjoin(subq, subq.c.unit_id == Unit.id)
+            .where(
+                Client.broker_id == broker.id,
+                ClientUnitMatch.seen.is_(False),
+            )
+            .order_by(ClientUnitMatch.created_at.desc())
+        )
+        .all()
+    )
+    grouped: dict[int, list[BrokerMatchItem]] = {}
+    for match, client, unit, project, old_value, new_value in rows:
+        raw_layout = str(unit.layout) if unit.layout is not None else None
+        layout_label = _layout_group(raw_layout) or (raw_layout if raw_layout is not None else None)
+        price_old_int: int | None = None
+        price_new_int: int | None = None
+        try:
+            if old_value is not None:
+                price_old_int = int(old_value)
+        except (TypeError, ValueError):
+            price_old_int = None
+        try:
+            if new_value is not None:
+                price_new_int = int(new_value)
+        except (TypeError, ValueError):
+            price_new_int = None
+        item = BrokerMatchItem(
+            id=match.id,
+            client_id=client.id,
+            client_name=client.name,
+            unit_external_id=unit.external_id,
+            project_name=project.name,
+            layout_label=layout_label,
+            price_czk=unit.price_czk,
+            score=match.score,
+            event_type=match.event_type,
+            price_old=price_old_int,
+            price_new=price_new_int,
+        )
+        grouped.setdefault(client.id, []).append(item)
+    return grouped
+
+
+@app.post("/brokers/match-feed/{match_id}/seen", status_code=204)
+def mark_match_seen(
+    match_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    match = db.get(ClientUnitMatch, match_id)
+    if not match:
+        raise HTTPException(status_code=404, detail="Match not found")
+    # Ensure the match belongs to a client of this broker
+    client = db.get(Client, match.client_id)
+    if not client or client.broker_id != broker.id:
+        raise HTTPException(status_code=404, detail="Match not found")
+    match.seen = True
+    db.add(match)
+    db.commit()
+
+
+@app.get("/analytics/clients-without-units", response_model=list[ClientWithoutInventoryItem])
+def analytics_clients_without_units(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[ClientWithoutInventoryItem]:
+    """
+    Find clients whose profiles have very few matching units in current inventory.
+    Uses the same base filters as client recommendations: budget, area, layout, polygon.
+    """
+    # Load clients + profiles for this broker
+    clients = (
+        db.execute(
+            select(Client, ClientProfile)
+            .join(ClientProfile, ClientProfile.client_id == Client.id)
+            .where(Client.broker_id == broker.id)
+        )
+        .all()
+    )
+    if not clients:
+        return []
+
+    results: list[ClientWithoutInventoryItem] = []
+
+    for client, profile in clients:
+        # Base query: only active units (available + reserved) with project join for polygon/location
+        q = (
+            select(Unit, Project)
+            .join(Project, Unit.project_id == Project.id)
+            .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+        )
+
+        # Budget + area filters
+        if profile.budget_min is not None:
+            q = q.where(Unit.price_czk >= profile.budget_min)
+        if profile.budget_max is not None:
+            q = q.where(Unit.price_czk <= profile.budget_max)
+        if profile.area_min is not None:
+            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+        if profile.area_max is not None:
+            q = q.where(Unit.floor_area_m2 <= profile.area_max)
+
+        # Polygon / location filter – reuse simple inside-polygon logic from matching
+        poly = _parse_polygon_geojson(profile.polygon_geojson)
+        rows: list[tuple[Unit, Project]] = []
+        if poly:
+            # We need project GPS to apply polygon; fetch candidates in a reasonable cap.
+            base_rows = db.execute(q.limit(1000)).all()
+            for unit, project in base_rows:
+                if project.gps_latitude is None or project.gps_longitude is None:
+                    continue
+                inside = _point_in_polygon(
+                    float(project.gps_latitude),
+                    float(project.gps_longitude),
+                    poly,
+                )
+                if inside:
+                    rows.append((unit, project))
+        else:
+            rows = db.execute(q.limit(1000)).all()
+
+        # Layout hard filter identical to recommendations
+        pref_layout_buckets: list[str] = []
+        if profile.layouts and "values" in profile.layouts:
+            pref_layout_buckets = [
+                str(v).strip().lower() for v in (profile.layouts.get("values") or [])
+            ]
+
+        matching_units = 0
+        for unit, _project in rows:
+            if pref_layout_buckets:
+                if unit.layout is None:
+                    continue
+                unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
+                if unit_bucket not in pref_layout_buckets:
+                    continue
+            matching_units += 1
+
+        available_units = matching_units  # currently we only consider available units
+
+        if matching_units <= 2:
+            layouts_values: list[str] = []
+            if profile.layouts and "values" in profile.layouts:
+                layouts_values = [str(v) for v in (profile.layouts.get("values") or [])]
+            results.append(
+                ClientWithoutInventoryItem(
+                    client_id=client.id,
+                    client_name=client.name,
+                    budget_max=profile.budget_max,
+                    layouts=layouts_values,
+                    area_min=profile.area_min,
+                    area_max=profile.area_max,
+                    matching_units=matching_units,
+                    available_units=available_units,
+                )
+            )
+
+    # Order by ascending number of matches (fewest inventory first)
+    results.sort(key=lambda r: (r.matching_units, r.client_name.lower()))
+    return results
 
 
 def _effective_unit_response(db: Session, unit: Unit) -> UnitResponse:
