@@ -14,9 +14,23 @@ import {
   formatPercent,
   formatValue as formatValueLib,
 } from "@/lib/format";
+import {
+  type WalkabilityPreferences,
+  loadPreferences as loadWalkPrefs,
+  savePreferences as saveWalkPrefs,
+  resetPreferences as resetWalkPrefs,
+  isPersonalizedActive,
+  getNonDefaultChips,
+} from "@/lib/walkabilityPreferences";
+import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 
 const ProjectDetailMap = dynamic(
   () => import("@/app/units/[external_id]/UnitDetailMap"),
+  { ssr: false }
+);
+
+const WalkabilityPoiModalMap = dynamic(
+  () => import("@/app/projects/[id]/WalkabilityPoiModalMap"),
   { ssr: false }
 );
 
@@ -153,8 +167,38 @@ export default function ProjectDetailPage() {
   const [saving, setSaving] = useState(false);
   const [recomputingLocation, setRecomputingLocation] = useState(false);
   const [adminJobState, setAdminJobState] = useState<{ loading: boolean; message: string | null }>({ loading: false, message: null });
+  const [poiModal, setPoiModal] = useState<{
+    open: boolean;
+    category: string;
+    categoryLabel: string;
+    items: Array<{ name: string | null; category: string; distance_m: number | null; lat: number | null; lon: number | null }>;
+    loading: boolean;
+    view: "list" | "map";
+  }>({ open: false, category: "", categoryLabel: "", items: [], loading: false, view: "list" });
+
+  const [overviewPoi, setOverviewPoi] = useState<{
+    project: { lat: number; lon: number };
+    categories: Record<
+      string,
+      Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>
+    >;
+  } | null>(null);
   const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");
   const [unitsSortDir, setUnitsSortDir] = useState<"asc" | "desc">("asc");
+
+  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
+  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => loadWalkPrefs());
+  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(() =>
+    isPersonalizedActive(loadWalkPrefs())
+  );
+  const [personalizedWalk, setPersonalizedWalk] = useState<{
+    score: number | null;
+    label: string | null;
+    daily_needs: number | null;
+    transport: number | null;
+    leisure: number | null;
+    family: number | null;
+  } | null>(null);
 
   const filterSpecsByKey = useMemo(
     () => (filtersState.data?.groups ? flattenFilterSpecsByKey(filtersState.data.groups) : new Map()),
@@ -175,6 +219,40 @@ export default function ProjectDetailPage() {
         setProjectState({ data: null, loading: false, error: msg });
       });
   }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId || !personalizedModeEnabled || !projectState.data) {
+      setPersonalizedWalk(null);
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `${API_BASE}/projects/${encodeURIComponent(projectId)}/walkability/personalized-score`,
+          {
+            method: "POST",
+            signal: controller.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(walkPrefs),
+          }
+        );
+        if (!res.ok) return;
+        const json = await res.json();
+        setPersonalizedWalk({
+          score: json.score ?? null,
+          label: json.label ?? null,
+          daily_needs: json.daily_needs_score ?? null,
+          transport: json.transport_score ?? null,
+          leisure: json.leisure_score ?? null,
+          family: json.family_score ?? null,
+        });
+      } catch {
+        // silent fallback
+      }
+    })();
+    return () => controller.abort();
+  }, [projectId, personalizedModeEnabled, walkPrefs, projectState.data]);
 
   const handleRecomputeLocationMetrics = useCallback(async () => {
     if (!projectId) return;
@@ -231,29 +309,21 @@ export default function ProjectDetailPage() {
       clearTimeout(timeoutId);
       const body = await res.text();
       if (!res.ok) {
-        let detail = body;
-        try {
-          const j = JSON.parse(body) as { detail?: string };
-          if (j.detail) detail = j.detail;
-        } catch {
-          // keep body
-        }
-        throw new Error(detail);
+        setAdminJobState({ loading: false, message: "Nepodařilo se obnovit walkability data" });
+        return;
       }
       const data = JSON.parse(body) as Record<string, unknown>;
-      const recompute = data.recompute as { processed?: number; total?: number; elapsed_seconds?: number } | null;
-      setAdminJobState({
-        loading: false,
-        message: recompute
-          ? `Walkability POI obnoveno. Přepočítáno: ${recompute.processed}/${recompute.total} projektů (${recompute.elapsed_seconds}s).`
-          : "Hotovo.",
-      });
+      const recompute = data.recompute as { processed?: number; total?: number } | null;
+      setAdminJobState({ loading: false, message: null });
+      alert(
+        `Walkability data obnovena.\nProjekty přepočítány: ${recompute?.processed ?? 0}/${recompute?.total ?? 0}`
+      );
       if (projectId) {
         const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
         setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
       }
     } catch (e) {
-      setAdminJobState({ loading: false, message: e instanceof Error ? e.message : "Chyba" });
+      setAdminJobState({ loading: false, message: "Nepodařilo se obnovit walkability data" });
       if (projectId) {
         const projectJson = await fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}`).then((r) => r.json());
         setProjectState({ data: projectJson as ProjectDetail, loading: false, error: null });
@@ -306,6 +376,70 @@ export default function ProjectDetailPage() {
           : msg,
       });
     }
+  }, [projectId]);
+
+  const openPoiModal = useCallback(
+    async (category: string, categoryLabel: string) => {
+      setPoiModal({ open: true, category, categoryLabel, items: [], loading: true, view: "list" });
+      if (!projectId) {
+        setPoiModal((prev) => ({ ...prev, loading: false }));
+        return;
+      }
+      try {
+        const res = await fetch(
+          `${API_BASE}/projects/${encodeURIComponent(projectId)}/walkability-poi?category=${encodeURIComponent(category)}&limit=50`
+        );
+        const data = (await res.json()) as { items?: Array<{ name: string | null; category: string; distance_m: number | null; lat: number | null; lon: number | null }> };
+        setPoiModal((prev) => ({ ...prev, items: data.items ?? [], loading: false }));
+      } catch {
+        setPoiModal((prev) => ({ ...prev, items: [], loading: false }));
+      }
+    },
+    [projectId]
+  );
+
+  const closePoiModal = useCallback(() => {
+    setPoiModal((prev) => ({ ...prev, open: false }));
+  }, []);
+
+  useEffect(() => {
+    if (!projectId) {
+      setOverviewPoi(null);
+      return;
+    }
+    let cancelled = false;
+    const params = new URLSearchParams({
+      categories:
+        "supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations",
+      per_category: "2",
+    });
+    fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/walkability-poi-overview?${params.toString()}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then(
+        (data: {
+          project?: { lat: number; lon: number } | null;
+          categories?: Record<
+            string,
+            Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>
+          >;
+        }) => {
+          if (cancelled) return;
+          if (data.project && data.categories) {
+            setOverviewPoi({
+              project: data.project,
+              categories: data.categories,
+            });
+          } else {
+            setOverviewPoi(null);
+          }
+        }
+      )
+      .catch(() => {
+        if (!cancelled) setOverviewPoi(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -851,6 +985,7 @@ export default function ProjectDetailPage() {
                 lat={projectGpsLat}
                 lng={projectGpsLng}
                 label={name || undefined}
+                poiOverview={overviewPoi ?? undefined}
               />
             </section>
           )}
@@ -1650,49 +1785,112 @@ export default function ProjectDetailPage() {
 
         {/* Walkability */}
         <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
-            Walkability
-          </h2>
+          <div className="mb-4 flex items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+              Walkability
+            </h2>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="glass-pill border border-transparent px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
+                onClick={() => setWalkPrefsOpen(true)}
+              >
+                Preference lokality
+              </button>
+              {personalizedModeEnabled && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                    Dle preferencí klienta
+                  </span>
+                  {getNonDefaultChips(walkPrefs)
+                    .slice(0, 3)
+                    .map((chip) => (
+                      <span
+                        key={chip}
+                        className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                      >
+                        {chip}
+                      </span>
+                    ))}
+                  <button
+                    type="button"
+                    className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline decoration-dotted"
+                    onClick={() => setPersonalizedModeEnabled(false)}
+                  >
+                    Vypnout
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
             <div>
               <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["walkability_score"] != null ? String(Math.round(Number(project["walkability_score"]))) : "—"}
+                {personalizedWalk?.score != null
+                  ? `${Math.round(personalizedWalk.score)} (dle preferencí)`
+                  : project["walkability_score"] != null
+                    ? String(Math.round(Number(project["walkability_score"])))
+                    : "—"}
               </p>
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Walkability hodnocení</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {(project["walkability_label"] as string | null | undefined) ?? "—"}
+                {personalizedWalk?.label
+                  ? `${personalizedWalk.label} (dle preferencí)`
+                  : ((project["walkability_label"] as string | null | undefined) ?? "—")}
               </p>
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Denní potřeby</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["walkability_daily_needs_score"] != null ? String(project["walkability_daily_needs_score"]) : "—"}
+                {personalizedWalk?.daily_needs != null
+                  ? String(Math.round(personalizedWalk.daily_needs))
+                  : project["walkability_daily_needs_score"] != null
+                    ? String(project["walkability_daily_needs_score"])
+                    : "—"}
               </p>
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Doprava</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["walkability_transport_score"] != null ? String(project["walkability_transport_score"]) : "—"}
+                {personalizedWalk?.transport != null
+                  ? String(Math.round(personalizedWalk.transport))
+                  : project["walkability_transport_score"] != null
+                    ? String(project["walkability_transport_score"])
+                    : "—"}
               </p>
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Volný čas</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["walkability_leisure_score"] != null ? String(project["walkability_leisure_score"]) : "—"}
+                {personalizedWalk?.leisure != null
+                  ? String(Math.round(personalizedWalk.leisure))
+                  : project["walkability_leisure_score"] != null
+                    ? String(project["walkability_leisure_score"])
+                    : "—"}
               </p>
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Rodina</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {project["walkability_family_score"] != null ? String(project["walkability_family_score"]) : "—"}
+                {personalizedWalk?.family != null
+                  ? String(Math.round(personalizedWalk.family))
+                  : project["walkability_family_score"] != null
+                    ? String(project["walkability_family_score"])
+                    : "—"}
               </p>
             </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("supermarkets", "Supermarkety")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("supermarkets", "Supermarkety")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Supermarket</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_supermarket_m"] != null
@@ -1700,12 +1898,18 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_supermarket_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_supermarket_m"]))} m`
                   : "—"}
-                {project["count_supermarket_800m"] != null && Number(project["count_supermarket_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_supermarket_800m"]} v 800 m)</span>
+                {project["count_supermarket_500m"] != null && Number(project["count_supermarket_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_supermarket_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("pharmacies", "Lékárny")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("pharmacies", "Lékárny")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Lékárna</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_pharmacy_m"] != null
@@ -1713,12 +1917,18 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_pharmacy_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_pharmacy_m"]))} m`
                   : "—"}
-                {project["count_pharmacy_800m"] != null && Number(project["count_pharmacy_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_pharmacy_800m"]} v 800 m)</span>
+                {project["count_pharmacy_500m"] != null && Number(project["count_pharmacy_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_pharmacy_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("tram_stops", "Tram zastávky")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("tram_stops", "Tram zastávky")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Tram zastávka</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {(project["walking_distance_to_tram_stop_m"] ?? project["distance_to_tram_stop_m"]) != null
@@ -1729,7 +1939,13 @@ export default function ProjectDetailPage() {
                   : "—"}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("bus_stops", "Bus zastávky")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("bus_stops", "Bus zastávky")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Bus zastávka</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {(project["walking_distance_to_bus_stop_m"] ?? project["distance_to_bus_stop_m"]) != null
@@ -1740,7 +1956,13 @@ export default function ProjectDetailPage() {
                   : "—"}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("metro_stations", "Metro")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("metro_stations", "Metro")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Metro</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {(project["walking_distance_to_metro_station_m"] ?? project["distance_to_metro_station_m"]) != null
@@ -1751,7 +1973,13 @@ export default function ProjectDetailPage() {
                   : "—"}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("parks", "Parky")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("parks", "Parky")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Park</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_park_m"] != null
@@ -1759,12 +1987,18 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_park_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_park_m"]))} m`
                   : "—"}
-                {project["count_park_800m"] != null && Number(project["count_park_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_park_800m"]} v 800 m)</span>
+                {project["count_park_500m"] != null && Number(project["count_park_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_park_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("restaurants", "Restaurace")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("restaurants", "Restaurace")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Restaurace</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_restaurant_m"] != null
@@ -1772,12 +2006,75 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_restaurant_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_restaurant_m"]))} m`
                   : "—"}
-                {project["count_restaurant_800m"] != null && Number(project["count_restaurant_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_restaurant_800m"]} v 800 m)</span>
+                {project["count_restaurant_500m"] != null && Number(project["count_restaurant_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_restaurant_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("cafes", "Kavárny")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("cafes", "Kavárny")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
+              <p className="text-xs font-medium text-slate-500">Kavárny</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_cafe_m"] != null
+                  ? Number(project["distance_to_cafe_m"]) >= 1000
+                    ? `${(Number(project["distance_to_cafe_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_cafe_m"]))} m`
+                  : "—"}
+                {project["count_cafe_500m"] != null && Number(project["count_cafe_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_cafe_500m"]} v 500 m)</span>
+                )}
+              </p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("fitness", "Fitness")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("fitness", "Fitness")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
+              <p className="text-xs font-medium text-slate-500">Fitness</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_fitness_m"] != null
+                  ? Number(project["distance_to_fitness_m"]) >= 1000
+                    ? `${(Number(project["distance_to_fitness_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_fitness_m"]))} m`
+                  : "—"}
+                {project["count_fitness_500m"] != null && Number(project["count_fitness_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_fitness_500m"]} v 500 m)</span>
+                )}
+              </p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("playgrounds", "Hřiště")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("playgrounds", "Hřiště")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
+              <p className="text-xs font-medium text-slate-500">Hřiště</p>
+              <p className="mt-0.5 font-medium text-slate-900">
+                {project["distance_to_playground_m"] != null
+                  ? Number(project["distance_to_playground_m"]) >= 1000
+                    ? `${(Number(project["distance_to_playground_m"]) / 1000).toFixed(1)} km`
+                    : `${Math.round(Number(project["distance_to_playground_m"]))} m`
+                  : "—"}
+                {project["count_playground_500m"] != null && Number(project["count_playground_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_playground_500m"]} v 500 m)</span>
+                )}
+              </p>
+            </div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("kindergartens", "Školky")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("kindergartens", "Školky")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Školka</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_kindergarten_m"] != null
@@ -1785,12 +2082,18 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_kindergarten_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_kindergarten_m"]))} m`
                   : "—"}
-                {project["count_kindergarten_800m"] != null && Number(project["count_kindergarten_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_kindergarten_800m"]} v 800 m)</span>
+                {project["count_kindergarten_500m"] != null && Number(project["count_kindergarten_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_kindergarten_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
-            <div>
+            <div
+              role="button"
+              tabIndex={0}
+              onClick={() => openPoiModal("primary_schools", "Základní školy")}
+              onKeyDown={(e) => e.key === "Enter" && openPoiModal("primary_schools", "Základní školy")}
+              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+            >
               <p className="text-xs font-medium text-slate-500">Základní škola</p>
               <p className="mt-0.5 font-medium text-slate-900">
                 {project["distance_to_primary_school_m"] != null
@@ -1798,8 +2101,8 @@ export default function ProjectDetailPage() {
                     ? `${(Number(project["distance_to_primary_school_m"]) / 1000).toFixed(1)} km`
                     : `${Math.round(Number(project["distance_to_primary_school_m"]))} m`
                   : "—"}
-                {project["count_primary_school_800m"] != null && Number(project["count_primary_school_800m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_primary_school_800m"]} v 800 m)</span>
+                {project["count_primary_school_500m"] != null && Number(project["count_primary_school_500m"]) > 0 && (
+                  <span className="ml-1 text-slate-500">({project["count_primary_school_500m"]} v 500 m)</span>
                 )}
               </p>
             </div>
@@ -1992,7 +2295,7 @@ export default function ProjectDetailPage() {
                 type="button"
                 onClick={handleAdminWalkabilityRefreshAndRecompute}
                 disabled={adminJobState.loading}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="glass-pill border border-amber-400 px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
               >
                 {adminJobState.loading ? "…" : "Obnovit walkability POI + přepočítat"}
               </button>
@@ -2002,6 +2305,138 @@ export default function ProjectDetailPage() {
             )}
           </section>
         )}
+
+        {/* Walkability POI list modal */}
+        {poiModal.open && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+            onClick={closePoiModal}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Seznam POI"
+          >
+            <div
+              className="max-h-[90vh] w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+                <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel} v okolí</h3>
+                <button
+                  type="button"
+                  onClick={closePoiModal}
+                  className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  aria-label="Zavřít"
+                >
+                  ×
+                </button>
+              </div>
+              <div className="flex border-b border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setPoiModal((p) => ({ ...p, view: "list" }))}
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "list" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+                >
+                  Seznam
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPoiModal((p) => ({ ...p, view: "map" }))}
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "map" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+                >
+                  Mapa
+                </button>
+              </div>
+              <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
+                {poiModal.loading ? (
+                  <p className="text-sm text-slate-500">Načítám…</p>
+                ) : poiModal.view === "map" ? (
+                  (() => {
+                    const lat = projectState.data?.["gps_latitude"];
+                    const lon = projectState.data?.["gps_longitude"];
+                    if (lat == null || lon == null || typeof lat !== "number" || typeof lon !== "number") {
+                      return <p className="text-sm text-slate-500">Pro zobrazení mapy jsou potřeba souřadnice projektu.</p>;
+                    }
+                    if (poiModal.items.length === 0) {
+                      return <p className="text-sm text-slate-500">Žádné záznamy k zobrazení na mapě.</p>;
+                    }
+                    return (
+                      <WalkabilityPoiModalMap
+                        projectLat={lat}
+                        projectLon={lon}
+                        items={poiModal.items}
+                        highlightIndices={[0, 1]}
+                      />
+                    );
+                  })()
+                ) : poiModal.items.length === 0 ? (
+                  <p className="text-sm text-slate-500">Žádné záznamy</p>
+                ) : (
+                  <ul className="space-y-2">
+                    {poiModal.items.map((item, idx) => (
+                      <li
+                        key={idx}
+                        className={`rounded-lg border px-3 py-2 text-sm ${
+                          idx === 0
+                            ? "border-emerald-300 bg-emerald-50/70"
+                            : idx === 1
+                              ? "border-sky-300 bg-sky-50/70"
+                              : "border-slate-100 bg-slate-50/50"
+                        }`}
+                      >
+                        <p className="flex items-center justify-between font-medium text-slate-900">
+                          <span>{item.name ?? "—"}</span>
+                          {idx === 0 && (
+                            <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                              1. nejbližší
+                            </span>
+                          )}
+                          {idx === 1 && (
+                            <span className="ml-2 inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+                              2. nejbližší
+                            </span>
+                          )}
+                        </p>
+                        <p className="mt-0.5 text-slate-600">
+                          {item.distance_m != null
+                            ? item.distance_m >= 1000
+                              ? `${(item.distance_m / 1000).toFixed(1)} km`
+                              : `${Math.round(item.distance_m)} m`
+                            : "—"}
+                        </p>
+                        {item.lat != null && item.lon != null && (
+                          <a
+                            href={`https://mapy.cz/zakladni?source=coor&id=${item.lon}&id=${item.lat}&x=${item.lon}&y=${item.lat}&z=17`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+                          >
+                            Zobrazit na mapě
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+      <WalkabilityPreferencesDrawer
+        open={walkPrefsOpen}
+        value={walkPrefs}
+        onChange={setWalkPrefs}
+        onClose={() => setWalkPrefsOpen(false)}
+        onReset={() => {
+          const def = resetWalkPrefs();
+          setWalkPrefs(def);
+        }}
+        onApply={() => {
+          saveWalkPrefs(walkPrefs);
+          setPersonalizedModeEnabled(true);
+          setWalkPrefsOpen(false);
+        }}
+      />
       </main>
     </div>
   );

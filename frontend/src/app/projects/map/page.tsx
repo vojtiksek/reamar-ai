@@ -40,6 +40,40 @@ const ProjectsLeafletMap = dynamic(() => import("./ProjectsLeafletMap"), {
   ssr: false,
 });
 
+const DEFAULT_POI_CATEGORIES = [
+  "supermarkets",
+  "pharmacies",
+  "parks",
+  "restaurants",
+  "tram_stops",
+  "bus_stops",
+  "metro_stations",
+];
+
+const ALL_POI_CATEGORIES = [
+  ...DEFAULT_POI_CATEGORIES,
+  "cafes",
+  "fitness",
+  "playgrounds",
+  "kindergartens",
+  "primary_schools",
+];
+
+const POI_CATEGORY_LABELS: Record<string, string> = {
+  supermarkets: "Supermarkety",
+  pharmacies: "Lékárny",
+  parks: "Parky",
+  restaurants: "Restaurace",
+  tram_stops: "Tram",
+  bus_stops: "Bus",
+  metro_stations: "Metro",
+  cafes: "Kavárny",
+  fitness: "Fitness",
+  playgrounds: "Hřiště",
+  kindergartens: "Školky",
+  primary_schools: "ZŠ",
+};
+
 export default function ProjectsMapPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -57,6 +91,16 @@ export default function ProjectsMapPage() {
   const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
   const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [poiCategoriesEnabled, setPoiCategoriesEnabled] = useState<Set<string>>(
+    () => new Set(DEFAULT_POI_CATEGORIES)
+  );
+  const [poiOverviewData, setPoiOverviewData] = useState<{
+    project: { lat: number; lon: number };
+    categories: Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>>;
+  } | null>(null);
+  const [poiOverviewLoading, setPoiOverviewLoading] = useState(false);
+  const [poiPanelOpen, setPoiPanelOpen] = useState(true);
 
   const filtersInUrl: CurrentFilters = useMemo(
     () => parseFiltersFromSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
@@ -69,6 +113,39 @@ export default function ProjectsMapPage() {
       .then((data: FiltersResponse) => setFilterGroups(data?.groups ?? []))
       .catch(() => setFilterGroups([]));
   }, []);
+
+  useEffect(() => {
+    if (selectedProjectId == null) {
+      setPoiOverviewData(null);
+      return;
+    }
+    let cancelled = false;
+    setPoiOverviewLoading(true);
+    const categories = Array.from(poiCategoriesEnabled).filter(Boolean);
+    const params = new URLSearchParams({
+      categories: categories.join(","),
+      per_category: "2",
+    });
+    fetch(`${API_BASE}/projects/${selectedProjectId}/walkability-poi-overview?${params}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((data: { project?: { lat: number; lon: number } | null; categories?: Record<string, unknown[]> }) => {
+        if (cancelled) return;
+        if (data.project && data.categories) {
+          setPoiOverviewData({ project: data.project, categories: data.categories as Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>> });
+        } else {
+          setPoiOverviewData(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPoiOverviewData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPoiOverviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, poiCategoriesEnabled]);
 
   useEffect(() => {
     let cancelled = false;
@@ -357,30 +434,90 @@ export default function ProjectsMapPage() {
                 Žádné projekty nevyhovují filtrům nebo nemají GPS. Zkuste upravit filtry nebo zrušit výběr oblasti.
               </div>
             )}
+            <div className="mb-3 border-b border-slate-200 pb-3">
+              <button
+                type="button"
+                onClick={() => setPoiPanelOpen((o) => !o)}
+                className="flex w-full items-center justify-between text-left text-sm font-semibold text-slate-800"
+              >
+                Walkability POI na mapě
+                <span className="text-slate-400">{poiPanelOpen ? "▼" : "▶"}</span>
+              </button>
+              {poiPanelOpen && (
+                <div className="mt-2 space-y-2 text-xs">
+                  <p className="text-slate-600">
+                    Klikněte na projekt v seznamu nebo na značku na mapě a zobrazí se 1–2 nejbližší POI za kategorii.
+                  </p>
+                  {selectedProjectId != null && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProjectId(null)}
+                      className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-slate-700 hover:bg-slate-200"
+                    >
+                      Zrušit výběr projektu
+                    </button>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                    {ALL_POI_CATEGORIES.map((cat) => (
+                      <label key={cat} className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={poiCategoriesEnabled.has(cat)}
+                          onChange={() => {
+                            setPoiCategoriesEnabled((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(cat)) next.delete(cat);
+                              else next.add(cat);
+                              return next;
+                            });
+                          }}
+                          className="rounded border-slate-300"
+                        />
+                        <span className="text-slate-700">{POI_CATEGORY_LABELS[cat] ?? cat}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
             <ul className="space-y-2">
               {visibleProjects.map((p) => (
-                <li key={p.id} className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
-                  <div className="text-sm font-semibold text-slate-900">
-                    {p.project ?? "Projekt bez názvu"}
-                  </div>
-                  <div className="text-xs text-slate-600">
-                    {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
-                  </div>
-                  {p.avg_price_per_m2_czk != null && (
-                    <div className="mt-1 text-xs text-slate-700">
-                      Průměrná cena m²:{" "}
-                      <span className="font-medium">
-                        {new Intl.NumberFormat("cs-CZ", {
-                          maximumFractionDigits: 0,
-                          minimumFractionDigits: 0,
-                        }).format(p.avg_price_per_m2_czk)}{" "}
-                        Kč/m²
-                      </span>
+                <li
+                  key={p.id}
+                  className={`rounded-xl border p-2.5 shadow-sm transition ${
+                    selectedProjectId === p.id
+                      ? "border-sky-500 bg-sky-50/80"
+                      : "border-slate-200 bg-white hover:border-slate-300"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProjectId(selectedProjectId === p.id ? null : p.id)}
+                    className="w-full text-left"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">
+                      {p.project ?? "Projekt bez názvu"}
                     </div>
-                  )}
+                    <div className="text-xs text-slate-600">
+                      {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
+                    </div>
+                    {p.avg_price_per_m2_czk != null && (
+                      <div className="mt-1 text-xs text-slate-700">
+                        Průměrná cena m²:{" "}
+                        <span className="font-medium">
+                          {new Intl.NumberFormat("cs-CZ", {
+                            maximumFractionDigits: 0,
+                            minimumFractionDigits: 0,
+                          }).format(p.avg_price_per_m2_czk)}{" "}
+                          Kč/m²
+                        </span>
+                      </div>
+                    )}
+                  </button>
                   <Link
                     href={`/projects/${p.id}`}
                     className="mt-1 inline-block text-xs font-medium text-slate-700 underline decoration-slate-400 underline-offset-2 hover:text-slate-900 hover:decoration-slate-600"
+                    onClick={(e) => e.stopPropagation()}
                   >
                     Detail projektu
                   </Link>
@@ -423,6 +560,11 @@ export default function ProjectsMapPage() {
               Načítání mapy…
             </div>
           )}
+          {(poiOverviewLoading && selectedProjectId != null) && (
+            <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-1.5 text-xs text-slate-600 shadow-sm">
+              Načítám POI…
+            </div>
+          )}
           <ProjectsLeafletMap
             projects={visibleProjects}
             center={center}
@@ -430,6 +572,9 @@ export default function ProjectsMapPage() {
             draftPolygon={draftPolygon}
             drawing={drawing}
             onMapClick={handleMapClick}
+            selectedProjectId={selectedProjectId}
+            onProjectSelect={setSelectedProjectId}
+            poiOverview={poiOverviewData}
           />
         </section>
       </main>

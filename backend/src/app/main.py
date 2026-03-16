@@ -43,6 +43,13 @@ from .location_sources import (
     refresh_all_location_sources_and_recompute,
     download_osm_sources_and_recompute,
 )
+from .walkability import (
+    WALKABILITY_POI_CATEGORIES,
+    get_project_walkability_poi_list,
+    get_project_walkability_poi_overview,
+    compute_personalized_walkability_score,
+    project_to_raw_metrics,
+)
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -109,6 +116,27 @@ class PendingApiUpdate(BaseModel):
 
 class PendingApiActionBody(BaseModel):
     field: str
+
+
+class WalkabilityPreferences(BaseModel):
+    """Client preferences for personalized walkability: high (2.0), normal (1.0), ignore (0.0)."""
+    supermarket: str = "normal"
+    pharmacy: str = "normal"
+    park: str = "normal"
+    restaurant: str = "normal"
+    cafe: str = "normal"
+    fitness: str = "normal"
+    playground: str = "normal"
+    kindergarten: str = "normal"
+    primary_school: str = "normal"
+    metro: str = "normal"
+    tram: str = "normal"
+    bus: str = "normal"
+
+
+class PersonalizedWalkabilityBatchRequest(BaseModel):
+    project_ids: list[int]
+    preferences: WalkabilityPreferences
 
 
 class UnitResponse(BaseModel):
@@ -1502,6 +1530,11 @@ def list_units(
         "distance_to_airport_m": Project.distance_to_airport_m,
         "micro_location_score": Project.micro_location_score,
         "micro_location_label": Project.micro_location_label,
+        "walkability_score": Project.walkability_score,
+        "walkability_daily_needs_score": Project.walkability_daily_needs_score,
+        "walkability_transport_score": Project.walkability_transport_score,
+        "walkability_leisure_score": Project.walkability_leisure_score,
+        "walkability_family_score": Project.walkability_family_score,
     }
 
     order_fn = asc if sort_dir == "asc" else desc
@@ -2918,14 +2951,20 @@ def get_project(
         "walking_distance_to_metro_station_m",
         "distance_to_park_m",
         "distance_to_restaurant_m",
+        "distance_to_cafe_m",
+        "distance_to_fitness_m",
+        "distance_to_playground_m",
         "distance_to_kindergarten_m",
         "distance_to_primary_school_m",
-        "count_supermarket_800m",
-        "count_pharmacy_800m",
-        "count_restaurant_800m",
-        "count_park_800m",
-        "count_kindergarten_800m",
-        "count_primary_school_800m",
+        "count_supermarket_500m",
+        "count_pharmacy_500m",
+        "count_restaurant_500m",
+        "count_cafe_500m",
+        "count_park_500m",
+        "count_fitness_500m",
+        "count_playground_500m",
+        "count_kindergarten_500m",
+        "count_primary_school_500m",
     ):
         base_item[attr] = getattr(project, attr, None)
 
@@ -2943,6 +2982,77 @@ def get_project(
     override_map = build_project_override_map(override_rows)
     final_item = apply_project_overrides_to_item(project.id, dict(base_item), override_map)
     return final_item
+
+
+@app.get("/projects/{project_id}/walkability-poi")
+def get_project_walkability_poi(
+    project_id: int,
+    db: DbSession,
+    category: Annotated[str, Query(description="POI category")],
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> dict[str, Any]:
+    """List POI of a category near the project (name, distance_m, lat, lon). For detail popup and map."""
+    if category not in WALKABILITY_POI_CATEGORIES:
+        raise HTTPException(status_code=422, detail=f"Unknown category. Allowed: {list(WALKABILITY_POI_CATEGORIES.keys())}")
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    items = get_project_walkability_poi_list(db, project_id, category, limit=limit)
+    return {"items": items, "category": category}
+
+
+@app.get("/projects/{project_id}/walkability-poi-overview")
+def get_project_walkability_poi_overview_endpoint(
+    project_id: int,
+    db: DbSession,
+    categories: Annotated[
+        str,
+        Query(description="Comma-separated category slugs, e.g. supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations"),
+    ] = "supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations",
+    per_category: Annotated[int, Query(ge=1, le=10)] = 2,
+) -> dict[str, Any]:
+    """Project lat/lon and nearest N POIs per category for map widgets."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    category_list = [c.strip() for c in categories.split(",") if c.strip()]
+    return get_project_walkability_poi_overview(db, project_id, categories=category_list, per_category=per_category)
+
+
+@app.post("/projects/{project_id}/walkability/personalized-score")
+def project_personalized_walkability_score(
+    project_id: int,
+    prefs: WalkabilityPreferences,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Compute personalized walkability score for one project (no DB write)."""
+    project = db.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if project.gps_latitude is None or project.gps_longitude is None:
+        raise HTTPException(status_code=422, detail="Project has no GPS")
+    raw = project_to_raw_metrics(project)
+    result = compute_personalized_walkability_score(raw, prefs.model_dump())
+    return {"project_id": project_id, **result}
+
+
+@app.post("/projects/walkability/personalized-scores")
+def projects_personalized_walkability_scores(
+    body: PersonalizedWalkabilityBatchRequest,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Batch: compute personalized walkability for given project_ids (no DB write)."""
+    if not body.project_ids:
+        return {"items": []}
+    projects = db.execute(select(Project).where(Project.id.in_(body.project_ids))).scalars().all()
+    projects = [p for p in projects if p.gps_latitude is not None and p.gps_longitude is not None]
+    prefs = body.preferences.model_dump()
+    items: list[dict[str, Any]] = []
+    for p in projects:
+        raw = project_to_raw_metrics(p)
+        result = compute_personalized_walkability_score(raw, prefs)
+        items.append({"project_id": p.id, **result})
+    return {"items": items}
 
 
 @app.get("/units/{external_id}", response_model=UnitResponse)
@@ -3307,8 +3417,9 @@ def admin_download_osm_and_recompute(db: DbSession) -> dict[str, Any]:
 @app.post("/admin/walkability-sources/refresh-and-recompute")
 def admin_walkability_refresh_and_recompute(db: DbSession) -> dict[str, Any]:
     """
-    Download walkability POI from Overpass (17 categories), fill osm_* POI tables,
-    then recompute walkability for all projects with GPS.
+    One-click: (1) Refresh all walkability POI tables from Overpass, (2) recompute all project walkability.
+    Categories are taken from WALKABILITY_DOWNLOADERS (single source of truth); new categories are included automatically.
+    Returns walkability_poi.source_counts, recompute stats, total_elapsed_seconds, and warnings (e.g. empty tables).
     Scheduler-ready; can take several minutes.
     """
     try:

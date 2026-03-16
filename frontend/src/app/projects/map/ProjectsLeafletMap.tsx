@@ -18,6 +18,65 @@ type ProjectPoint = {
   gps_longitude?: number | null;
 };
 
+export type PoiOverviewItem = {
+  name: string | null;
+  distance_m: number | null;
+  lat: number | null;
+  lon: number | null;
+};
+
+export type PoiOverview = {
+  project: { lat: number; lon: number };
+  categories: Record<string, PoiOverviewItem[]>;
+} | null;
+
+const POI_CATEGORY_COLORS: Record<string, string> = {
+  supermarkets: "#22c55e",
+  pharmacies: "#8b5cf6",
+  parks: "#16a34a",
+  restaurants: "#ea580c",
+  tram_stops: "#0ea5e9",
+  bus_stops: "#06b6d4",
+  metro_stations: "#6366f1",
+  cafes: "#ca8a04",
+  fitness: "#dc2626",
+  playgrounds: "#ec4899",
+  kindergartens: "#0891b2",
+  primary_schools: "#4f46e5",
+};
+
+const POI_CATEGORY_LABELS: Record<string, string> = {
+  supermarkets: "Supermarket",
+  pharmacies: "Lékárna",
+  parks: "Park",
+  restaurants: "Restaurace",
+  tram_stops: "Tram",
+  bus_stops: "Bus",
+  metro_stations: "Metro",
+  cafes: "Kavárna",
+  fitness: "Fitness",
+  playgrounds: "Hřiště",
+  kindergartens: "Školka",
+  primary_schools: "ZŠ",
+};
+
+export { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS };
+
+const poiIconCache = new Map<string, L.DivIcon>();
+function getPoiCategoryIcon(category: string): L.DivIcon {
+  const color = POI_CATEGORY_COLORS[category] ?? "#64748b";
+  const cached = poiIconCache.get(category);
+  if (cached) return cached;
+  const icon = L.divIcon({
+    className: "poi-category-marker",
+    html: `<div style="width:10px;height:10px;border-radius:50%;background:${color};border:1px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,0.2);"></div>`,
+    iconSize: [12, 12],
+    iconAnchor: [6, 6],
+  });
+  poiIconCache.set(category, icon);
+  return icon;
+}
+
 type Props = {
   projects: ProjectPoint[];
   center: LatLngExpression;
@@ -25,6 +84,9 @@ type Props = {
   draftPolygon: LatLng[];
   drawing: boolean;
   onMapClick?: (lat: number, lng: number) => void;
+  selectedProjectId?: number | null;
+  onProjectSelect?: (id: number | null) => void;
+  poiOverview?: PoiOverview;
 };
 
 // Cache barevně odlišených ikon podle hex/HSL barvy, ať zbytečně nevytváříme
@@ -53,7 +115,17 @@ function ClickCapture(props: { drawing: boolean; onClick?: (lat: number, lng: nu
   return null;
 }
 
-function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, onMapClick }: Props) {
+function ProjectsLeafletMap({
+  projects,
+  center,
+  polygon,
+  draftPolygon,
+  drawing,
+  onMapClick,
+  selectedProjectId = null,
+  onProjectSelect,
+  poiOverview = null,
+}: Props) {
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
 
   // Vypočítat rozsah průměrných cen m² pro škálování barev
@@ -126,7 +198,16 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
           <Marker
             key={p.id}
             position={[p.gps_latitude as number, p.gps_longitude as number]}
-            icon={getProjectMarkerIcon(priceToColor(p.avg_price_per_m2_czk ?? null))}
+            icon={getProjectMarkerIcon(
+              selectedProjectId === p.id ? "#0f172a" : priceToColor(p.avg_price_per_m2_czk ?? null)
+            )}
+            eventHandlers={
+              onProjectSelect
+                ? {
+                    click: () => onProjectSelect(selectedProjectId === p.id ? null : p.id),
+                  }
+                : undefined
+            }
           >
             <Popup>
               <div className="space-y-1 text-xs">
@@ -146,9 +227,18 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
                     Kč/m²
                   </div>
                 )}
+                {onProjectSelect && (
+                  <button
+                    type="button"
+                    onClick={() => onProjectSelect(selectedProjectId === p.id ? null : p.id)}
+                    className="mt-1 block rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-200"
+                  >
+                    {selectedProjectId === p.id ? "Skrýt POI" : "Zobrazit nejbližší POI"}
+                  </button>
+                )}
                 <Link
                   href={`/projects/${p.id}`}
-                  className="inline-block text-blue-600 hover:underline"
+                  className="mt-1 inline-block text-blue-600 hover:underline"
                 >
                   Detail projektu
                 </Link>
@@ -156,6 +246,32 @@ function ProjectsLeafletMap({ projects, center, polygon, draftPolygon, drawing, 
             </Popup>
           </Marker>
         ))}
+      {poiOverview?.project && poiOverview.categories && (
+        <>
+          {Object.entries(poiOverview.categories).map(([category, items]) =>
+            (items || [])
+              .filter((i): i is PoiOverviewItem & { lat: number; lon: number } => i.lat != null && i.lon != null)
+              .map((item, idx) => (
+                <Marker
+                  key={`${category}-${idx}-${item.lat}-${item.lon}`}
+                  position={[item.lat, item.lon]}
+                  icon={getPoiCategoryIcon(category)}
+                >
+                  <Popup>
+                    <div className="text-xs">
+                      <span className="font-medium text-slate-900">{item.name ?? "—"}</span>
+                      <span className="ml-1 text-slate-600">
+                        ({POI_CATEGORY_LABELS[category] ?? category})
+                        {item.distance_m != null &&
+                          ` · ${item.distance_m >= 1000 ? `${(item.distance_m / 1000).toFixed(1)} km` : `${Math.round(item.distance_m)} m`}`}
+                      </span>
+                    </div>
+                  </Popup>
+                </Marker>
+              ))
+          )}
+        </>
+      )}
     </MapContainer>
   );
 }

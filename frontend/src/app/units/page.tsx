@@ -2,6 +2,7 @@
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { SummaryBar } from "@/components/SummaryBar";
+import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import {
   buildUnitsQuery,
   countActiveFilters,
@@ -20,6 +21,14 @@ import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type React from "react";
+import {
+  type WalkabilityPreferences,
+  loadPreferences as loadWalkPrefs,
+  savePreferences as saveWalkPrefs,
+  resetPreferences as resetWalkPrefs,
+  isPersonalizedActive,
+  getNonDefaultChips,
+} from "@/lib/walkabilityPreferences";
 
 type Unit = {
   external_id: string;
@@ -649,6 +658,8 @@ export default function Home() {
   } | null>(null);
 
   const [recomputingLocalDiffs, setRecomputingLocalDiffs] = useState(false);
+  const [recomputingWalkability, setRecomputingWalkability] = useState(false);
+  const [refetchTrigger, setRefetchTrigger] = useState(0);
 
   const [editingCell, setEditingCell] = useState<{ externalId: string; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
@@ -850,7 +861,7 @@ export default function Home() {
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon]);
+  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger]);
 
   const openDrawer = useCallback(() => {
     setCurrentFilters({ ...filters });
@@ -1188,6 +1199,115 @@ export default function Home() {
 
   const [recomputingLocationMetrics, setRecomputingLocationMetrics] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
+  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => loadWalkPrefs());
+  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(() =>
+    isPersonalizedActive(loadWalkPrefs())
+  );
+  const [personalizedScores, setPersonalizedScores] = useState<
+    Map<number, { score: number | null; label: string | null }>
+  >(new Map());
+
+  // Personalized scores for projects visible in current units page
+  useEffect(() => {
+    if (!personalizedModeEnabled || units.length === 0) {
+      setPersonalizedScores(new Map());
+      return;
+    }
+    const projectIds = Array.from(
+      new Set(
+        units
+          .map((u) => {
+            const pid =
+              (u as any).project_id ??
+              (u.project as any)?.id ??
+              (u.data as any)?.project_id;
+            return pid != null ? Number(pid) : undefined;
+          })
+          .filter((id): id is number => typeof id === "number" && !Number.isNaN(id)),
+      ),
+    );
+    if (projectIds.length === 0) {
+      setPersonalizedScores(new Map());
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/projects/walkability/personalized-scores`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_ids: projectIds,
+            preferences: walkPrefs,
+          }),
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const map = new Map<number, { score: number | null; label: string | null }>();
+        for (const it of json.items ?? []) {
+          map.set(it.project_id as number, {
+            score: it.score ?? null,
+            label: it.label ?? null,
+          });
+        }
+        setPersonalizedScores(map);
+      } catch {
+        // silent fallback
+      }
+    })();
+    return () => controller.abort();
+  }, [personalizedModeEnabled, walkPrefs, units]);
+
+  useEffect(() => {
+    if (!personalizedModeEnabled || units.length === 0) {
+      setPersonalizedScores(new Map());
+      return;
+    }
+    const projectIds = Array.from(
+      new Set(
+        units
+          .map((u) => {
+            const pid = (u.project as any)?.id ?? (u.data as any)?.project_id;
+            return pid != null ? Number(pid) : undefined;
+          })
+          .filter((id): id is number => typeof id === "number" && !Number.isNaN(id)),
+      ),
+    );
+    if (projectIds.length === 0) {
+      setPersonalizedScores(new Map());
+      return;
+    }
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/projects/walkability/personalized-scores`, {
+          method: "POST",
+          signal: controller.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            project_ids: projectIds,
+            preferences: walkPrefs,
+          }),
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        const map = new Map<number, { score: number | null; label: string | null }>();
+        for (const it of json.items ?? []) {
+          map.set(it.project_id as number, {
+            score: it.score ?? null,
+            label: it.label ?? null,
+          });
+        }
+        setPersonalizedScores(map);
+      } catch {
+        // silent fallback
+      }
+    })();
+    return () => controller.abort();
+  }, [personalizedModeEnabled, walkPrefs, units]);
+
   useEffect(() => {
     const close = (e: MouseEvent) => {
       if (actionsRef.current && !actionsRef.current.contains(e.target as Node)) setActionsOpen(false);
@@ -1242,6 +1362,61 @@ export default function Home() {
               </span>
             )}
           </button>
+          <button
+            type="button"
+            onClick={() => setWalkPrefsOpen(true)}
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 shrink-0"
+          >
+            Preference lokality
+          </button>
+          {personalizedModeEnabled && (
+            <div className="ml-2 flex flex-wrap items-center gap-1">
+              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                Dle preferencí klienta
+              </span>
+              {getNonDefaultChips(walkPrefs)
+                .slice(0, 3)
+                .map((chip) => (
+                  <span
+                    key={chip}
+                    className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                  >
+                    {chip}
+                  </span>
+                ))}
+              <button
+                type="button"
+                className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline decoration-dotted"
+                onClick={() => setPersonalizedModeEnabled(false)}
+              >
+                Vypnout
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => setWalkPrefsOpen(true)}
+            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 shrink-0"
+          >
+            Preference lokality
+          </button>
+          {personalizedModeEnabled && (
+            <div className="ml-2 flex flex-wrap items-center gap-1">
+              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
+                Dle preferencí klienta
+              </span>
+              {getNonDefaultChips(walkPrefs)
+                .slice(0, 3)
+                .map((chip) => (
+                  <span
+                    key={chip}
+                    className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
+                  >
+                    {chip}
+                  </span>
+                ))}
+            </div>
+          )}
           <div className="relative shrink-0" ref={actionsRef}>
             <button
               type="button"
@@ -1331,6 +1506,28 @@ export default function Home() {
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
                 >
                   {recomputingLocationMetrics ? "Přepočítávám…" : "Přepočítat mikro-lokalitu a hluk"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setRecomputingWalkability(true);
+                    try {
+                      const res = await fetch(`${API_BASE}/admin/walkability-sources/refresh-and-recompute`, { method: "POST" });
+                      if (!res.ok) throw new Error(await res.text());
+                      const data = await res.json();
+                      setActionsOpen(false);
+                      alert(`Walkability data obnovena.\nProjekty přepočítány: ${(data.recompute as { processed?: number; total?: number })?.processed ?? 0}/${(data.recompute as { processed?: number; total?: number })?.total ?? 0}`);
+                      setRefetchTrigger((t) => t + 1);
+                    } catch (e) {
+                      setError("Nepodařilo se obnovit walkability data.");
+                    } finally {
+                      setRecomputingWalkability(false);
+                    }
+                  }}
+                  disabled={recomputingWalkability || loading}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  {recomputingWalkability ? "Stahování walkability…" : "Stáhnout walkability POI + přepočítat projekty"}
                 </button>
                 <button
                   type="button"
@@ -1697,6 +1894,30 @@ export default function Home() {
                                 display_format: df ?? data_type,
                                 key,
                               });
+                              if (key === "walkability_score" && personalizedModeEnabled) {
+                                const pid =
+                                  ((u as any).project_id ??
+                                  (u.project as any)?.id ??
+                                  (u.data as any)?.project_id) as number | undefined;
+                                if (pid != null) {
+                                  const override = personalizedScores.get(pid);
+                                  if (override && override.score != null) {
+                                    formatted = `${Math.round(override.score)} (dle preferencí)`;
+                                  }
+                                }
+                              }
+                              if (key === "walkability_label" && personalizedModeEnabled) {
+                                const pid =
+                                  ((u as any).project_id ??
+                                  (u.project as any)?.id ??
+                                  (u.data as any)?.project_id) as number | undefined;
+                                if (pid != null) {
+                                  const override = personalizedScores.get(pid);
+                                  if (override && override.label) {
+                                    formatted = `${override.label} (dle preferencí)`;
+                                  }
+                                }
+                              }
                             }
                             const isAvailableCol = key === "available";
                             const isStickyFirst = columnIndex === 0;
@@ -1872,6 +2093,37 @@ export default function Home() {
         onChange={onChange}
         onReset={onReset}
         onApply={onApply}
+      />
+      <WalkabilityPreferencesDrawer
+        open={walkPrefsOpen}
+        value={walkPrefs}
+        onChange={setWalkPrefs}
+        onClose={() => setWalkPrefsOpen(false)}
+        onReset={() => {
+          const def = resetWalkPrefs();
+          setWalkPrefs(def);
+        }}
+        onApply={() => {
+          saveWalkPrefs(walkPrefs);
+          setPersonalizedModeEnabled(true);
+          setWalkPrefsOpen(false);
+          // fetching handled by useEffect
+        }}
+      />
+      <WalkabilityPreferencesDrawer
+        open={walkPrefsOpen}
+        value={walkPrefs}
+        onChange={setWalkPrefs}
+        onClose={() => setWalkPrefsOpen(false)}
+        onReset={() => {
+          const def = resetWalkPrefs();
+          setWalkPrefs(def);
+        }}
+        onApply={() => {
+          saveWalkPrefs(walkPrefs);
+          setWalkPrefsOpen(false);
+          // scores refresh via effect
+        }}
       />
       {columnsConfig && (
         <DndContext
