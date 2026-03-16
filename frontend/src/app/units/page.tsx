@@ -977,6 +977,92 @@ export default function Home() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
+  const resolveProjectId = useCallback((u: Unit): number | null => {
+    const pid =
+      (u as any).project_id ??
+      (u.project as any)?.id ??
+      (u.data as any)?.project_id;
+    if (pid == null) return null;
+    const n = Number(pid);
+    return Number.isNaN(n) ? null : n;
+  }, []);
+
+  const getUnitDefaultWalkabilityScore = useCallback((u: Unit): number | null => {
+    const d: any = (u as any).data ?? {};
+    const candidates = [
+      (u as any).walkability_score,
+      d.walkability_score,
+      d.project_walkability_score,
+    ];
+    for (const c of candidates) {
+      if (typeof c === "number") return c;
+      if (c != null) {
+        const n = Number(c);
+        if (!Number.isNaN(n)) return n;
+      }
+    }
+    return null;
+  }, []);
+
+  // Client-side sorting override for personalized walkability on current page.
+  const sortedUnits = useMemo(() => {
+    if (!personalizedModeEnabled) return units;
+    if (units.length === 0) return units;
+
+    const getDefaultLabel = (u: Unit): string => {
+      const d: any = (u as any).data ?? {};
+      const candidates = [
+        (u as any).walkability_label,
+        d.walkability_label,
+        d.project_walkability_label,
+      ];
+      for (const c of candidates) {
+        if (typeof c === "string" && c.trim() !== "") return c;
+      }
+      return "";
+    };
+
+    if (sortBy === "walkability_score") {
+      const dir = sortDir === "asc" ? 1 : -1;
+      return [...units].sort((a, b) => {
+        const pa = (() => {
+          const pid = resolveProjectId(a);
+          return pid != null ? personalizedScores.get(pid)?.score : null;
+        })();
+        const pb = (() => {
+          const pid = resolveProjectId(b);
+          return pid != null ? personalizedScores.get(pid)?.score : null;
+        })();
+        const va = pa != null ? pa : getUnitDefaultWalkabilityScore(a) ?? Number.NEGATIVE_INFINITY;
+        const vb = pb != null ? pb : getUnitDefaultWalkabilityScore(b) ?? Number.NEGATIVE_INFINITY;
+        return (va - vb) * dir;
+      });
+    }
+
+    if (sortBy === "walkability_label") {
+      const dir = sortDir === "asc" ? 1 : -1;
+      return [...units].sort((a, b) => {
+        const la = (() => {
+          const pid = resolveProjectId(a);
+          return (
+            (pid != null ? personalizedScores.get(pid)?.label : null) ??
+            getDefaultLabel(a)
+          );
+        })();
+        const lb = (() => {
+          const pid = resolveProjectId(b);
+          return (
+            (pid != null ? personalizedScores.get(pid)?.label : null) ??
+            getDefaultLabel(b)
+          );
+        })();
+        return la.localeCompare(lb, "cs") * dir;
+      });
+    }
+
+    return units;
+  }, [units, sortBy, sortDir, personalizedModeEnabled, personalizedScores, resolveProjectId, getUnitDefaultWalkabilityScore]);
+
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
       const byKey = new Map(serverColumns.map((c) => [c.key, c]));
@@ -1791,7 +1877,15 @@ export default function Home() {
                           >
                             <span
                               className={key === "project" || key === "project.name" ? "inline-flex max-w-[10rem] items-center gap-1 truncate" : "inline-flex items-center gap-1"}
-                              title={key === "project" || key === "project.name" ? String(label) : undefined}
+                              title={
+                                personalizedModeEnabled &&
+                                (key === "walkability_score" || key === "walkability_label") &&
+                                isActive
+                                  ? "Řazeno podle personalizovaného skóre (aktuální stránka)"
+                                  : key === "project" || key === "project.name"
+                                    ? String(label)
+                                    : undefined
+                              }
                             >
                               <span className={key === "project" || key === "project.name" ? "truncate" : undefined}>
                                 {label}
@@ -1828,7 +1922,7 @@ export default function Home() {
                       </td>
                     </tr>
                   ) : (
-                    units.map((u: Unit) => {
+                    sortedUnits.map((u: Unit) => {
                       const statusRaw =
                         (u as any).availability_status ??
                         (u as any).availability ??
@@ -1895,14 +1989,31 @@ export default function Home() {
                                 key,
                               });
                               if (key === "walkability_score" && personalizedModeEnabled) {
-                                const pid =
-                                  ((u as any).project_id ??
-                                  (u.project as any)?.id ??
-                                  (u.data as any)?.project_id) as number | undefined;
+                                const pid = resolveProjectId(u);
                                 if (pid != null) {
                                   const override = personalizedScores.get(pid);
                                   if (override && override.score != null) {
-                                    formatted = `${Math.round(override.score)} (dle preferencí)`;
+                                    const main = Math.round(override.score);
+                                    const base = getUnitDefaultWalkabilityScore(u);
+                                    const delta =
+                                      base != null && !Number.isNaN(base)
+                                        ? main - Math.round(base)
+                                        : null;
+                                    formatted = (
+                                      <span className="inline-flex items-baseline gap-1">
+                                        <span>{main}</span>
+                                        {delta != null && delta !== 0 && (
+                                          <span
+                                            className={`text-[11px] ${
+                                              delta > 0 ? "text-emerald-600" : "text-rose-600"
+                                            }`}
+                                          >
+                                            {delta > 0 ? `+${delta}` : delta}
+                                          </span>
+                                        )}
+                                        <span className="text-[11px] text-slate-500">dle preferencí</span>
+                                      </span>
+                                    );
                                   }
                                 }
                               }

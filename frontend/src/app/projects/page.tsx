@@ -25,6 +25,7 @@ import {
   resetPreferences as resetWalkPrefs,
   isPersonalizedActive,
   getNonDefaultChips,
+  getDefaultPreferences,
 } from "@/lib/walkabilityPreferences";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -253,6 +254,38 @@ function computeProjectsSummary(items: ProjectItem[], totalCount: number) {
   };
 }
 
+function renderWalkabilityWithDelta(
+  personalizedScore: number,
+  defaultScore: unknown
+): JSX.Element {
+  const main = Math.round(personalizedScore);
+  const base =
+    typeof defaultScore === "number"
+      ? defaultScore
+      : defaultScore != null
+        ? Number(defaultScore)
+        : null;
+  const delta = base != null && !Number.isNaN(base)
+    ? main - Math.round(Number(base))
+    : null;
+
+  return (
+    <span className="inline-flex items-baseline gap-1">
+      <span>{main}</span>
+      {delta != null && delta !== 0 && (
+        <span
+          className={`text-[11px] ${
+            delta > 0 ? "text-emerald-600" : "text-rose-600"
+          }`}
+        >
+          {delta > 0 ? `+${delta}` : delta}
+        </span>
+      )}
+      <span className="text-[11px] text-slate-500">dle preferencí</span>
+    </span>
+  );
+}
+
 function parseProjectsSearchParams(params: URLSearchParams): {
   filters: CurrentFilters;
   limit: number;
@@ -362,6 +395,13 @@ export default function ProjectsPage() {
   const [savingOverride, setSavingOverride] = useState(false);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
 
+  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
+  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => getDefaultPreferences());
+  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(false);
+  const [personalizedScores, setPersonalizedScores] = useState<
+    Map<number, { score: number | null; label: string | null }>
+  >(new Map());
+
   const rowClickTimeoutRef = useRef<number | null>(null);
 
   const syncToUrl = useCallback(
@@ -382,6 +422,51 @@ export default function ProjectsPage() {
     setSortDir(parsed.sortDir as "asc" | "desc");
     setPolygon(parsed.polygon ?? null);
   }, [searchParams]);
+
+  // Initialize walkability preferences and mode on client (avoid SSR mismatch).
+  useEffect(() => {
+    const prefs = loadWalkPrefs();
+    setWalkPrefs(prefs);
+    setPersonalizedModeEnabled(isPersonalizedActive(prefs));
+  }, []);
+
+  // Client-side sorting override for personalized walkability.
+  const sortedProjects = useMemo(() => {
+    if (!personalizedModeEnabled) return projects;
+    if (projects.length === 0) return projects;
+
+    if (sortBy === "walkability_score") {
+      const dir = sortDir === "asc" ? 1 : -1;
+      return [...projects].sort((a, b) => {
+        const pa = personalizedScores.get(a.id as number)?.score;
+        const pb = personalizedScores.get(b.id as number)?.score;
+        const daRaw = (a as any).walkability_score;
+        const dbRaw = (b as any).walkability_score;
+        const da = typeof daRaw === "number" ? daRaw : daRaw != null ? Number(daRaw) : Number.NEGATIVE_INFINITY;
+        const db = typeof dbRaw === "number" ? dbRaw : dbRaw != null ? Number(dbRaw) : Number.NEGATIVE_INFINITY;
+        const va = pa != null ? pa : da;
+        const vb = pb != null ? pb : db;
+        return (va - vb) * dir;
+      });
+    }
+
+    if (sortBy === "walkability_label") {
+      const dir = sortDir === "asc" ? 1 : -1;
+      return [...projects].sort((a, b) => {
+        const la =
+          personalizedScores.get(a.id as number)?.label ??
+          ((a as any).walkability_label as string | null | undefined) ??
+          "";
+        const lb =
+          personalizedScores.get(b.id as number)?.label ??
+          ((b as any).walkability_label as string | null | undefined) ??
+          "";
+        return la.localeCompare(lb, "cs") * dir;
+      });
+    }
+
+    return projects;
+  }, [projects, sortBy, sortDir, personalizedModeEnabled, personalizedScores]);
 
   const supportedFilterKeys = useMemo(
     () =>
@@ -711,14 +796,6 @@ export default function ProjectsPage() {
   const [recomputingWalkability, setRecomputingWalkability] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
-  const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
-  const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => loadWalkPrefs());
-  const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(() =>
-    isPersonalizedActive(loadWalkPrefs())
-  );
-  const [personalizedScores, setPersonalizedScores] = useState<
-    Map<number, { score: number | null; label: string | null }>
-  >(new Map());
 
   // Refresh personalized scores when mode, prefs or visible projects change
   useEffect(() => {
@@ -1103,6 +1180,8 @@ export default function ProjectsPage() {
                     {visibleColumns.map((col, columnIndex) => {
                     const flatKey = getProjectColumnKey(col);
                     const isActive = flatKey === sortBy;
+                    const isWalkabilityScore = flatKey === "walkability_score";
+                    const isWalkabilityLabel = flatKey === "walkability_label";
                     const isStickyFirst = columnIndex === 0;
                     const alignRight =
                       col.data_type === "number" ||
@@ -1117,7 +1196,14 @@ export default function ProjectsPage() {
                           alignRight ? "text-right" : "text-left"
                         } ${isActive ? "bg-gray-100" : ""} ${isStickyFirst ? "left-0 z-20" : ""}`}
                       >
-                        <span className="inline-flex items-center gap-1">
+                        <span
+                          className="inline-flex items-center gap-1"
+                          title={
+                            personalizedModeEnabled && (isWalkabilityScore || isWalkabilityLabel) && isActive
+                              ? "Řazeno podle personalizovaného skóre (aktuální stránka)"
+                              : undefined
+                          }
+                        >
                           {col.label}
                           {isActive && (
                             <span className="text-gray-600" aria-hidden>{sortDir === "asc" ? "▲" : "▼"}</span>
@@ -1148,7 +1234,7 @@ export default function ProjectsPage() {
                     </td>
                   </tr>
                 ) : (
-                  projects.map((p) => (
+                  sortedProjects.map((p) => (
                     <tr
                       key={p.id as number}
                       className="cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-slate-50"
@@ -1192,7 +1278,10 @@ export default function ProjectsPage() {
                           if (fieldKey === "walkability_score" && personalizedModeEnabled) {
                             const override = personalizedScores.get(p.id as number);
                             if (override && override.score != null) {
-                              return `${Math.round(override.score)} (dle preferencí)`;
+                              return renderWalkabilityWithDelta(
+                                override.score,
+                                (p as any).walkability_score
+                              );
                             }
                           }
                           if (fieldKey === "walkability_label" && personalizedModeEnabled) {

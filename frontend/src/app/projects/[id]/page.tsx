@@ -1827,11 +1827,41 @@ export default function ProjectDetailPage() {
             <div>
               <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
               <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.score != null
-                  ? `${Math.round(personalizedWalk.score)} (dle preferencí)`
-                  : project["walkability_score"] != null
-                    ? String(Math.round(Number(project["walkability_score"])))
-                    : "—"}
+                {personalizedWalk?.score != null ? (
+                  (() => {
+                    const main = Math.round(personalizedWalk.score as number);
+                    const baseRaw = project["walkability_score"] as number | string | null | undefined;
+                    const base =
+                      typeof baseRaw === "number"
+                        ? baseRaw
+                        : baseRaw != null
+                          ? Number(baseRaw)
+                          : null;
+                    const delta =
+                      base != null && !Number.isNaN(base)
+                        ? main - Math.round(base)
+                        : null;
+                    return (
+                      <span className="inline-flex items-baseline gap-1">
+                        <span>{main}</span>
+                        {delta != null && delta !== 0 && (
+                          <span
+                            className={`text-xs ${
+                              delta > 0 ? "text-emerald-600" : "text-rose-600"
+                            }`}
+                          >
+                            {delta > 0 ? `+${delta}` : delta}
+                          </span>
+                        )}
+                        <span className="text-[11px] text-slate-500">dle preferencí</span>
+                      </span>
+                    );
+                  })()
+                ) : project["walkability_score"] != null ? (
+                  String(Math.round(Number(project["walkability_score"])))
+                ) : (
+                  "—"
+                )}
               </p>
             </div>
             <div>

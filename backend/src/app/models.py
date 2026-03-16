@@ -315,6 +315,116 @@ class Unit(Base):
     )
 
 
+class Broker(Base):
+    __tablename__ = "brokers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'broker'"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    clients: Mapped[list["Client"]] = relationship(
+        back_populates="broker",
+        cascade="all, delete-orphan",
+    )
+
+
+class Client(Base):
+    __tablename__ = "clients"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'new'"))
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
+
+    broker: Mapped["Broker"] = relationship(back_populates="clients")
+    profile: Mapped["ClientProfile"] = relationship(
+        back_populates="client",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
+    recommendations: Mapped[list["ClientRecommendation"]] = relationship(
+        back_populates="client",
+        cascade="all, delete-orphan",
+    )
+
+
+class ClientProfile(Base):
+    __tablename__ = "client_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, unique=True)
+
+    budget_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    budget_max: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    area_min: Mapped[float | None] = mapped_column(Float, nullable=True)
+    area_max: Mapped[float | None] = mapped_column(Float, nullable=True)
+    layouts: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    property_type: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'any'"))
+    purchase_purpose: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'own_use'"))
+
+    walkability_preferences_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    filter_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    polygon_geojson: Mapped[str | None] = mapped_column(Text, nullable=True)
+    commute_points_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
+
+    client: Mapped["Client"] = relationship(back_populates="profile")
+
+
+class ClientRecommendation(Base):
+    __tablename__ = "client_recommendations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    unit_id: Mapped[int | None] = mapped_column(ForeignKey("units.id"), nullable=True, index=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    reason_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    pinned_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    hidden_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'suggested'"))
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    client: Mapped["Client"] = relationship(back_populates="recommendations")
+    unit: Mapped["Unit"] = relationship()
+    project: Mapped["Project"] = relationship()
+
+
 class UnitOverride(Base):
     __tablename__ = "unit_overrides"
     __table_args__ = (
