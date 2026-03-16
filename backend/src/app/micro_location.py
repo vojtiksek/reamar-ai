@@ -53,38 +53,47 @@ class OsmAirport(Base):
 
 
 # ---------------------------------------------------------------------------
-# Score configuration: thresholds (meters) and penalties. Transparent, tunable.
-# Base score 100; each penalty is negative; final score = 100 + sum(penalties), clamped 0–100.
+# Score configuration: thresholds and penalties. Stricter scoring (base 70).
+# Prefer raw noise dB (day_db, fallback night_db) over noise_label.
+# Final score = base_score + sum(penalties), clamped 0–100.
 # ---------------------------------------------------------------------------
 
 MICRO_LOCATION_SCORE_CONFIG = {
-    "base_score": 100,
+    "base_score": 70,
+    # Noise by dB: prefer day_db, fallback night_db. Penalty by band.
+    "noise_db_penalties": [
+        (45, 0),
+        (55, -5),
+        (65, -12),
+        (float("inf"), -20),
+    ],
     "noise_label_penalties": {
         "Nízký": 0,
-        "Střední": -2,
-        "Vyšší": -5,
-        "Vysoký": -8,
+        "Střední": -5,
+        "Vyšší": -12,
+        "Vysoký": -20,
     },
     "distance_to_primary_road_m": [
-        (30, -6),
-        (80, -4),
-        (150, -2),
+        (25, -18),
+        (60, -12),
+        (120, -6),
         (float("inf"), 0),
     ],
     "distance_to_tram_tracks_m": [
-        (20, -5),
-        (60, -3),
-        (120, -1),
+        (15, -12),
+        (40, -8),
+        (80, -4),
         (float("inf"), 0),
     ],
     "distance_to_railway_m": [
-        (50, -6),
-        (150, -3),
+        (40, -18),
+        (100, -10),
+        (200, -5),
         (float("inf"), 0),
     ],
     "distance_to_airport_m": [
-        (3000, -4),
-        (7000, -2),
+        (3000, -8),
+        (7000, -4),
         (float("inf"), 0),
     ],
 }
@@ -107,7 +116,19 @@ def _penalty_for_distance(distance_m: Optional[float], bands: list[tuple[float, 
     return 0
 
 
+def _penalty_for_noise_db(db_value: Optional[float]) -> int:
+    """Penalty by noise in dB: <45 => 0, 45–55 => -5, 55–65 => -12, 65+ => -20."""
+    if db_value is None:
+        return 0
+    v = float(db_value)
+    for threshold, penalty in MICRO_LOCATION_SCORE_CONFIG["noise_db_penalties"]:
+        if v < threshold:
+            return penalty
+    return MICRO_LOCATION_SCORE_CONFIG["noise_db_penalties"][-1][1]
+
+
 def _penalty_for_noise_label(label: Optional[str]) -> int:
+    """Fallback when no raw dB; uses label-based penalties (stricter than before)."""
     penalties = MICRO_LOCATION_SCORE_CONFIG["noise_label_penalties"]
     if not label or label not in penalties:
         return 0
@@ -187,9 +208,13 @@ def compute_project_micro_location(db: Session, project: Project) -> None:
     project.distance_to_railway_m = d_rail
     project.distance_to_airport_m = d_air
 
-    # Score: base + penalties (noise + distances)
+    # Score: base + penalties (noise + distances). Prefer raw dB over label.
     base = MICRO_LOCATION_SCORE_CONFIG["base_score"]
-    p_noise = _penalty_for_noise_label(project.noise_label)
+    noise_db = project.noise_day_db if project.noise_day_db is not None else project.noise_night_db
+    if noise_db is not None:
+        p_noise = _penalty_for_noise_db(noise_db)
+    else:
+        p_noise = _penalty_for_noise_label(project.noise_label)
     p_road = _penalty_for_distance(
         d_road,
         MICRO_LOCATION_SCORE_CONFIG["distance_to_primary_road_m"],
