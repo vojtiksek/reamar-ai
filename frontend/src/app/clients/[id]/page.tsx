@@ -15,16 +15,17 @@ import {
   ReamarCard,
   ReamarSubtleCard,
   StatCard,
-  WizardStepHeader,
   reamarInputClass,
   reamarLabelClass,
   reamarSelectClass,
 } from "@/components/ui/reamar-ui";
+import { WizardSteps } from "@/components/ui/WizardSteps";
 import {
   getDefaultPreferences,
   loadPreferences as loadWalkPrefs,
   savePreferences as saveWalkPrefs,
 } from "@/lib/walkabilityPreferences";
+import { filtersToUnitsParams, parseFiltersFromSearchParams, type CurrentFilters } from "@/lib/filters";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -135,6 +136,7 @@ export default function ClientDetailPage() {
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [marketFit, setMarketFit] = useState<MarketFitAnalysis | null>(null);
   const [areaMarket, setAreaMarket] = useState<AreaMarketAnalysis | null>(null);
+  const [showAnalytics, setShowAnalytics] = useState(false);
 
   type Priority = "must" | "prefer" | "ignore";
 
@@ -341,6 +343,18 @@ export default function ClientDetailPage() {
       return;
     }
     setLoading(true);
+    // Odvoď filtry z URL stejně jako na stránce units – hlavně availability (skrýt / zobrazit archiv).
+    let filtersFromUrl: CurrentFilters = {};
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      filtersFromUrl = parseFiltersFromSearchParams(params);
+    }
+    const availabilityParams = new URLSearchParams(
+      filtersToUnitsParams(filtersFromUrl, new Set<string>(["availability"])) as Record<
+        string,
+        string | string[]
+      >
+    );
     Promise.all([
       fetch(`${API_BASE}/clients/${clientId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -357,9 +371,12 @@ export default function ClientDetailPage() {
       fetch(`${API_BASE}/clients/${clientId}/area-market-analysis`, {
         headers: { Authorization: `Bearer ${token}` },
       }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_BASE}/projects/overview?limit=300&sort_by=avg_price_per_m2_czk&sort_dir=asc`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : null)),
+      fetch(
+        `${API_BASE}/projects?${availabilityParams.toString()}&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
+        {
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      ).then((r) => (r.ok ? r.json() : null)),
     ])
       .then(
         ([
@@ -386,11 +403,13 @@ export default function ClientDetailPage() {
             )
             .map((p) => ({
               id: p.id as number,
-              project: (p.project_name as string) ?? null,
+              project: (p.project as string) ?? null,
               municipality: (p.municipality as string) ?? null,
               city: (p.city as string) ?? null,
               gps_latitude: p.gps_latitude as number,
               gps_longitude: p.gps_longitude as number,
+              avg_price_per_m2_czk:
+                typeof p.avg_price_per_m2_czk === "number" ? (p.avg_price_per_m2_czk as number) : null,
             }));
           setLocationProjects(withGps);
       })
@@ -645,9 +664,39 @@ export default function ClientDetailPage() {
     );
   }
 
+  const stepMeta: Record<
+    number,
+    {
+      title: string;
+    }
+  > = {
+    1: {
+      title: "Lokalita – zvolený přístup",
+    },
+    2: {
+      title: "Lokalita – konkrétní oblasti",
+    },
+    3: {
+      title: "Dispozice a typ bydlení",
+    },
+    4: {
+      title: "Rozpočet a parametry",
+    },
+    6: {
+      title: "Standardy a technologie",
+    },
+    7: {
+      title: "Charakter projektu a okolí",
+    },
+  };
+
+  const currentStepMeta =
+    stepMeta[wizardStep] ??
+    stepMeta[1];
+
   return (
     <div className="flex min-h-screen flex-col bg-slate-900/5">
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-10">
         {loading ? (
           <p className="text-sm text-slate-600">Načítání…</p>
         ) : error ? (
@@ -656,67 +705,60 @@ export default function ClientDetailPage() {
           <p className="text-sm text-slate-600">Klient nenalezen.</p>
         ) : (
           <>
-            <div className="mb-6 flex items-center justify-between">
-              <div className="space-y-1">
-                <nav className="text-xs text-slate-500">
-                  <Link href="/clients" className="hover:underline">
-                    Klienti
-                  </Link>{" "}
-                  / <span className="text-slate-700">{client.name}</span>
-                </nav>
-                <div>
-                  <h2 className="text-lg font-semibold text-slate-900">{client.name}</h2>
-                  <p className="text-xs text-slate-600">
-                    Stav: <span className="font-medium">{client.status}</span>
-                  </p>
-                  {profileSavedMessage && (
-                    <p className="mt-1 text-xs text-emerald-600">{profileSavedMessage}</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <ReamarButton
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => router.push("/clients")}
-                >
-                  Zpět na klienty
-                </ReamarButton>
-                <ReamarButton
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  onClick={handleRecompute}
-                  disabled={recomputing}
-                >
-                  {recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}
-                </ReamarButton>
-              </div>
-            </div>
+            <WizardSteps
+              currentStep={wizardStep}
+              setCurrentStep={setWizardStep}
+              totalSteps={TOTAL_WIZARD_STEPS}
+            />
 
             <div className="space-y-10">
-              <section className="mx-auto w-full max-w-4xl">
-                <ReamarCard className="px-6 py-6 md:px-10 md:py-8">
-                  <WizardStepHeader
-                    eyebrow="Klientský intake"
-                    title="Strukturovaný rozhovor pro pochopení profilu klienta"
-                    description="Rozhovor je navržený pro živé broker–klient setkání. Každý krok má jeden hlavní úkol, vše ostatní je jen jemná podpora."
-                    step={wizardStep}
-                    totalSteps={TOTAL_WIZARD_STEPS}
-                  />
-
-                  <div className="space-y-6 text-sm transition-opacity duration-200">
-                  {wizardStep === 1 && (
-                    <div className="space-y-4">
-                      <h4 className="text-lg font-semibold text-slate-900">
-                        Jak chcete vybírat lokalitu?
-                      </h4>
-                      <p className="text-xs text-slate-600">
-                        Společně si vybereme jeden nebo více způsobů, jak o lokalitě přemýšlet. Můžete
-                        kombinovat mapu, dojíždění i administrativní oblasti.
+              <section className="mx-auto w-full max-w-5xl">
+                <ReamarCard className="px-6 py-7 md:px-12 md:py-10">
+                  <div className="mb-6 flex items-start justify-between gap-6">
+                    <div className="space-y-1">
+                      <nav className="text-[11px] text-slate-500">
+                        <Link href="/clients" className="hover:underline">
+                          Klienti
+                        </Link>{" "}
+                        / <span className="text-slate-700">{client.name}</span>
+                      </nav>
+                      <h2 className="text-xl font-semibold text-slate-900">{client.name}</h2>
+                      <p className="text-[11px] text-slate-600">
+                        Krok {wizardStep} / {TOTAL_WIZARD_STEPS}
                       </p>
-                      <div className="grid gap-3 md:grid-cols-2">
+                      {profileSavedMessage && (
+                        <p className="mt-1 text-xs text-emerald-600">{profileSavedMessage}</p>
+                      )}
+                    </div>
+                    <div className="hidden flex-col items-end gap-2 md:flex">
+                      <ReamarButton
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => router.push("/clients")}
+                      >
+                        Zpět na klienty
+                      </ReamarButton>
+                      <ReamarButton
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={handleRecompute}
+                        disabled={recomputing}
+                      >
+                        {recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}
+                      </ReamarButton>
+                    </div>
+                  </div>
+                  <h3 className="mb-2 text-base font-semibold text-slate-900">
+                    {currentStepMeta.title}
+                  </h3>
+
+                  <div className="space-y-8 text-sm transition-opacity duration-200">
+                  {wizardStep === 1 && (
+                    <div className="space-y-6">
+                      <h4 className="text-lg font-semibold text-slate-900">Metoda výběru lokality</h4>
+                      <div className="grid gap-4 md:grid-cols-3">
                         {[
                           {
                             key: "method_polygon",
@@ -748,10 +790,10 @@ export default function ClientDetailPage() {
                                   },
                                 }))
                               }
-                              className={`flex h-full flex-col items-start rounded-2xl border px-4 py-3 text-left transition-colors ${
+                              className={`flex h-full min-h-[148px] flex-col items-start rounded-3xl border px-5 py-4 text-left transition-colors ${
                                 checked
-                                  ? "border-slate-900 bg-slate-900 text-white"
-                                  : "border-slate-200 bg-slate-50 hover:border-slate-300"
+                                  ? "border-slate-900 bg-slate-900 text-white shadow-[0_18px_40px_rgba(15,23,42,0.35)]"
+                                  : "border-slate-200/90 bg-slate-50/90 hover:border-slate-300 hover:bg-white"
                               }`}
                             >
                               <div className="mb-1 flex w-full items-center justify-between gap-2">
@@ -796,12 +838,44 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === 2 && (
-                    <div className="space-y-4">
-                      <h4 className="text-lg font-semibold text-slate-900">Lokalita a prostředí</h4>
-                      <p className="text-xs text-slate-600">
-                        Podle zvolených metod z předchozího kroku společně upřesníte, kde dává bydlení
-                        největší smysl.
-                      </p>
+                    <div className="space-y-6">
+                      <h4 className="text-lg font-semibold text-slate-900">Lokalita v mapě</h4>
+                      <div className="grid gap-3 rounded-2xl bg-slate-50/70 p-3 text-[11px] text-slate-700 md:grid-cols-3">
+                        <div className="space-y-1">
+                          <p className="font-semibold text-slate-900">Zvolené metody lokality</p>
+                          <ul className="list-disc pl-4">
+                            {(wizardExtras.location?.method_polygon ?? true) && (
+                              <li>Polygon v mapě</li>
+                            )}
+                            {wizardExtras.location?.method_commute && <li>Dojíždění na klíčová místa</li>}
+                            {wizardExtras.location?.method_admin && <li>Obvody / okresy / kraje</li>}
+                          </ul>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-semibold text-slate-900">Trh v oblasti</p>
+                          {areaMarket ? (
+                            <>
+                              <p>
+                                {areaMarket.projects_count} projektů · {areaMarket.active_units_count} aktivních jednotek
+                              </p>
+                              <p>
+                                {areaMarket.matching_units_count} jednotek odpovídá aktuálnímu profilu klienta
+                              </p>
+                            </>
+                          ) : (
+                            <p className="text-slate-500">
+                              Po uložení profilu a zakreslení oblasti se zobrazí přehled trhu.
+                            </p>
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          <p className="font-semibold text-slate-900">Jak mapu používat na schůzce</p>
+                          <p>
+                            Ptejte se, které oblasti jsou „určitě ano“, které „spíše ne“ a kam se klient rozhodně nechce
+                            stěhovat. Polygon vždy odpovídá zóně, kde by se makléř měl aktivně dívat po projektech.
+                          </p>
+                        </div>
+                      </div>
                       {(wizardExtras.location?.method_polygon ?? true) && (
                         <ReamarSubtleCard className="space-y-3 p-3">
                           <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
@@ -823,21 +897,45 @@ export default function ClientDetailPage() {
                             }}
                             onActiveAreaChange={setActiveAreaIndex}
                           />
-                          <div className="flex items-center justify-between gap-2">
-                            <ReamarButton
-                              type="button"
-                              variant="subtle"
-                              size="sm"
-                              onClick={() => {
-                                setLocationPolygons((prev) => {
-                                  const next = [...prev, []];
-                                  setActiveAreaIndex(next.length - 1);
-                                  return next;
-                                });
-                              }}
-                            >
-                              Přidat další oblast
-                            </ReamarButton>
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <ReamarButton
+                                type="button"
+                                variant="subtle"
+                                size="sm"
+                                onClick={() => {
+                                  setLocationPolygons((prev) => {
+                                    const next = [...prev, []];
+                                    setActiveAreaIndex(next.length - 1);
+                                    return next;
+                                  });
+                                }}
+                              >
+                                Přidat oblast
+                              </ReamarButton>
+                              {locationPolygons.length > 0 && (
+                                <ReamarButton
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setLocationPolygons((prev) => {
+                                      if (!prev.length) return prev;
+                                      const next = prev.filter((_, idx) => idx !== activeAreaIndex);
+                                      if (!next.length) {
+                                        setActiveAreaIndex(0);
+                                        return [];
+                                      }
+                                      const clamped = Math.min(activeAreaIndex, next.length - 1);
+                                      setActiveAreaIndex(clamped);
+                                      return next;
+                                    });
+                                  }}
+                                >
+                                  Odebrat oblast
+                                </ReamarButton>
+                              )}
+                            </div>
                             {locationPolygons.length > 1 && (
                               <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
                                 <span>Aktivní oblast:</span>
@@ -941,13 +1039,10 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === 4 && (
-                    <div className="space-y-3">
+                    <div className="space-y-6">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Rozpočet a velikost bytu
                       </h4>
-                      <p className="text-xs text-slate-600">
-                        Nejdřív si s klientem ujasněte ideální představu a až poté maximální limity.
-                      </p>
                       <div>
                         <label className={reamarLabelClass}>
                           Ideální cena (Kč)
@@ -1088,13 +1183,10 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === 3 && (
-                    <div className="space-y-3">
+                    <div className="space-y-6">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Dispozice a základní parametry
                       </h4>
-                      <p className="text-xs text-slate-600">
-                        Zaměřte se na to, jak klient skutečně bude byt používat.
-                      </p>
                       <div>
                         <label className={reamarLabelClass}>
                           Dispozice (více možností)
@@ -1355,14 +1447,10 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === 6 && (
-                    <div className="space-y-3">
+                    <div className="space-y-6">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Standardy a technologie
                       </h4>
-                      <p className="text-xs text-slate-600">
-                        U každé položky se zeptejte, zda je to podmínka, výhoda, nebo to klient
-                        neřeší.
-                      </p>
                       {[
                         ["rekuperace", "Rekuperace"],
                         ["floor_heating", "Podlahové vytápění"],
@@ -1371,9 +1459,14 @@ export default function ClientDetailPage() {
                         ["cellar", "Sklep"],
                         ["parking", "Parkování"],
                       ].map(([key, label]) => (
-                        <div key={key} className="space-y-1 text-xs">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-slate-700">{label}</span>
+                        <div
+                          key={key}
+                          className="rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2.5 text-xs"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="space-y-0.5">
+                              <p className="text-[13px] font-semibold text-slate-900">{label}</p>
+                            </div>
                             <select
                               value={
                                 (wizardExtras.standards as any)?.[key] ??
@@ -1388,41 +1481,35 @@ export default function ClientDetailPage() {
                                   },
                                 }))
                               }
-                              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                              className="w-36 rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px]"
                             >
                               <option value="ignore">Neřeším</option>
-                              <option value="prefer">Preferuji</option>
+                              <option value="prefer">Výhoda</option>
                               <option value="must">Musí být</option>
                             </select>
                           </div>
-                          <details className="group rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
+                          <details className="group mt-2 rounded-xl border border-slate-200 bg-white px-2.5 py-2">
                             <summary className="flex cursor-pointer items-center justify-between text-[11px] font-medium text-slate-700">
-                              <span>Více o vlastnosti</span>
+                              <span>Detail vlastnosti</span>
                               <span className="text-[10px] text-slate-500 group-open:hidden">
                                 rozbalit
                               </span>
-                              <span className="text-[10px] text-slate-500 hidden group-open:inline">
+                              <span className="hidden text-[10px] text-slate-500 group-open:inline">
                                 skrýt
                               </span>
                             </summary>
                             <div className="mt-2 space-y-1 text-[11px] text-slate-700">
-                              <p className="font-semibold">Výhody</p>
+                              <p className="font-semibold">Co to klientovi přináší</p>
                               <p>
-                                Krátký popis výhod této vlastnosti v kontextu komfortu, energetiky a
-                                dlouhodobé hodnoty.
+                                Jak se vlastnost projeví v každodenním fungování – komfort, hluk, energetika nebo údržba.
                               </p>
-                              <p className="mt-1 font-semibold">Nevýhody</p>
+                              <p className="mt-1 font-semibold">Kdy je to nutnost</p>
                               <p>
-                                Stručné shrnutí možných kompromisů – například vyšší pořizovací cena,
-                                náročnější údržba nebo omezená dostupnost.
+                                Typické situace, kdy bez této vlastnosti dává smysl nabídku vyloučit.
                               </p>
-                              <p className="mt-1 font-semibold">Kdy to dává smysl</p>
-                              <p>
-                                Typické situace, kdy je tato vlastnost pro klienta klíčová, a kdy je
-                                spíše nice-to-have.
-                              </p>
-                              <p className="mt-1 text-[10px] text-slate-500">
-                                Má X % projektů · Má Y % jednotek
+                              <p className="mt-1 font-semibold">Dostupnost na trhu</p>
+                              <p className="text-[10px] text-slate-500">
+                                „Má X % projektů · Má Y % jednotek“ – orientační informace z analytiky, ne tvrdý filtr.
                               </p>
                             </div>
                           </details>
@@ -1462,13 +1549,10 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === 7 && (
-                    <div className="space-y-3">
+                    <div className="space-y-6">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Charakter projektu a okolí
                       </h4>
-                      <p className="text-xs text-slate-600">
-                        Pomozte klientovi pojmenovat, jaký typ projektu a okolí je pro něj přirozený.
-                      </p>
                       <div>
                         <label className={reamarLabelClass}>
                           Velikost projektu
@@ -1638,7 +1722,7 @@ export default function ClientDetailPage() {
                   )}
 
                   {wizardStep === TOTAL_WIZARD_STEPS && (
-                    <div className="space-y-3">
+                    <div className="space-y-6">
                       <h4 className="text-sm font-semibold text-slate-900">Shrnutí profilu</h4>
                       <p className="text-xs text-slate-600">
                         Rychlý přehled toho, co je pro klienta nutné, preferované a co nehraje roli.
@@ -1672,7 +1756,7 @@ export default function ClientDetailPage() {
                   )}
                   </div>
 
-                  <div className="mt-6 flex items-center justify-between gap-2">
+                  <div className="mt-8 flex items-center justify-between gap-3">
                     <ReamarButton
                       type="button"
                       variant="ghost"
@@ -1711,15 +1795,28 @@ export default function ClientDetailPage() {
                 </ReamarCard>
               </section>
 
-              <section className="mx-auto w-full max-w-6xl space-y-4 pb-8">
-                <InfoBox tone="neutral" title="Podklady pro práci po rozhovoru" className="text-[11px]">
-                  <p>
+              <section className="mx-auto w-full max-w-6xl space-y-3 pb-10">
+                <InfoBox
+                  tone="neutral"
+                  title="Podklady pro práci po rozhovoru"
+                  className="flex items-center justify-between gap-3 text-[11px]"
+                >
+                  <p className="max-w-2xl">
                     Tato analytika je sekundární během klientského intake – slouží hlavně pro přípravu
                     a práci po rozhovoru. Během vedení dotazníku držte fokus na horním wizardu.
                   </p>
+                  <ReamarButton
+                    type="button"
+                    variant="subtle"
+                    size="sm"
+                    onClick={() => setShowAnalytics((prev) => !prev)}
+                  >
+                    {showAnalytics ? "Skrýt analytiku" : "Zobrazit analytiku"}
+                  </ReamarButton>
                 </InfoBox>
 
-                <div className="grid gap-4 md:grid-cols-3">
+                {showAnalytics && (
+                  <div className="grid gap-4 md:grid-cols-3">
                   <ReamarSubtleCard className="col-span-1 p-4">
                     <div className="mb-3">
                       <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -1914,7 +2011,8 @@ export default function ClientDetailPage() {
                       </div>
                     )}
                   </ReamarSubtleCard>
-                </div>
+                  </div>
+                )}
               </section>
             </div>
           </>

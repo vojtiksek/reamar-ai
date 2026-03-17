@@ -12,6 +12,7 @@ export type LocationProjectPoint = {
   city?: string | null;
   gps_latitude?: number | null;
   gps_longitude?: number | null;
+  avg_price_per_m2_czk?: number | null;
 };
 
 type EditorProps = {
