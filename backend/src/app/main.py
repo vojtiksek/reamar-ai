@@ -1522,28 +1522,32 @@ def broker_match_feed(
     Return latest unseen matches grouped by client_id for the current broker.
     Response shape: { client_id: [BrokerMatchItem, ...], ... } for easier consumption.
     """
-    subq = (
-        select(UnitEvent)
-        .where(UnitEvent.unit_id == ClientUnitMatch.unit_id)
-        .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
-        .limit(1)
-        .subquery()
-    )
-    rows = (
-        db.execute(
-            select(ClientUnitMatch, Client, Unit, Project, subq.c.old_value, subq.c.new_value)
-            .join(Client, ClientUnitMatch.client_id == Client.id)
-            .join(Unit, ClientUnitMatch.unit_id == Unit.id)
-            .join(Project, Unit.project_id == Project.id)
-            .outerjoin(subq, subq.c.unit_id == Unit.id)
-            .where(
-                Client.broker_id == broker.id,
-                ClientUnitMatch.seen.is_(False),
-            )
-            .order_by(ClientUnitMatch.created_at.desc())
+    try:
+        subq = (
+            select(UnitEvent)
+            .where(UnitEvent.unit_id == ClientUnitMatch.unit_id)
+            .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+            .limit(1)
+            .subquery()
         )
-        .all()
-    )
+        rows = (
+            db.execute(
+                select(ClientUnitMatch, Client, Unit, Project, subq.c.old_value, subq.c.new_value)
+                .join(Client, ClientUnitMatch.client_id == Client.id)
+                .join(Unit, ClientUnitMatch.unit_id == Unit.id)
+                .join(Project, Unit.project_id == Project.id)
+                .outerjoin(subq, subq.c.unit_id == Unit.id)
+                .where(
+                    Client.broker_id == broker.id,
+                    ClientUnitMatch.seen.is_(False),
+                )
+                .order_by(ClientUnitMatch.created_at.desc())
+            )
+            .all()
+        )
+    except Exception:
+        # When match tables are not yet migrated/seeded, return empty feed instead of 500.
+        return {}
     grouped: dict[int, list[BrokerMatchItem]] = {}
     for match, client, unit, project, old_value, new_value in rows:
         raw_layout = str(unit.layout) if unit.layout is not None else None
