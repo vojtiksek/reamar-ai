@@ -322,6 +322,7 @@ class Broker(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    session_token: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'broker'"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -423,6 +424,53 @@ class ClientRecommendation(Base):
     client: Mapped["Client"] = relationship(back_populates="recommendations")
     unit: Mapped["Unit"] = relationship()
     project: Mapped["Project"] = relationship()
+
+
+class ClientUnitMatch(Base):
+    __tablename__ = "client_unit_matches"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id"), nullable=False, index=True)
+    score: Mapped[float] = mapped_column(Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    seen: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+
+
+class UnitEvent(Base):
+    __tablename__ = "unit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    unit_id: Mapped[int] = mapped_column(ForeignKey("units.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    old_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    new_value: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+
+class CommuteCache(Base):
+    __tablename__ = "commute_cache"
+
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    dest_lat: Mapped[float] = mapped_column(Float, primary_key=True)
+    dest_lng: Mapped[float] = mapped_column(Float, primary_key=True)
+    mode: Mapped[str] = mapped_column(String(16), primary_key=True)
+    minutes: Mapped[float] = mapped_column(Float, nullable=False)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="mock")
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
 
 class UnitOverride(Base):

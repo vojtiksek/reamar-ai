@@ -16,13 +16,26 @@ from sqlalchemy import delete, desc, select, tuple_
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import Project, Unit, UnitApiPending, UnitOverride, UnitPriceHistory, UnitSnapshot
+from .models import (
+    Project,
+    Unit,
+    UnitApiPending,
+    UnitOverride,
+    UnitPriceHistory,
+    UnitSnapshot,
+    UnitEvent,
+    Client,
+    ClientProfile,
+    ClientUnitMatch,
+    CommuteCache,
+)
 from .overrides import OVERRIDEABLE_FIELDS, apply_override, build_override_map
 from .aggregates import recompute_local_price_diffs, recompute_project_aggregates
 from .project_location_metrics import (
     enrich_project_location_metrics,
     should_enrich_after_project_change,
 )
+from .main import _compute_unit_match_score
 
 # Pole, u kterých při rozdílu API vs. aktuální neukládáme přímo, ale do pending (uživatel zvolí).
 API_CONFLICT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
@@ -733,6 +746,40 @@ def import_units(
                         if old_v != new_v:
                             changes_by_field[a] = changes_by_field.get(a, 0) + 1
 
+                    # Detect unit events based on changes in price and availability/status.
+                    old_price = old_vals.get("price_czk")
+                    new_price = getattr(unit, "price_czk", None)
+                    if old_price is not None and new_price is not None and old_price != new_price:
+                        ev_type = "price_drop" if new_price < old_price else "price_increase"
+                        if not dry_run:
+                            db.add(
+                                UnitEvent(
+                                    unit_id=unit.id,
+                                    event_type=ev_type,
+                                    old_value=str(old_price),
+                                    new_value=str(new_price),
+                                )
+                            )
+
+                    old_available = old_vals.get("available")
+                    new_available = getattr(unit, "available", None)
+                    if old_available is not None and new_available is not None and old_available != new_available:
+                        if old_available is False and new_available is True:
+                            ev_type = "status_available"
+                        elif old_available is True and new_available is False:
+                            ev_type = "status_reserved"
+                        else:
+                            ev_type = None
+                        if ev_type and not dry_run:
+                            db.add(
+                                UnitEvent(
+                                    unit_id=unit.id,
+                                    event_type=ev_type,
+                                    old_value=str(old_available),
+                                    new_value=str(new_available),
+                                )
+                            )
+
                 if is_new:
                     if dry_run:
                         units_created += 1
@@ -742,6 +789,16 @@ def import_units(
                     db.add(unit)
                     db.flush()
                     units_created += 1
+                    # Record new unit event
+                    if not dry_run:
+                        db.add(
+                            UnitEvent(
+                                unit_id=unit.id,
+                                event_type="new_unit",
+                                old_value=None,
+                                new_value=None,
+                            )
+                        )
                     last = None
                 else:
                     units_updated += 1
@@ -797,6 +854,70 @@ def import_units(
                 db.flush()
                 for pid in sorted(enrich_project_ids):
                     enrich_project_location_metrics(db, pid)
+
+                # Invalidate commute cache for projects whose GPS changed.
+                if enrich_project_ids:
+                    db.execute(delete(CommuteCache).where(CommuteCache.project_id.in_(enrich_project_ids)))
+
+            # After flushing unit changes and potential events, generate client alerts for new events.
+            if not dry_run:
+                # Load recent events for units touched in this chunk
+                unit_ids = [u.id for u in units_map.values()]
+                if unit_ids:
+                    events = (
+                        db.execute(
+                            select(UnitEvent)
+                            .where(UnitEvent.unit_id.in_(unit_ids))
+                            .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    # Map unit_id -> latest event per type (simple last-seen)
+                    events_by_unit: dict[int, list[UnitEvent]] = {}
+                    for ev in events:
+                        events_by_unit.setdefault(ev.unit_id, []).append(ev)
+
+                    if events_by_unit:
+                        # Load clients + profiles once (simple approach: all clients)
+                        clients = db.execute(select(Client)).scalars().all()
+                        profiles_map: dict[int, ClientProfile | None] = {}
+                        if clients:
+                            prof_rows = db.execute(
+                                select(ClientProfile).where(
+                                    ClientProfile.client_id.in_([c.id for c in clients])
+                                )
+                            ).scalars().all()
+                            for p in prof_rows:
+                                profiles_map[p.client_id] = p
+
+                        for unit in units_map.values():
+                            unit_events = events_by_unit.get(unit.id)
+                            if not unit_events:
+                                continue
+                            # For alerting, we don't care which exact event, we just use latest.
+                            latest_event = unit_events[0]
+                            project = project_key_to_project[project_key(unit)]
+                            for client in clients:
+                                profile = profiles_map.get(client.id)
+                                score, _parts = _compute_unit_match_score(unit, project, profile)
+                                if score >= 80.0:
+                                    exists = db.execute(
+                                        select(ClientUnitMatch).where(
+                                            ClientUnitMatch.client_id == client.id,
+                                            ClientUnitMatch.unit_id == unit.id,
+                                        )
+                                    ).scalars().first()
+                                    if not exists:
+                                        db.add(
+                                            ClientUnitMatch(
+                                                client_id=client.id,
+                                                unit_id=unit.id,
+                                                score=score,
+                                                event_type=latest_event.event_type,
+                                            )
+                                        )
+
 
         if not dry_run:
             # Recompute cached project aggregates for all affected projects in this import
