@@ -1,0 +1,148 @@
+---
+title: Reamar UI – Design System Rules
+---
+
+Reamar AI je prémiový real-estate advisory produkt používaný živě během schůzek makléř–klient.
+UI musí působit _prémiově, klidně, elegantně a důvěryhodně_, ne jako startupový marketing ani interní admin.
+
+## 1. Brand feeling & celkový tón
+
+- **Brand feeling**
+  - Prémiový advisory nástroj, ne „SaaS dashboard“.
+  - Uživatel je makléř, klient sedí vedle něj – UI nesmí působit zahlceně ani hlučně.
+  - Vizuální styl vychází z `reamar.cz`: klidné plochy, kvalitní typografie, minimum rušivých prvků.
+- **Barevná paleta (směr)**
+  - **Primární akcent**: tmavá navy / ink (`slate-900` / podobná).
+  - **Povrchy**: teplé off-white / sand neutrals (světlé, jemně teplé šedé).
+  - **Mapa / data akcent**: tlumená modrá (muted blue) pro grafy a mapové prvky.
+  - **Stavy**: úspěch = jemná zelená, varování = jemná amber, chyba = jemná červená – vždy tlumené tóny, ne signální neon.
+- **Typografie**
+  - Hlavní text klidný, čitelný, bez extrémních velikostí.
+  - Headliny a nadpisy používají větší řádkování a dostatek prostoru nad/pod.
+  - Eyebrow / labely často uppercase s trackingem (advisory tón, strukturovaný rozhovor).
+
+## 2. Spacing rules
+
+- **Základní spacing škála**
+  - Malé mezery: 4–8 px pro drobné prvky (ikona + text).
+  - Standardní mezery: 12–16 px mezi řádky v rámci jednoho bloku.
+  - Sekční mezery: 24–32 px mezi sekcemi na kartě.
+  - Velké mezery: 32–40+ px mezi hlavní kartou wizardu a sekundární analytikou.
+- **Obecné zásady**
+  - Raději méně prvků s větším prostorem než více prvků namačkaných k sobě.
+  - Jedna obrazovka má 1–2 hlavní vertikální bloky, mezi nimi cca 32 px mezera.
+  - Vyhnout se „pixel perfect gridům“; důležitější je čitelnost a klid.
+
+## 3. Card styling rules
+
+- **Primární karty (hlavní workflow)**
+  - Velké zaoblení (cca `rounded-3xl`), měkký stín, teplý světlý povrch.
+  - Obecná podoba: „velká klidná karta“ uprostřed šedavého pozadí.
+  - Uvnitř karty jasná hierarchie: eyebrow → title → krátký popis → obsah → akce.
+- **Sekundární karty (podpůrné informace, analytics, shrnutí)**
+  - Menší zaoblení (`rounded-2xl`), jemnější stín, bílejší povrch.
+  - Používat pro: přehled trhu, market fit, doporučené jednotky, podklady pro meeting.
+- **Pravidlo pro používání**
+  - Pokud je obsah přímou součástí vedeného rozhovoru → patří do **primární karty**.
+  - Pokud je obsah spíše pozadí/analytika → patří do **sekundární karty** pod nebo vedle wizardu.
+
+## 4. Button styling rules
+
+- **Jazyk tlačítek**
+  - `primary` – hlavní CTA v rámci obrazovky (např. „Další“, „Uložit profil“).
+  - `secondary` – alternativní akce na stejné úrovni („Zobrazit detail“, „Zobrazit na mapě“).
+  - `subtle / ghost` – vedlejší akce typu „Zpět“, „Zrušit“, nenápadné pomocné odkazy.
+- **Vizuální pravidla**
+  - Všechna hlavní tlačítka **kulatá** (`rounded-full`), stejné typografie a paddingy.
+  - Barvy:
+    - Primární: tmavá navy (tmavý text na světlém pozadí nebo bílý text na navy pozadí).
+    - Sekundární: obrys navy, výplň při hoveru.
+    - Subtle/ghost: minimální border nebo žádný, šedší text.
+  - Stav hover/focus vždy jemný, bez agresivní animace.
+- **Konzistence**
+  - Nemixovat různé tvary tlačítek na jedné obrazovce (např. hranaté vs. kulaté).
+  - Na dané obrazovce mít maximálně **1 vizuálně dominantní CTA**.
+
+## 5. Form styling rules
+
+- **Inputs & selects**
+  - Vždy používat sdílené třídy / komponenty (např. `reamarInputClass`, `reamarSelectClass` – nebo jejich budoucí ekvivalenty).
+  - Zaoblení cca `rounded-lg`, jemný border, světlé pozadí, decentní stín.
+  - Fokus: tmavší border + tenký ring v navy barvě, žádné dramatické barvy.
+- **Labely a help text**
+  - Label: uppercase, drobný font, mírný tracking – tvoří vizuální „síť“ formuláře.
+  - Help text: menší šedý text těsně pod polem; vysvětluje jen to, co není zřejmé z labelu.
+- **Skupiny polí**
+  - Související pole seskupit **do karet** nebo bloků – ne nekonečný seznam polí.
+  - V rámci bloku mít 1 hlavní nadpis a krátký popis, aby broker věděl, „o čem se teď bavíme“.
+
+## 6. Infobox & stat card styling
+
+- **Infobox**
+  - Používat pro vysvětlení, tipy, upozornění, shrnutí.
+  - Zaoblený box s jemným barevným tónem podle typu: neutral (šedý), success (zelený), warning (amber), danger (červený).
+  - Lehké stíny, drobný text → nesmí přebít hlavní formulář.
+- **Stat card**
+  - Malé kartičky s label → velká hodnota → krátký sublabel.
+  - Používat u analytiky (počet projektů, jednotek, cenové rozpětí).
+  - Vizuálně konzistentní – stejné zaoblení, stejný font pro čísla.
+
+## 7. Wizard layout rules
+
+- **Primární fokus**
+  - Wizard / intake musí být vždy **hlavní kartou na stránce**.
+  - V horní části obrazovky zabírá wizard většinu horizontální šířky (max-width kolem 4–5xl).
+- **Strukturovaný rozhovor**
+  - Každý krok má **jedno hlavní téma** a jasný název.
+  - Texty formulovány jako podpora živého rozhovoru (ne jako interní formulář).
+- **Header wizardu**
+  - Sdílený komponent (např. `WizardStepHeader`) s eyebrow, title, popisem a progres barem.
+  - Stejná vizuální podoba napříč všemi wizardy v produktu.
+- **Navigace kroků**
+  - „Zpět“ a „Další“ vždy na stejném místě, se stejnou velikostí.
+  - „Uložit“ může být vedle navigace kroků, ale vizuálně mírně méně dominantní než pokračování rozhovoru.
+
+## 8. Map screen rules
+
+- **Mapa není dashboard, ale nástroj v rozhovoru**
+  - Mapa slouží k vedení klienta při volbě lokality, ne jako GIS konzole.
+  - Ovládací prvky kolem mapy musí být omezené a jasně hierarchizované.
+- **Layout mapy**
+  - Mapa typicky zabere širší plochu, ovládací prvky jsou v kartách (cards) nad / vedle.
+  - Polygon editor je součástí **primárního kroku**; vše ostatní (statistiky, distribuce layoutů) je sekundární pod mapou.
+- **Styling**
+  - Okraje mapového panelu a overlaye sjednotit s kartami (zaoblení, stíny).
+  - Pro zvýraznění dat používat tlumenou modrou; vyhnout se agresivním barevným paletám.
+
+## 9. Table readability rules
+
+- **Zásady pro tabulky**
+  - Vždy čisté, klidné, bez vertikálních čar mezi sloupci.
+  - Využívat jemné horizontální čáry + dostatek vertikálního paddingu (řádky „dýchají“).
+  - Menší font než formuláře, aby tabulka vizuálně ustoupila hlavním krokům.
+- **Kolik informací na řádek**
+  - Preferovat méně sloupců a případně rozklikávací detail, místo přehnaného množství sloupců.
+  - Číselné sloupce zarovnávat doprava, textové doleva.
+- **Kdy tabulku omezit**
+  - V kontextu klientského intake zobrazit jen top N položek (např. 5–10), zbytek v samostatné obrazovce.
+
+## 10. Fullscreen focus layout – kdy a jak
+
+- **Kdy použít fullscreen fokus**
+  - Klientský intake / wizardy.
+  - Kritické rozhodovací obrazovky (výběr jednotek pro klienta, finální nabídka).
+  - Onboarding/konfigurace profilu klienta.
+- **Jak vypadá fullscreen fokus**
+  - Pozadí celé stránky je jemně tónované (světlé šedé / sand).
+  - Uprostřed velká karta s wizardem, kolem ní dostatek negativního prostoru.
+  - Vedlejší informace (statistiky, doporučení) jsou níže, menší, v méně výrazných kartách.
+
+## 11. Kdy musí být analytika sekundární
+
+- **Obecné pravidlo**
+  - Pokud uživatel **mluví s klientem** a používá obrazovku k vedení rozhovoru, analytika musí být **vizuálně pod** hlavním dotazníkem.
+  - Analytics nikdy nesmí přebít formulář nebo wizard, který slouží k pochopení klienta.
+- **Konkrétní případy**
+  - Stránka klienta (`/clients/[id]`): intake wizard je vždy nahoře, trh/market fit/doporučení jsou níže a vizuálně subtilnější.
+  - Budoucí wizardy pro projekty / matches: opět primární je průvodce, až pod ním shrnutí a čísla.
+
