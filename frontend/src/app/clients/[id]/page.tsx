@@ -3,16 +3,30 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import clsx from "clsx";
 
 import { API_BASE } from "@/lib/api";
 import type { WalkabilityPreferences } from "@/lib/walkabilityPreferences";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import { ClientLocationMap, type LocationProjectPoint } from "@/components/ClientLocationMap";
 import {
+  InfoBox,
+  ReamarButton,
+  ReamarCard,
+  ReamarSubtleCard,
+  StatCard,
+  WizardStepHeader,
+  reamarInputClass,
+  reamarLabelClass,
+  reamarSelectClass,
+} from "@/components/ui/reamar-ui";
+import {
   getDefaultPreferences,
   loadPreferences as loadWalkPrefs,
   savePreferences as saveWalkPrefs,
 } from "@/lib/walkabilityPreferences";
+
+const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
 type ClientSummary = {
   id: number;
@@ -101,6 +115,8 @@ export default function ClientDetailPage() {
   const router = useRouter();
   const clientId = Number(params?.id);
 
+  const TOTAL_WIZARD_STEPS = 7;
+
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [profile, setProfile] = useState<ClientProfile | null>(null);
   const [selectedLayouts, setSelectedLayouts] = useState<string[]>([]);
@@ -128,6 +144,11 @@ export default function ClientDetailPage() {
       noise_sensitivity?: Priority;
       project_size?: "small" | "medium" | "large" | "ignore";
       urban_vs_quiet?: "quiet" | "urban" | "ignore";
+      method_polygon?: boolean;
+      method_commute?: boolean;
+      method_admin?: boolean;
+      administrative_area?: string | null;
+      administrative_region?: string | null;
     };
     budget?: {
       ideal_price?: number | null;
@@ -269,7 +290,7 @@ export default function ClientDetailPage() {
         setWizardExtras((prev) => ({
           ...prev,
           commute: {
-            points: list.map((p: any) => ({
+            points: list.map((p: any, idx: number) => ({
               id: String(p.id ?? `${idx}`),
               label: String(p.label ?? ""),
               lat: typeof p.lat === "number" ? p.lat : null,
@@ -625,8 +646,8 @@ export default function ClientDetailPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-4">
+    <div className="flex min-h-screen flex-col bg-slate-900/5">
+      <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6">
         {loading ? (
           <p className="text-sm text-slate-600">Načítání…</p>
         ) : error ? (
@@ -635,7 +656,7 @@ export default function ClientDetailPage() {
           <p className="text-sm text-slate-600">Klient nenalezen.</p>
         ) : (
           <>
-            <div className="mb-4 flex items-center justify-between">
+            <div className="mb-6 flex items-center justify-between">
               <div className="space-y-1">
                 <nav className="text-xs text-slate-500">
                   <Link href="/clients" className="hover:underline">
@@ -654,111 +675,272 @@ export default function ClientDetailPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <button
+                <ReamarButton
                   type="button"
+                  variant="ghost"
+                  size="sm"
                   onClick={() => router.push("/clients")}
-                  className="glass-pill border border-transparent px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white/90"
                 >
                   Zpět na klienty
-                </button>
-                <button
+                </ReamarButton>
+                <ReamarButton
                   type="button"
+                  variant="primary"
+                  size="sm"
                   onClick={handleRecompute}
                   disabled={recomputing}
-                  className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
                 >
                   {recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}
-                </button>
+                </ReamarButton>
               </div>
             </div>
 
-            <div className="grid gap-6 md:grid-cols-3">
-              <section className="md:col-span-1 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      Klientský intake
-                    </h3>
-                    <p className="mt-0.5 text-[11px] text-slate-500">
-                      Strukturovaný dotazník pro vedení rozhovoru s klientem.
-                    </p>
-                  </div>
-                  <span className="text-[11px] font-medium text-slate-500">
-                    Krok {wizardStep} / 7
-                  </span>
-                </div>
-                <div className="mb-4 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                  <div
-                    className="h-full rounded-full bg-slate-900 transition-all"
-                    style={{ width: `${(wizardStep / 7) * 100}%` }}
+            <div className="space-y-10">
+              <section className="mx-auto w-full max-w-4xl">
+                <ReamarCard className="px-6 py-6 md:px-10 md:py-8">
+                  <WizardStepHeader
+                    eyebrow="Klientský intake"
+                    title="Strukturovaný rozhovor pro pochopení profilu klienta"
+                    description="Rozhovor je navržený pro živé broker–klient setkání. Každý krok má jeden hlavní úkol, vše ostatní je jen jemná podpora."
+                    step={wizardStep}
+                    totalSteps={TOTAL_WIZARD_STEPS}
                   />
-                </div>
 
-                <div className="space-y-4 text-sm">
+                  <div className="space-y-6 text-sm transition-opacity duration-200">
                   {wizardStep === 1 && (
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-semibold text-slate-900">Lokalita a prostředí</h4>
+                    <div className="space-y-4">
+                      <h4 className="text-lg font-semibold text-slate-900">
+                        Jak chcete vybírat lokalitu?
+                      </h4>
                       <p className="text-xs text-slate-600">
-                        Společně vyberte oblasti, kde si klient dokáže bydlení reálně představit.
-                        Klikáním do mapy zakreslíte polygon hledané oblasti.
+                        Společně si vybereme jeden nebo více způsobů, jak o lokalitě přemýšlet. Můžete
+                        kombinovat mapu, dojíždění i administrativní oblasti.
                       </p>
-                      <ClientLocationMap
-                        areas={locationPolygons}
-                        activeAreaIndex={activeAreaIndex}
-                        projects={locationProjects}
-                        onChange={(next) => {
-                          setLocationPolygons(next);
-                          if (activeAreaIndex >= next.length) {
-                            setActiveAreaIndex(Math.max(0, next.length - 1));
-                          }
-                        }}
-                        onActiveAreaChange={setActiveAreaIndex}
-                      />
-                      <div className="flex items-center justify-between gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setLocationPolygons((prev) => {
-                              const next = [...prev, []];
-                              setActiveAreaIndex(next.length - 1);
-                              return next;
-                            });
-                          }}
-                          className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
-                        >
-                          Přidat další oblast
-                        </button>
-                        {locationPolygons.length > 1 && (
-                          <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
-                            <span>Aktivní oblast:</span>
-                            {locationPolygons.map((_, idx) => (
-                              <button
-                                key={idx}
-                                type="button"
-                                onClick={() => setActiveAreaIndex(idx)}
-                                className={`rounded-full px-2 py-0.5 text-[11px] ${
-                                  idx === activeAreaIndex
-                                    ? "bg-slate-900 text-white"
-                                    : "bg-slate-100 text-slate-700"
-                                }`}
-                              >
-                                {idx + 1}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                      <div className="grid gap-3 md:grid-cols-2">
+                        {[
+                          {
+                            key: "method_polygon",
+                            title: "Polygon na mapě",
+                            desc: "Vymezíte přesnou oblast, kde klient opravdu chce bydlet.",
+                          },
+                          {
+                            key: "method_commute",
+                            title: "Dojíždění do práce / školy",
+                            desc: "Lokalitu odvodíme podle dojezdových časů na klíčová místa.",
+                          },
+                          {
+                            key: "method_admin",
+                            title: "Obvod / okres / kraj",
+                            desc: "Pracujete s administrativními celky a známými názvy oblastí.",
+                          },
+                        ].map(({ key, title, desc }) => {
+                          const checked = (wizardExtras.location as any)?.[key] ?? false;
+                          return (
+                            <button
+                              key={key}
+                              type="button"
+                              onClick={() =>
+                                setWizardExtras((prev) => ({
+                                  ...prev,
+                                  location: {
+                                    ...(prev.location ?? {}),
+                                    [key]: !checked,
+                                  },
+                                }))
+                              }
+                              className={`flex h-full flex-col items-start rounded-2xl border px-4 py-3 text-left transition-colors ${
+                                checked
+                                  ? "border-slate-900 bg-slate-900 text-white"
+                                  : "border-slate-200 bg-slate-50 hover:border-slate-300"
+                              }`}
+                            >
+                              <div className="mb-1 flex w-full items-center justify-between gap-2">
+                                <span
+                                  className={`inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px] ${
+                                    checked
+                                      ? "border-white bg-white/10 text-slate-900"
+                                      : "border-slate-300 bg-white text-slate-500"
+                                  }`}
+                                >
+                                  {checked ? "✓" : ""}
+                                </span>
+                                <span className="text-[11px] font-medium uppercase tracking-[0.14em] opacity-70">
+                                  Metoda lokality
+                                </span>
+                              </div>
+                              <div className="space-y-0.5">
+                                <p
+                                  className={`text-sm font-semibold ${
+                                    checked ? "text-white" : "text-slate-900"
+                                  }`}
+                                >
+                                  {title}
+                                </p>
+                                <p
+                                  className={`text-xs ${
+                                    checked ? "text-slate-100/80" : "text-slate-600"
+                                  }`}
+                                >
+                                  {desc}
+                                </p>
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => setWalkPrefsOpen(true)}
-                        className="w-full rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-white"
-                      >
-                        Nastavit preference walkability a okolí
-                      </button>
+                      <p className="text-[11px] text-slate-500">
+                        Můžete kombinovat více metod najednou. Například polygon pro preferované čtvrti
+                        a zároveň dojíždění do školy.
+                      </p>
                     </div>
                   )}
 
                   {wizardStep === 2 && (
+                    <div className="space-y-4">
+                      <h4 className="text-lg font-semibold text-slate-900">Lokalita a prostředí</h4>
+                      <p className="text-xs text-slate-600">
+                        Podle zvolených metod z předchozího kroku společně upřesníte, kde dává bydlení
+                        největší smysl.
+                      </p>
+                      {(wizardExtras.location?.method_polygon ?? true) && (
+                        <ReamarSubtleCard className="space-y-3 p-3">
+                          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Polygon na mapě
+                          </h5>
+                          <p className="text-xs text-slate-600">
+                            Klikáním do mapy zakreslíte oblasti, kde si klient dokáže bydlení reálně
+                            představit. Můžete vytvořit i více oblastí.
+                          </p>
+                          <ClientLocationMap
+                            areas={locationPolygons}
+                            activeAreaIndex={activeAreaIndex}
+                            projects={locationProjects}
+                            onChange={(next) => {
+                              setLocationPolygons(next);
+                              if (activeAreaIndex >= next.length) {
+                                setActiveAreaIndex(Math.max(0, next.length - 1));
+                              }
+                            }}
+                            onActiveAreaChange={setActiveAreaIndex}
+                          />
+                          <div className="flex items-center justify-between gap-2">
+                            <ReamarButton
+                              type="button"
+                              variant="subtle"
+                              size="sm"
+                              onClick={() => {
+                                setLocationPolygons((prev) => {
+                                  const next = [...prev, []];
+                                  setActiveAreaIndex(next.length - 1);
+                                  return next;
+                                });
+                              }}
+                            >
+                              Přidat další oblast
+                            </ReamarButton>
+                            {locationPolygons.length > 1 && (
+                              <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
+                                <span>Aktivní oblast:</span>
+                                {locationPolygons.map((_, idx) => (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    onClick={() => setActiveAreaIndex(idx)}
+                                    className={`rounded-full px-2 py-0.5 text-[11px] ${
+                                      idx === activeAreaIndex
+                                        ? "bg-slate-900 text-white"
+                                        : "bg-slate-100 text-slate-700"
+                                    }`}
+                                  >
+                                    {idx + 1}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </ReamarSubtleCard>
+                      )}
+
+                      {wizardExtras.location?.method_admin && (
+                        <ReamarSubtleCard className="space-y-3 p-3">
+                          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Obvod / okres / kraj
+                          </h5>
+                          <p className="text-xs text-slate-600">
+                            Pokud klient přemýšlí v pojmech &quot;Praha 6&quot;, &quot;okres Beroun&quot;
+                            nebo &quot;Středočeský kraj&quot;, zapište je sem.
+                          </p>
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div>
+                              <label className={reamarLabelClass}>
+                                Preferované obvody / okresy
+                              </label>
+                              <input
+                                type="text"
+                                value={wizardExtras.location?.administrative_area ?? ""}
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    location: {
+                                      ...(prev.location ?? {}),
+                                      administrative_area: e.target.value || null,
+                                    },
+                                  }))
+                                }
+                                className={cn("mt-1 text-xs", reamarInputClass)}
+                                placeholder="Např. Praha 6, Praha-západ, okres Beroun"
+                              />
+                            </div>
+                            <div>
+                              <label className={reamarLabelClass}>
+                                Region / kraj
+                              </label>
+                              <input
+                                type="text"
+                                value={wizardExtras.location?.administrative_region ?? ""}
+                                onChange={(e) =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    location: {
+                                      ...(prev.location ?? {}),
+                                      administrative_region: e.target.value || null,
+                                    },
+                                  }))
+                                }
+                                className={cn("mt-1 text-xs", reamarInputClass)}
+                                placeholder="Např. Praha, Středočeský kraj"
+                              />
+                            </div>
+                          </div>
+                        </ReamarSubtleCard>
+                      )}
+
+                      {wizardExtras.location?.method_commute && (
+                        <ReamarSubtleCard className="space-y-2 border-dashed p-3">
+                          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                            Dojíždění do práce / školy
+                          </h5>
+                          <p className="text-xs text-slate-600">
+                            V dalším kroku dotazníku máte detailní sekci pro zadání klíčových míst a
+                            maximálního času dojíždění. Zde stačí potvrdit, že dojíždění je pro klienta
+                            relevantní vstup.
+                          </p>
+                        </ReamarSubtleCard>
+                      )}
+
+                      <ReamarButton
+                        type="button"
+                        variant="subtle"
+                        size="sm"
+                        className="w-full"
+                        onClick={() => setWalkPrefsOpen(true)}
+                      >
+                        Nastavit preference walkability a okolí
+                      </ReamarButton>
+                    </div>
+                  )}
+
+                  {wizardStep === 4 && (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Rozpočet a velikost bytu
@@ -767,7 +949,7 @@ export default function ClientDetailPage() {
                         Nejdřív si s klientem ujasněte ideální představu a až poté maximální limity.
                       </p>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Ideální cena (Kč)
                         </label>
                         <input
@@ -782,13 +964,13 @@ export default function ClientDetailPage() {
                               },
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          className={cn("mt-1", reamarInputClass)}
                           placeholder="Např. 8 500 000"
                         />
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Maximální cena (Kč)
                           </label>
                           <input
@@ -800,12 +982,12 @@ export default function ClientDetailPage() {
                                 budget_max: e.target.value ? Number(e.target.value) : null,
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarInputClass)}
                             placeholder="Absolutní strop"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Tolerance +10 %
                           </label>
                           <select
@@ -828,7 +1010,7 @@ export default function ClientDetailPage() {
                                 },
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarSelectClass)}
                           >
                             <option value="ignore">Neřeším</option>
                             <option value="yes">Klient toleruje +10 %</option>
@@ -838,7 +1020,7 @@ export default function ClientDetailPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Ideální plocha (m²)
                           </label>
                           <input
@@ -853,12 +1035,12 @@ export default function ClientDetailPage() {
                                 },
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarInputClass)}
                             placeholder="Např. 75"
                           />
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Minimální plocha (m²)
                           </label>
                           <input
@@ -870,13 +1052,13 @@ export default function ClientDetailPage() {
                                 area_min: e.target.value ? Number(e.target.value) : null,
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarInputClass)}
                             placeholder="Absolutní minimum"
                           />
                         </div>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Preferovaný platební kalendář
                         </label>
                         <select
@@ -894,7 +1076,7 @@ export default function ClientDetailPage() {
                               },
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          className={cn("mt-1", reamarSelectClass)}
                         >
                           <option value="ignore">Neřeším</option>
                           <option value="upfront">Vyšší část při podpisu</option>
@@ -914,10 +1096,10 @@ export default function ClientDetailPage() {
                         Zaměřte se na to, jak klient skutečně bude byt používat.
                       </p>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Dispozice (více možností)
                         </label>
-                        <div className="mt-1 grid grid-cols-2 gap-1 text-xs">
+                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
                           {LAYOUT_OPTIONS.map((opt) => {
                             const checked = selectedLayouts.includes(opt.value);
                             return (
@@ -943,7 +1125,7 @@ export default function ClientDetailPage() {
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Typ nemovitosti
                           </label>
                           <select
@@ -954,7 +1136,7 @@ export default function ClientDetailPage() {
                                 property_type: e.target.value,
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarSelectClass)}
                           >
                             <option value="any">Neřeším</option>
                             <option value="apartment">Byt</option>
@@ -962,7 +1144,7 @@ export default function ClientDetailPage() {
                           </select>
                         </div>
                         <div>
-                          <label className="block text-xs font-medium text-slate-600">
+                          <label className={reamarLabelClass}>
                             Účel nákupu
                           </label>
                           <select
@@ -973,7 +1155,7 @@ export default function ClientDetailPage() {
                                 purchase_purpose: e.target.value,
                               }))
                             }
-                            className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                            className={cn("mt-1", reamarSelectClass)}
                           >
                             <option value="own_use">Vlastní bydlení</option>
                             <option value="investment">Investice</option>
@@ -989,31 +1171,63 @@ export default function ClientDetailPage() {
                             ["garden", "Zahrada"],
                             ["anything_ok", "Je to jedno"],
                           ].map(([key, label]) => (
-                            <div
-                              key={key}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <span className="text-slate-700">{label}</span>
-                              <select
-                                value={
-                                  (wizardExtras.outdoor as any)?.[key] ??
-                                  ("ignore" as Priority | "ignore")
-                                }
-                                onChange={(e) =>
-                                  setWizardExtras((prev) => ({
-                                    ...prev,
-                                    outdoor: {
-                                      ...(prev.outdoor ?? {}),
-                                      [key]: e.target.value as Priority,
-                                    },
-                                  }))
-                                }
-                                className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                              >
-                                <option value="ignore">Neřeším</option>
-                                <option value="prefer">Preferuji</option>
-                                <option value="must">Musí být</option>
-                              </select>
+                            <div key={key} className="space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="text-slate-700">{label}</span>
+                                <select
+                                  value={
+                                    (wizardExtras.outdoor as any)?.[key] ??
+                                    ("ignore" as Priority | "ignore")
+                                  }
+                                  onChange={(e) =>
+                                    setWizardExtras((prev) => ({
+                                      ...prev,
+                                      outdoor: {
+                                        ...(prev.outdoor ?? {}),
+                                        [key]: e.target.value as Priority,
+                                      },
+                                    }))
+                                  }
+                                  className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                                >
+                                  <option value="ignore">Neřeším</option>
+                                  <option value="prefer">Preferuji</option>
+                                  <option value="must">Musí být</option>
+                                </select>
+                              </div>
+                              {key !== "anything_ok" && (
+                                <details className="group rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
+                                  <summary className="flex cursor-pointer items-center justify-between text-[11px] font-medium text-slate-700">
+                                    <span>Více o venkovním prostoru</span>
+                                    <span className="text-[10px] text-slate-500 group-open:hidden">
+                                      rozbalit
+                                    </span>
+                                    <span className="text-[10px] text-slate-500 hidden group-open:inline">
+                                      skrýt
+                                    </span>
+                                  </summary>
+                                  <div className="mt-2 space-y-1 text-[11px] text-slate-700">
+                                    <p className="font-semibold">Výhody</p>
+                                    <p>
+                                      Krátký popis výhod konkrétního typu venkovního prostoru – více
+                                      světla, soukromí, možnost trávit čas venku.
+                                    </p>
+                                    <p className="mt-1 font-semibold">Nevýhody</p>
+                                    <p>
+                                      Shrnutí limitů, jako je hluk z ulice, údržba nebo menší využitelnost
+                                      v zimě.
+                                    </p>
+                                    <p className="mt-1 font-semibold">Kdy to dává smysl</p>
+                                    <p>
+                                      Situace, kdy je daný typ venkovního prostoru pro klienta zásadní
+                                      (např. děti, práce z domova, domácí mazlíčci).
+                                    </p>
+                                    <p className="mt-1 text-[10px] text-slate-500">
+                                      Má X % projektů · Má Y % jednotek
+                                    </p>
+                                  </div>
+                                </details>
+                              )}
                             </div>
                           ))}
                           <div className="grid grid-cols-2 gap-2">
@@ -1140,241 +1354,7 @@ export default function ClientDetailPage() {
                     </div>
                   )}
 
-                  {wizardStep === 4 && (
-                    <div className="space-y-3">
-                      <h4 className="text-sm font-semibold text-slate-900">Dojíždění</h4>
-                      <p className="text-xs text-slate-600">
-                        Zapište klíčová místa (práce, škola dětí) a maximální přijatelný čas
-                        dojíždění.
-                      </p>
-                      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-xs text-slate-600">
-                        <p className="font-medium text-slate-700">
-                          Mapa a vyhledávání adres (MVP placeholder)
-                        </p>
-                        <p className="mt-1">
-                          V další fázi zde bude autocomplete adres a mapový picker. Zatím můžete
-                          zadat GPS souřadnice nebo si adresu zapsat do názvu místa.
-                        </p>
-                      </div>
-                      <div className="space-y-3">
-                        {(wizardExtras.commute?.points ?? []).map((p, idx) => (
-                          <div
-                            key={idx}
-                            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs"
-                          >
-                            <div className="mb-1 flex items-center justify-between gap-2">
-                              <input
-                                type="text"
-                                value={p.label}
-                                onChange={(e) =>
-                                  setWizardExtras((prev) => {
-                                    const points = [...(prev.commute?.points ?? [])];
-                                    points[idx] = { ...points[idx], label: e.target.value };
-                                    return { ...prev, commute: { points } };
-                                  })
-                                }
-                                placeholder="Např. Práce klienta"
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setWizardExtras((prev) => {
-                                    const points = [...(prev.commute?.points ?? [])];
-                                    points.splice(idx, 1);
-                                    return { ...prev, commute: { points } };
-                                  })
-                                }
-                                className="text-[10px] text-slate-500 hover:text-rose-600"
-                              >
-                                Odebrat
-                              </button>
-                            </div>
-                            <div className="mt-1">
-                              <label className="block text-[11px] font-medium text-slate-600">
-                                Adresa / popis místa
-                              </label>
-                              <input
-                                type="text"
-                                value={p.address ?? ""}
-                                onChange={(e) =>
-                                  setWizardExtras((prev) => {
-                                    const points = [...(prev.commute?.points ?? [])];
-                                    points[idx] = { ...points[idx], address: e.target.value || null };
-                                    return { ...prev, commute: { points } };
-                                  })
-                                }
-                                placeholder="Např. Václavské náměstí 1, Praha"
-                                className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                              />
-                            </div>
-                            <div className="mt-1 grid grid-cols-2 gap-2">
-                              <input
-                                type="number"
-                                value={p.lat ?? ""}
-                                onChange={(e) =>
-                                  setWizardExtras((prev) => {
-                                    const points = [...(prev.commute?.points ?? [])];
-                                    points[idx] = {
-                                      ...points[idx],
-                                      lat: e.target.value ? Number(e.target.value) : null,
-                                    };
-                                    return { ...prev, commute: { points } };
-                                  })
-                                }
-                                placeholder="Lat"
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                              />
-                              <input
-                                type="number"
-                                value={p.lng ?? ""}
-                                onChange={(e) =>
-                                  setWizardExtras((prev) => {
-                                    const points = [...(prev.commute?.points ?? [])];
-                                    points[idx] = {
-                                      ...points[idx],
-                                      lng: e.target.value ? Number(e.target.value) : null,
-                                    };
-                                    return { ...prev, commute: { points } };
-                                  })
-                                }
-                                placeholder="Lng"
-                                className="w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                              />
-                            </div>
-                            <div className="mt-1 grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-600">
-                                  Způsob dopravy
-                                </label>
-                                <select
-                                  value={p.mode}
-                                  onChange={(e) =>
-                                    setWizardExtras((prev) => {
-                                      const points = [...(prev.commute?.points ?? [])];
-                                      points[idx] = {
-                                        ...points[idx],
-                                        mode: e.target.value as "drive" | "transit",
-                                      };
-                                      return { ...prev, commute: { points } };
-                                    })
-                                  }
-                                  className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                >
-                                  <option value="drive">Auto</option>
-                                  <option value="transit">MHD</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-600">
-                                  Max. čas (min)
-                                </label>
-                                <input
-                                  type="number"
-                                  value={p.max_minutes ?? ""}
-                                  onChange={(e) =>
-                                    setWizardExtras((prev) => {
-                                      const points = [...(prev.commute?.points ?? [])];
-                                      points[idx] = {
-                                        ...points[idx],
-                                        max_minutes: e.target.value
-                                          ? Number(e.target.value)
-                                          : null,
-                                      };
-                                      return { ...prev, commute: { points } };
-                                    })
-                                  }
-                                  className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                />
-                              </div>
-                            </div>
-                            <div className="mt-1 grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-600">
-                                  Priorita
-                                </label>
-                                <select
-                                  value={p.priority}
-                                  onChange={(e) =>
-                                    setWizardExtras((prev) => {
-                                      const points = [...(prev.commute?.points ?? [])];
-                                      points[idx] = {
-                                        ...points[idx],
-                                        priority: e.target.value as
-                                          | "must_have"
-                                          | "prefer"
-                                          | "ignore",
-                                      };
-                                      return { ...prev, commute: { points } };
-                                    })
-                                  }
-                                  className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                >
-                                  <option value="ignore">Neřeším</option>
-                                  <option value="prefer">Preferuji</option>
-                                  <option value="must_have">Musí splnit</option>
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-[11px] font-medium text-slate-600">
-                                  Tolerance (min)
-                                </label>
-                                <input
-                                  type="number"
-                                  value={p.tolerance_minutes ?? ""}
-                                  onChange={(e) =>
-                                    setWizardExtras((prev) => {
-                                      const points = [...(prev.commute?.points ?? [])];
-                                      points[idx] = {
-                                        ...points[idx],
-                                        tolerance_minutes: e.target.value
-                                          ? Number(e.target.value)
-                                          : null,
-                                      };
-                                      return { ...prev, commute: { points } };
-                                    })
-                                  }
-                                  className="mt-0.5 w-full rounded-md border border-slate-300 px-2 py-1 text-xs"
-                                />
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setWizardExtras((prev) => ({
-                              ...prev,
-                              commute: {
-                                points: [
-                                  ...(prev.commute?.points ?? []),
-                                  {
-                                    id: typeof crypto !== "undefined" && "randomUUID" in crypto
-                                      ? crypto.randomUUID()
-                                      : `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-                                    label: "",
-                                    lat: null,
-                                    lng: null,
-                                    mode: "drive" as const,
-                                    max_minutes: null,
-                                    priority: "must_have" as const,
-                                    tolerance_minutes: 5,
-                                    address: null,
-                                    place_id: null,
-                                  },
-                                ],
-                              },
-                            }))
-                          }
-                          className="w-full rounded-full border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
-                        >
-                          Přidat cíl dojíždění
-                        </button>
-                      </div>
-                    </div>
-                  )}
-
-                  {wizardStep === 5 && (
+                  {wizardStep === 6 && (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Standardy a technologie
@@ -1391,28 +1371,61 @@ export default function ClientDetailPage() {
                         ["cellar", "Sklep"],
                         ["parking", "Parkování"],
                       ].map(([key, label]) => (
-                        <div key={key} className="flex items-center justify-between gap-2 text-xs">
-                          <span className="text-slate-700">{label}</span>
-                          <select
-                            value={
-                              (wizardExtras.standards as any)?.[key] ??
-                              ("ignore" as Priority | "ignore")
-                            }
-                            onChange={(e) =>
-                              setWizardExtras((prev) => ({
-                                ...prev,
-                                standards: {
-                                  ...(prev.standards ?? {}),
-                                  [key]: e.target.value as Priority,
-                                },
-                              }))
-                            }
-                            className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
-                          >
-                            <option value="ignore">Neřeším</option>
-                            <option value="prefer">Preferuji</option>
-                            <option value="must">Musí být</option>
-                          </select>
+                        <div key={key} className="space-y-1 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-slate-700">{label}</span>
+                            <select
+                              value={
+                                (wizardExtras.standards as any)?.[key] ??
+                                ("ignore" as Priority | "ignore")
+                              }
+                              onChange={(e) =>
+                                setWizardExtras((prev) => ({
+                                  ...prev,
+                                  standards: {
+                                    ...(prev.standards ?? {}),
+                                    [key]: e.target.value as Priority,
+                                  },
+                                }))
+                              }
+                              className="w-32 rounded-md border border-slate-300 px-2 py-1 text-xs"
+                            >
+                              <option value="ignore">Neřeším</option>
+                              <option value="prefer">Preferuji</option>
+                              <option value="must">Musí být</option>
+                            </select>
+                          </div>
+                          <details className="group rounded-md border border-slate-200 bg-slate-50 px-2 py-1.5">
+                            <summary className="flex cursor-pointer items-center justify-between text-[11px] font-medium text-slate-700">
+                              <span>Více o vlastnosti</span>
+                              <span className="text-[10px] text-slate-500 group-open:hidden">
+                                rozbalit
+                              </span>
+                              <span className="text-[10px] text-slate-500 hidden group-open:inline">
+                                skrýt
+                              </span>
+                            </summary>
+                            <div className="mt-2 space-y-1 text-[11px] text-slate-700">
+                              <p className="font-semibold">Výhody</p>
+                              <p>
+                                Krátký popis výhod této vlastnosti v kontextu komfortu, energetiky a
+                                dlouhodobé hodnoty.
+                              </p>
+                              <p className="mt-1 font-semibold">Nevýhody</p>
+                              <p>
+                                Stručné shrnutí možných kompromisů – například vyšší pořizovací cena,
+                                náročnější údržba nebo omezená dostupnost.
+                              </p>
+                              <p className="mt-1 font-semibold">Kdy to dává smysl</p>
+                              <p>
+                                Typické situace, kdy je tato vlastnost pro klienta klíčová, a kdy je
+                                spíše nice-to-have.
+                              </p>
+                              <p className="mt-1 text-[10px] text-slate-500">
+                                Má X % projektů · Má Y % jednotek
+                              </p>
+                            </div>
+                          </details>
                         </div>
                       ))}
                       <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-3">
@@ -1448,7 +1461,7 @@ export default function ClientDetailPage() {
                     </div>
                   )}
 
-                  {wizardStep === 6 && (
+                  {wizardStep === 7 && (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-slate-900">
                         Charakter projektu a okolí
@@ -1457,7 +1470,7 @@ export default function ClientDetailPage() {
                         Pomozte klientovi pojmenovat, jaký typ projektu a okolí je pro něj přirozený.
                       </p>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Velikost projektu
                         </label>
                         <select
@@ -1475,7 +1488,7 @@ export default function ClientDetailPage() {
                               },
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          className={cn("mt-1", reamarSelectClass)}
                         >
                           <option value="ignore">Neřeším</option>
                           <option value="small">Menší projekt</option>
@@ -1484,7 +1497,7 @@ export default function ClientDetailPage() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Klid vs. městský život
                         </label>
                         <select
@@ -1498,7 +1511,7 @@ export default function ClientDetailPage() {
                               },
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          className={cn("mt-1", reamarSelectClass)}
                         >
                           <option value="ignore">Neřeším</option>
                           <option value="calm">Spíše klid</option>
@@ -1506,7 +1519,7 @@ export default function ClientDetailPage() {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-600">
+                        <label className={reamarLabelClass}>
                           Soukromí vs. služby v okolí
                         </label>
                         <select
@@ -1523,7 +1536,7 @@ export default function ClientDetailPage() {
                               },
                             }))
                           }
-                          className="mt-1 w-full rounded-md border border-slate-300 px-2 py-1.5 text-sm"
+                          className={cn("mt-1", reamarSelectClass)}
                         >
                           <option value="ignore">Neřeším</option>
                           <option value="privacy">Více soukromí</option>
@@ -1624,7 +1637,7 @@ export default function ClientDetailPage() {
                     </div>
                   )}
 
-                  {wizardStep === 7 && (
+                  {wizardStep === TOTAL_WIZARD_STEPS && (
                     <div className="space-y-3">
                       <h4 className="text-sm font-semibold text-slate-900">Shrnutí profilu</h4>
                       <p className="text-xs text-slate-600">
@@ -1657,337 +1670,251 @@ export default function ClientDetailPage() {
                       </div>
                     </div>
                   )}
-                </div>
-
-                <div className="mt-6 flex items-center justify-between gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setWizardStep((s) => Math.max(1, s - 1))}
-                    disabled={wizardStep === 1}
-                    className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                  >
-                    Zpět
-                  </button>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={handleSaveProfile}
-                      disabled={profileSaving}
-                      className="rounded-full bg-slate-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                    >
-                      {profileSaving ? "Ukládám…" : "Uložit profil"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setWizardStep((s) => Math.min(7, s + 1))}
-                      className="rounded-full border border-slate-900 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-900 hover:text-white"
-                    >
-                      Další
-                    </button>
                   </div>
-                </div>
+
+                  <div className="mt-6 flex items-center justify-between gap-2">
+                    <ReamarButton
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setWizardStep((s) => Math.max(1, s - 1))}
+                      disabled={wizardStep === 1}
+                    >
+                      Zpět
+                    </ReamarButton>
+                    <div className="flex gap-2">
+                      <ReamarButton
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={handleSaveProfile}
+                        disabled={profileSaving}
+                      >
+                        {profileSaving ? "Ukládám…" : "Uložit profil"}
+                      </ReamarButton>
+                      {wizardStep < TOTAL_WIZARD_STEPS && (
+                        <ReamarButton
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          onClick={() =>
+                          setWizardStep((s) =>
+                            s < TOTAL_WIZARD_STEPS ? s + 1 : s
+                          )
+                        }
+                        >
+                          Další
+                        </ReamarButton>
+                      )}
+                    </div>
+                  </div>
+                </ReamarCard>
               </section>
 
-              <section className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Trh v hledané oblasti
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Přehled projektů a jednotek, které leží uvnitř vybrané oblasti v mapě.
+              <section className="mx-auto w-full max-w-6xl space-y-4 pb-8">
+                <InfoBox tone="neutral" title="Podklady pro práci po rozhovoru" className="text-[11px]">
+                  <p>
+                    Tato analytika je sekundární během klientského intake – slouží hlavně pro přípravu
+                    a práci po rozhovoru. Během vedení dotazníku držte fokus na horním wizardu.
                   </p>
-                </div>
-                {locationPolygons.length === 0 || locationPolygons[0].length < 3 ? (
-                  <p className="text-xs text-slate-500">
-                    Pro zobrazení trhu vyberte oblast v kroku &quot;Lokalita a prostředí&quot; a
-                    uložte profil klienta.
-                  </p>
-                ) : !areaMarket ? (
-                  <p className="text-xs text-slate-500">
-                    Načítám data o trhu v hledané oblasti…
-                  </p>
-                ) : areaMarket.projects_count === 0 ? (
-                  <p className="text-xs text-slate-500">
-                    V aktuálně zvolené oblasti nejsou žádné aktivní projekty s dostupnými jednotkami.
-                  </p>
-                ) : (
-                  <div className="grid gap-4 md:grid-cols-3 text-xs text-slate-700">
-                    <div className="space-y-2">
-                      <p>
-                        <span className="font-semibold text-slate-900">
-                          {areaMarket.projects_count}
-                        </span>{" "}
-                        projektů v oblasti
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-900">
-                          {areaMarket.active_units_count}
-                        </span>{" "}
-                        aktivních jednotek (k prodeji / rezervovaných)
-                      </p>
-                      <p>
-                        <span className="font-semibold text-slate-900">
-                          {areaMarket.matching_units_count}
-                        </span>{" "}
-                        jednotek odpovídá aktuálnímu profilu klienta.
+                </InfoBox>
+
+                <div className="grid gap-4 md:grid-cols-3">
+                  <ReamarSubtleCard className="col-span-1 p-4">
+                    <div className="mb-3">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Trh v hledané oblasti
+                      </h3>
+                      <p className="mt-1 text-[11px] text-slate-600">
+                        Přehled projektů a jednotek v zakreslené oblasti.
                       </p>
                     </div>
-                    <div className="space-y-1">
-                      <p className="font-semibold text-slate-900">Ceny v oblasti</p>
-                      <p>
-                        Průměrná cena:{" "}
-                        {areaMarket.avg_price_czk != null
-                          ? `${areaMarket.avg_price_czk.toLocaleString("cs-CZ")} Kč`
-                          : "—"}
+                    {locationPolygons.length === 0 || locationPolygons[0].length < 3 ? (
+                      <p className="text-[11px] text-slate-500">
+                        Pro zobrazení trhu vyberte oblast v kroku &quot;Lokalita a prostředí&quot; a
+                        uložte profil klienta.
                       </p>
-                      <p>
-                        Průměrná cena/m²:{" "}
-                        {areaMarket.avg_price_per_m2_czk != null
-                          ? `${areaMarket.avg_price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²`
-                          : "—"}
+                    ) : !areaMarket ? (
+                      <p className="text-[11px] text-slate-500">
+                        Načítám data o trhu v hledané oblasti…
                       </p>
-                      <p>
-                        Rozptyl cen:{" "}
-                        {areaMarket.min_price_czk != null
-                          ? `${areaMarket.min_price_czk.toLocaleString("cs-CZ")} Kč`
-                          : "—"}{" "}
-                        –{" "}
-                        {areaMarket.max_price_czk != null
-                          ? `${areaMarket.max_price_czk.toLocaleString("cs-CZ")} Kč`
-                          : "—"}
+                    ) : areaMarket.projects_count === 0 ? (
+                      <p className="text-[11px] text-slate-500">
+                        V aktuálně zvolené oblasti nejsou žádné aktivní projekty s dostupnými jednotkami.
                       </p>
-                      <p>
-                        Průměrná plocha jednotky:{" "}
-                        {areaMarket.avg_floor_area_m2 != null
-                          ? `${areaMarket.avg_floor_area_m2.toFixed(1)} m²`
-                          : "—"}
+                    ) : (
+                      <div className="space-y-2 text-[11px] text-slate-700">
+                        <StatCard
+                          label="Projekty v oblasti"
+                          value={areaMarket.projects_count}
+                          sublabel="s aktivními jednotkami"
+                          className="mb-2"
+                        />
+                        <p>
+                          <span className="font-semibold text-slate-900">
+                            {areaMarket.active_units_count}
+                          </span>{" "}
+                          aktivních jednotek, z toho{" "}
+                          <span className="font-semibold text-slate-900">
+                            {areaMarket.matching_units_count}
+                          </span>{" "}
+                          odpovídá profilu klienta.
+                        </p>
+                        <p className="mt-1 font-semibold text-slate-900">Ceny v oblasti</p>
+                        <p>
+                          Průměrná cena:{" "}
+                          {areaMarket.avg_price_czk != null
+                            ? `${areaMarket.avg_price_czk.toLocaleString("cs-CZ")} Kč`
+                            : "—"}
+                        </p>
+                        <p>
+                          Průměrná cena/m²:{" "}
+                          {areaMarket.avg_price_per_m2_czk != null
+                            ? `${areaMarket.avg_price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²`
+                            : "—"}
+                        </p>
+                        <p>
+                          Rozptyl cen:{" "}
+                          {areaMarket.min_price_czk != null
+                            ? `${areaMarket.min_price_czk.toLocaleString("cs-CZ")} Kč`
+                            : "—"}{" "}
+                          –{" "}
+                          {areaMarket.max_price_czk != null
+                            ? `${areaMarket.max_price_czk.toLocaleString("cs-CZ")} Kč`
+                            : "—"}
+                        </p>
+                      </div>
+                    )}
+                  </ReamarSubtleCard>
+
+                  <ReamarSubtleCard className="col-span-1 p-4">
+                    <div className="mb-3">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Market fit analysis
+                      </h3>
+                      <p className="mt-1 text-[11px] text-slate-600">
+                        Jak současná nabídka odpovídá profilu klienta a kde jsou hlavní blokery.
                       </p>
                     </div>
-                    <div className="space-y-1">
-                      <p className="font-semibold text-slate-900">Dispozice a profil</p>
-                      <p>
-                        Jednotky v rozpočtu klienta:{" "}
-                        <span className="font-semibold text-slate-900">
-                          {areaMarket.budget_fit_units_count}
-                        </span>
+                    {!marketFit ? (
+                      <p className="text-[11px] text-slate-500">
+                        Analýza zatím není k dispozici nebo klient nemá kompletní profil.
                       </p>
-                      <p>
-                        Jednotky v ploše klienta:{" "}
-                        <span className="font-semibold text-slate-900">
-                          {areaMarket.area_fit_units_count}
-                        </span>
-                      </p>
-                      {Object.keys(areaMarket.layout_distribution).length > 0 && (
-                        <div className="mt-1 space-y-0.5">
-                          <p>Rozložení dispozic:</p>
-                          <ul className="list-disc pl-4">
-                            {Object.entries(areaMarket.layout_distribution).map(
-                              ([layout, count]) => (
-                                <li key={layout}>
-                                  {layout}:{" "}
-                                  <span className="font-semibold text-slate-900">
-                                    {count}
-                                  </span>
+                    ) : (
+                      <div className="space-y-3 text-[11px] text-slate-700">
+                        <p>
+                          Aktuálně odpovídá profilu{" "}
+                          <span className="font-semibold text-slate-900">
+                            {marketFit.matching_units_count}
+                          </span>{" "}
+                          jednotek z{" "}
+                          <span className="font-semibold text-slate-900">
+                            {marketFit.available_units_count}
+                          </span>{" "}
+                          dostupných.
+                        </p>
+                        <div>
+                          <p className="text-[11px] font-semibold text-slate-900">
+                            Hlavní blokující faktory
+                          </p>
+                          <ul className="mt-1 space-y-1">
+                            {marketFit.top_blockers.length === 0 ? (
+                              <li>Žádný výrazný blokující faktor – profil je spíše široký.</li>
+                            ) : (
+                              marketFit.top_blockers.slice(0, 3).map((b) => (
+                                <li key={b.key}>
+                                  <span className="font-semibold">{b.label}:</span>{" "}
+                                  {Math.round(b.blocked_percentage * 100)} % jednotek vypadá kvůli
+                                  tomuto nastavení.
                                 </li>
-                              )
+                              ))
                             )}
                           </ul>
                         </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </section>
+                        <div>
+                          <p className="text-[11px] font-semibold text-slate-900">
+                            Jak odemknout více jednotek
+                          </p>
+                          {marketFit.relaxation_suggestions.length === 0 ? (
+                            <p className="mt-1">
+                              Změny profilu by aktuálně nepřinesly významné zvýšení počtu jednotek.
+                            </p>
+                          ) : (
+                            <ul className="mt-1 space-y-1">
+                              {marketFit.relaxation_suggestions.slice(0, 5).map((s) => (
+                                <li key={s.label} className="flex items-center justify-between gap-2">
+                                  <span>{s.label}</span>
+                                  <span className="text-[10px] font-semibold text-slate-900">
+                                    {s.delta_vs_current >= 0 ? "+" : ""}
+                                    {s.delta_vs_current} jednotek
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </ReamarSubtleCard>
 
-              <section className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Market fit analysis
-                  </h3>
-                  <p className="mt-1 text-xs text-slate-600">
-                    Shrnutí, jak současná nabídka na trhu odpovídá profilu klienta a jaké drobné
-                    úpravy by mohly odemknout více jednotek.
-                  </p>
-                </div>
-                {!marketFit ? (
-                  <p className="text-xs text-slate-500">
-                    Analýza zatím není k dispozici nebo klient nemá kompletní profil.
-                  </p>
-                ) : (
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Why supply is limited
-                      </h4>
-                      <p className="text-xs text-slate-600">
-                        Aktuálně odpovídá profilu{" "}
-                        <span className="font-semibold text-slate-900">
-                          {marketFit.matching_units_count}
-                        </span>{" "}
-                        jednotek z{" "}
-                        <span className="font-semibold text-slate-900">
-                          {marketFit.available_units_count}
-                        </span>{" "}
-                        dostupných.
+                  <ReamarSubtleCard className="col-span-1 p-4 md:col-span-1">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Doporučené jednotky
+                      </h3>
+                      <span className="text-[11px] text-slate-500">{recs.length} jednotek</span>
+                    </div>
+                    {recs.length === 0 ? (
+                      <p className="text-[11px] text-slate-600">
+                        Zatím žádná doporučení. Klikněte na &quot;Přepočítat doporučení&quot;.
                       </p>
-                      <ul className="mt-1 space-y-1 text-xs text-slate-700">
-                        {marketFit.top_blockers.length === 0 ? (
-                          <li>Žádný výrazný blokující faktor – profil je spíše široký.</li>
-                        ) : (
-                          marketFit.top_blockers.slice(0, 3).map((b) => (
-                            <li key={b.key}>
-                              <span className="font-semibold">{b.label}:</span>{" "}
-                              {Math.round(b.blocked_percentage * 100)} % jednotek vypadá kvůli
-                              tomuto nastavení.
-                            </li>
-                          ))
-                        )}
-                      </ul>
-                    </div>
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        How to unlock more inventory
-                      </h4>
-                      {marketFit.relaxation_suggestions.length === 0 ? (
-                        <p className="text-xs text-slate-600">
-                          Změny profilu by aktuálně nepřinesly významné zvýšení počtu jednotek.
-                        </p>
-                      ) : (
-                        <ul className="space-y-1 text-xs text-slate-700">
-                          {marketFit.relaxation_suggestions.slice(0, 5).map((s) => (
-                            <li key={s.label} className="flex items-center justify-between gap-2">
-                              <span>{s.label}</span>
-                              <span className="text-[11px] font-semibold text-slate-900">
-                                {s.delta_vs_current >= 0 ? "+" : ""}
-                                {s.delta_vs_current} jednotek
-                              </span>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  </div>
-                )}
-              </section>
-
-              <section className="md:col-span-2 rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Doporučené jednotky
-                  </h3>
-                  <span className="text-xs text-slate-500">
-                    {recs.length} jednotek
-                  </span>
+                    ) : (
+                      <div className="overflow-hidden rounded-lg border border-slate-200/70">
+                        <table className="min-w-full divide-y divide-slate-100 text-[11px]">
+                          <thead className="bg-slate-50/90">
+                            <tr>
+                              <th className="px-2 py-1.5 text-left font-semibold text-slate-700">
+                                Jednotka
+                              </th>
+                              <th className="px-2 py-1.5 text-left font-semibold text-slate-700">
+                                Projekt
+                              </th>
+                              <th className="px-2 py-1.5 text-right font-semibold text-slate-700">
+                                Cena
+                              </th>
+                              <th className="px-2 py-1.5 text-right font-semibold text-slate-700">
+                                Skóre
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {recs.slice(0, 6).map((r) => (
+                              <tr
+                                key={`${r.unit_external_id}-${r.project_id}`}
+                                className="hover:bg-slate-50"
+                              >
+                                <td className="px-2 py-1.5 text-slate-900">
+                                  {r.unit_external_id ?? "—"}
+                                </td>
+                                <td className="px-2 py-1.5 text-slate-700">
+                                  {r.project_name ?? r.project_id ?? "—"}
+                                </td>
+                                <td className="px-2 py-1.5 text-right text-slate-900 font-medium">
+                                  {r.price_czk != null
+                                    ? `${r.price_czk.toLocaleString("cs-CZ")} Kč`
+                                    : "—"}
+                                </td>
+                                <td className="px-2 py-1.5 text-right text-slate-900">
+                                  {Math.round(r.score)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </ReamarSubtleCard>
                 </div>
-                {recs.length === 0 ? (
-                  <p className="text-sm text-slate-600">
-                    Zatím žádná doporučení. Klikněte na &quot;Přepočítat doporučení&quot;.
-                  </p>
-                ) : (
-                  <div className="overflow-hidden rounded-lg border border-slate-200">
-                    <table className="min-w-full divide-y divide-slate-100 text-xs">
-                      <thead className="bg-slate-50/90">
-                        <tr>
-                          <th className="px-2 py-2 text-left font-semibold text-slate-700">
-                            Jednotka
-                          </th>
-                          <th className="px-2 py-2 text-left font-semibold text-slate-700">
-                            Projekt
-                          </th>
-                          <th className="px-2 py-2 text-left font-semibold text-slate-700">
-                            Dispozice
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Plocha
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Cena
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Cena/m²
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Podlaží
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Skóre
-                          </th>
-                          <th className="px-2 py-2 text-right font-semibold text-slate-700">
-                            Budget / Walk / Loc / Layout / Area
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {recs.map((r) => (
-                          <tr key={`${r.unit_external_id}-${r.project_id}`} className="hover:bg-slate-50">
-                            <td className="px-2 py-1.5 text-slate-900">
-                              {r.unit_external_id ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-slate-700">
-                              {r.project_name ?? r.project_id ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-slate-900 font-medium">
-                              {r.layout_label ?? r.layout ?? "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-900 font-medium">
-                              {r.floor_area_m2 != null ? `${r.floor_area_m2.toFixed(1)} m²` : "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-900 font-medium">
-                              {r.price_czk != null
-                                ? `${r.price_czk.toLocaleString("cs-CZ")} Kč`
-                                : "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-900 font-medium">
-                              {r.price_per_m2_czk != null
-                                ? `${r.price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²`
-                                : "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-700">
-                              {r.floor != null ? r.floor : "—"}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-900">
-                              {Math.round(r.score)}
-                            </td>
-                            <td className="px-2 py-1.5 text-right text-slate-700">
-                              <span className="inline-flex flex-col items-end gap-0.5">
-                                <span className="text-[11px] text-slate-900">
-                                  Budget:{" "}
-                                  <span className="font-semibold">
-                                    {Math.round(r.budget_fit)}
-                                  </span>
-                                </span>
-                                <span className="text-[11px] text-slate-900">
-                                  Walk:{" "}
-                                  <span className="font-semibold">
-                                    {Math.round(r.walkability_fit)}
-                                  </span>
-                                </span>
-                                <span className="text-[11px] text-slate-900">
-                                  Loc:{" "}
-                                  <span className="font-semibold">
-                                    {Math.round(r.location_fit)}
-                                  </span>
-                                </span>
-                                <span className="text-[11px] text-slate-900">
-                                  Layout:{" "}
-                                  <span className="font-semibold">
-                                    {Math.round(r.layout_fit)}
-                                  </span>
-                                </span>
-                                <span className="text-[11px] text-slate-900">
-                                  Area:{" "}
-                                  <span className="font-semibold">
-                                    {Math.round(r.area_fit)}
-                                  </span>
-                                </span>
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
               </section>
             </div>
           </>
