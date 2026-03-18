@@ -1,7 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
+import { Suspense } from "react";
+
+/** Params that belong to a specific page and must not carry over to other pages. */
+const PAGE_ONLY_PARAMS = new Set(["sort_by", "sort_dir", "limit", "offset"]);
 
 function navClass(active: boolean) {
   return [
@@ -12,7 +16,51 @@ function navClass(active: boolean) {
   ].join(" ");
 }
 
-export function GlobalNav() {
+/** Builds a nav href that carries shared params (filters, poly, …) but strips page-specific ones. */
+function buildNavHref(base: string, searchParams: URLSearchParams | null): string {
+  if (!searchParams) return base;
+  const shared = new URLSearchParams();
+  searchParams.forEach((value, key) => {
+    if (!PAGE_ONLY_PARAMS.has(key)) shared.append(key, value);
+  });
+  const qs = shared.toString();
+  return qs ? `${base}?${qs}` : base;
+}
+
+/** Inner component — uses useSearchParams, must be inside a Suspense boundary. */
+function NavLinks() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const isUnits = pathname?.startsWith("/units");
+  const isProjects = pathname?.startsWith("/projects") && !pathname?.startsWith("/projects/map");
+  const isMap = pathname?.startsWith("/projects/map");
+  const isClients = pathname?.startsWith("/clients");
+  const isMatches = pathname?.startsWith("/matches");
+
+  return (
+    <nav className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
+      <Link href={buildNavHref("/units", searchParams)} className={navClass(!!isUnits)}>
+        Jednotky
+      </Link>
+      <Link href={buildNavHref("/projects", searchParams)} className={navClass(!!isProjects)}>
+        Projekty
+      </Link>
+      <Link href={buildNavHref("/projects/map", searchParams)} className={navClass(!!isMap)}>
+        Mapa
+      </Link>
+      <Link href="/clients" className={navClass(!!isClients)}>
+        Klienti
+      </Link>
+      <Link href="/matches" className={navClass(!!isMatches)}>
+        Matches
+      </Link>
+    </nav>
+  );
+}
+
+/** Fallback rendered during SSR / before hydration — plain links, no filter params. */
+function NavLinksFallback() {
   const pathname = usePathname();
 
   const isUnits = pathname?.startsWith("/units");
@@ -22,30 +70,27 @@ export function GlobalNav() {
   const isMatches = pathname?.startsWith("/matches");
 
   return (
+    <nav className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
+      <Link href="/units" className={navClass(!!isUnits)}>Jednotky</Link>
+      <Link href="/projects" className={navClass(!!isProjects)}>Projekty</Link>
+      <Link href="/projects/map" className={navClass(!!isMap)}>Mapa</Link>
+      <Link href="/clients" className={navClass(!!isClients)}>Klienti</Link>
+      <Link href="/matches" className={navClass(!!isMatches)}>Matches</Link>
+    </nav>
+  );
+}
+
+export function GlobalNav() {
+  return (
     <header className="glass-header sticky top-0 z-30 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <h1 className="shrink-0 text-lg font-semibold tracking-tight text-slate-900">
           Reamar
         </h1>
-        <nav className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
-          <Link href="/units" className={navClass(!!isUnits)}>
-            Jednotky
-          </Link>
-          <Link href="/projects" className={navClass(!!isProjects)}>
-            Projekty
-          </Link>
-          <Link href="/projects/map" className={navClass(!!isMap)}>
-            Mapa
-          </Link>
-          <Link href="/clients" className={navClass(!!isClients)}>
-            Klienti
-          </Link>
-          <Link href="/matches" className={navClass(!!isMatches)}>
-            Matches
-          </Link>
-        </nav>
+        <Suspense fallback={<NavLinksFallback />}>
+          <NavLinks />
+        </Suspense>
       </div>
     </header>
   );
 }
-
