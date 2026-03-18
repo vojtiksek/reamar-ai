@@ -302,143 +302,105 @@ export default function ProjectsMapPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
-        <div className="flex items-center gap-4">
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900">Reamar</h1>
-          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/units?${qs}` : "/units";
-              })()}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Jednotky
-            </Link>
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/projects?${qs}` : "/projects";
-              })()}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Projekty
-            </Link>
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/projects/map?${qs}` : "/projects/map";
-              })()}
-              className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
-            >
-              Mapa
-            </Link>
-          </div>
-        </div>
-          <div className="flex flex-wrap items-center gap-3 text-xs sm:text-sm">
-          <div className="flex items-center gap-2">
+    <div className="flex min-h-screen flex-col gap-3 pb-4 pt-3">
+      {/* Toolbar — no duplicate nav, GlobalNav from layout handles navigation */}
+      <div className="glass-header shrink-0 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (!drawing) {
+                setDraftPolygon([]);
+                setDrawing(true);
+              } else {
+                setDrawing(false);
+                setDraftPolygon([]);
+              }
+            }}
+            className={
+              "rounded-full border px-3 py-1.5 text-sm font-medium transition " +
+              (drawing
+                ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+                : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
+            }
+          >
+            Výběr oblasti
+          </button>
+          {polygon.length >= 3 && !drawing && (
             <button
               type="button"
               onClick={() => {
-                if (!drawing) {
-                  setDraftPolygon([]);
-                  setDrawing(true);
-                } else {
-                  setDrawing(false);
-                  setDraftPolygon([]);
-                }
+                setPolygon([]);
+                setDraftPolygon([]);
+                syncPolygonToUrl(null);
               }}
-              className={
-                "rounded-full border border-slate-200 px-3 py-1.5 font-medium transition " +
-                (drawing
-                  ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
-                  : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
-              }
+              className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
             >
-              Výběr oblasti
+              Zrušit oblast
             </button>
-            {polygon.length >= 3 && !drawing && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPolygon([]);
-                  setDraftPolygon([]);
-                  syncPolygonToUrl(null);
-                }}
-                className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
-              >
-                Zrušit oblast
-              </button>
-            )}
-            {drawing && draftPolygon.length >= 3 && (
-              <button
-                type="button"
-                onClick={() => {
-                  setPolygon(draftPolygon);
-                  setDrawing(false);
-                  syncPolygonToUrl(draftPolygon);
-                }}
-                className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
-              >
-                Uložit oblast
-              </button>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={openDrawer}
-            className="glass-pill border border-transparent px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-white/90"
-            title={
-              countActiveFilters(filtersInUrl) > 0
-                ? `Aktivní filtry: ${countActiveFilters(filtersInUrl)}`
-                : undefined
-            }
-          >
-            Filtry
-            {countActiveFilters(filtersInUrl) > 0 && (
-              <span className="ml-1 rounded bg-gray-200 px-1.5 text-[10px] sm:text-xs">
-                {countActiveFilters(filtersInUrl)}
-              </span>
-            )}
-          </button>
-          <button
-            type="button"
-            onClick={onResetAll}
-            disabled={loading}
-            className="glass-pill border border-transparent px-3 py-1.5 text-xs sm:text-sm font-medium text-slate-800 hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Reset
-          </button>
-          <span className="text-slate-600">
-            Zobrazeno projektů s GPS: <span className="font-semibold text-slate-900">{visibleProjects.length}</span>
-          </span>
+          )}
+          {drawing && draftPolygon.length >= 3 && (
+            <button
+              type="button"
+              onClick={() => {
+                setPolygon(draftPolygon);
+                setDrawing(false);
+                syncPolygonToUrl(draftPolygon);
+              }}
+              className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Uložit oblast
+            </button>
+          )}
         </div>
-      </header>
+        <button
+          type="button"
+          onClick={openDrawer}
+          className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
+        >
+          Filtry
+          {countActiveFilters(filtersInUrl) > 0 && (
+            <span className="ml-1.5 rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+              {countActiveFilters(filtersInUrl)}
+            </span>
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={onResetAll}
+          disabled={loading}
+          className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Reset
+        </button>
+        <span className="ml-auto text-sm text-slate-500">
+          <span className="font-semibold text-slate-900">{visibleProjects.length}</span> projektů s GPS
+        </span>
+      </div>
 
       {error && (
-        <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
           {error}
         </div>
       )}
 
-      <main className="flex flex-1 overflow-hidden">
-        <aside className="hidden w-80 flex-shrink-0 flex-col border-r border-slate-200 bg-white md:flex">
-          <div className="border-b border-slate-200 bg-slate-50/80 px-4 py-2.5 text-sm font-semibold text-slate-900">
-            Projekty
+      <div className="flex flex-1 overflow-hidden rounded-2xl border border-slate-200/70 shadow-sm">
+        <aside className="hidden w-80 flex-shrink-0 flex-col border-r border-slate-200/70 bg-white/80 backdrop-blur-sm md:flex">
+          <div className="border-b border-slate-200/70 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Projekty</p>
           </div>
-          <div className="flex-1 overflow-y-auto px-4 py-2 text-xs sm:text-sm">
+          <div className="flex-1 overflow-y-auto px-3 py-3 text-xs sm:text-sm">
             {loading && <div className="text-slate-600">Načítání…</div>}
             {!loading && visibleProjects.length === 0 && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+              <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 text-sm text-slate-600 backdrop-blur-sm">
                 Žádné projekty nevyhovují filtrům nebo nemají GPS. Zkuste upravit filtry nebo zrušit výběr oblasti.
               </div>
             )}
-            <div className="mb-3 border-b border-slate-200 pb-3">
+            <div className="mb-3 border-b border-slate-200/70 pb-3">
               <button
                 type="button"
                 onClick={() => setPoiPanelOpen((o) => !o)}
-                className="flex w-full items-center justify-between text-left text-sm font-semibold text-slate-800"
+                className="flex w-full items-center justify-between text-left text-[11px] font-semibold uppercase tracking-widest text-slate-500"
               >
                 Walkability POI na mapě
                 <span className="text-slate-400">{poiPanelOpen ? "▼" : "▶"}</span>
@@ -452,7 +414,7 @@ export default function ProjectsMapPage() {
                     <button
                       type="button"
                       onClick={() => setSelectedProjectId(null)}
-                      className="rounded border border-slate-300 bg-slate-100 px-2 py-1 text-slate-700 hover:bg-slate-200"
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
                     >
                       Zrušit výběr projektu
                     </button>
@@ -484,10 +446,10 @@ export default function ProjectsMapPage() {
               {visibleProjects.map((p) => (
                 <li
                   key={p.id}
-                  className={`rounded-xl border p-2.5 shadow-sm transition ${
+                  className={`rounded-2xl border p-3 shadow-sm transition backdrop-blur-sm ${
                     selectedProjectId === p.id
-                      ? "border-sky-500 bg-sky-50/80"
-                      : "border-slate-200 bg-white hover:border-slate-300"
+                      ? "border-sky-400/60 bg-sky-50/80"
+                      : "border-slate-200/70 bg-white/80 hover:border-slate-300"
                   }`}
                 >
                   <button
@@ -498,13 +460,13 @@ export default function ProjectsMapPage() {
                     <div className="text-sm font-semibold text-slate-900">
                       {p.project ?? "Projekt bez názvu"}
                     </div>
-                    <div className="text-xs text-slate-600">
+                    <div className="mt-0.5 text-xs text-slate-500">
                       {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
                     </div>
                     {p.avg_price_per_m2_czk != null && (
-                      <div className="mt-1 text-xs text-slate-700">
-                        Průměrná cena m²:{" "}
-                        <span className="font-medium">
+                      <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Prům. m²</span>
+                        <span className="text-sm font-semibold text-slate-900">
                           {new Intl.NumberFormat("cs-CZ", {
                             maximumFractionDigits: 0,
                             minimumFractionDigits: 0,
@@ -516,10 +478,10 @@ export default function ProjectsMapPage() {
                   </button>
                   <Link
                     href={`/projects/${p.id}`}
-                    className="mt-1 inline-block text-xs font-medium text-slate-700 underline decoration-slate-400 underline-offset-2 hover:text-slate-900 hover:decoration-slate-600"
+                    className="mt-2 inline-block rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900"
                     onClick={(e) => e.stopPropagation()}
                   >
-                    Detail projektu
+                    Detail →
                   </Link>
                 </li>
               ))}
@@ -528,8 +490,8 @@ export default function ProjectsMapPage() {
         </aside>
         <section className="relative flex-1 bg-slate-50/50">
           {/* Legenda barev podle průměrné ceny m² */}
-          <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-lg border border-slate-200 bg-white/90 px-3 py-2 text-[11px] text-slate-700 shadow-sm">
-            <div className="mb-1 font-semibold text-xs text-slate-800">
+          <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2.5 text-[11px] text-slate-700 shadow-sm backdrop-blur-sm">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
               Barva podle ceny m²
             </div>
             <div className="flex items-center gap-2">
@@ -537,7 +499,7 @@ export default function ProjectsMapPage() {
               <div className="h-1.5 w-24 rounded-full bg-gradient-to-r from-emerald-500 via-orange-400 to-red-600" />
               <span className="text-[10px] text-red-700">dražší</span>
             </div>
-            <div className="mt-1 flex items-center gap-1.5">
+            <div className="mt-1.5 flex items-center gap-1.5">
               <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
               <span className="text-[10px] text-slate-700">nejlevnější projekty</span>
             </div>
@@ -561,7 +523,7 @@ export default function ProjectsMapPage() {
             </div>
           )}
           {(poiOverviewLoading && selectedProjectId != null) && (
-            <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-lg border border-slate-200 bg-white/95 px-3 py-1.5 text-xs text-slate-600 shadow-sm">
+            <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-2xl border border-slate-200/70 bg-white/95 px-3 py-1.5 text-xs text-slate-600 shadow-sm backdrop-blur-sm">
               Načítám POI…
             </div>
           )}
@@ -577,7 +539,7 @@ export default function ProjectsMapPage() {
             poiOverview={poiOverviewData}
           />
         </section>
-      </main>
+      </div>
       <FiltersDrawer
         open={drawerOpen}
         onClose={closeDrawer}
