@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L, { type LatLngExpression, type LatLngBoundsExpression, type DivIcon } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -28,16 +29,20 @@ type EditorProps = {
 
 function FitBounds({ areas }: { areas: Area[] }) {
   const map = useMap();
-  if (!areas.length) return null;
-  const allPoints = areas.flat();
-  if (!allPoints.length) return null;
-  const lats = allPoints.map((p) => p.lat);
-  const lngs = allPoints.map((p) => p.lng);
-  const bounds: LatLngBoundsExpression = [
-    [Math.min(...lats), Math.min(...lngs)],
-    [Math.max(...lats), Math.max(...lngs)],
-  ];
-  map.fitBounds(bounds, { padding: [20, 20] });
+  const hasFit = useRef(false);
+  useEffect(() => {
+    if (hasFit.current) return;
+    const allPoints = areas.flat();
+    if (!allPoints.length) return;
+    const lats = allPoints.map((p) => p.lat);
+    const lngs = allPoints.map((p) => p.lng);
+    const bounds: LatLngBoundsExpression = [
+      [Math.min(...lats), Math.min(...lngs)],
+      [Math.max(...lats), Math.max(...lngs)],
+    ];
+    map.fitBounds(bounds, { padding: [20, 20] });
+    hasFit.current = true;
+  }, [areas, map]);
   return null;
 }
 

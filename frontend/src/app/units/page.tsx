@@ -13,7 +13,7 @@ import {
   filtersToSearchParams,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
-import { formatPercent, formatValue } from "@/lib/format";
+import { formatValue, formatLayout } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
@@ -579,14 +579,7 @@ function downloadUnitsCsv(
         }
         const catalogKey = ACCESSOR_TO_CATALOG_KEY[accessor] ?? ACCESSOR_TO_CATALOG_KEY[key] ?? key;
         const raw = getValue(u, accessor, catalogKey);
-        let formatted = formatValue(raw, { display_format: df ?? data_type, key });
-        if (key === "local_price_diff_1000m" || key === "local_price_diff_2000m") {
-          const n = typeof raw === "number" ? raw : raw != null ? Number(raw) : Number.NaN;
-          if (!Number.isNaN(n)) {
-            const sign = n > 0 ? "+" : n < 0 ? "−" : "";
-            formatted = `${sign}${Math.abs(n).toFixed(1)} %`;
-          }
-        }
+        const formatted = formatValue(raw, { display_format: df ?? data_type, key });
         return escapeCsvCell(String(formatted ?? ""));
       })
       .join(",");
@@ -615,6 +608,21 @@ function computeSummaryFromUnits(units: Unit[], total: number) {
     averageLocalDiff2000: null,
   };
 }
+
+const FILTER_ENUM_LABELS: Record<string, Record<string, string>> = {
+  availability: {
+    available: "Dostupná",
+    unseen: "Neviděná",
+    not_seen: "Neviděná",
+    reserved: "Rezervovaná",
+    sold: "Prodaná",
+    unavailable: "Nedostupná",
+  },
+  category: {
+    flat: "Byt",
+    house: "Dům",
+  },
+};
 
 export default function Home() {
   const router = useRouter();
@@ -1402,38 +1410,20 @@ export default function Home() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900 shrink-0">Reamar</h1>
-          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur shrink-0">
-            <button
-              type="button"
-              className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
-            >
-              Jednotky
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const qs = searchParams?.toString() ?? "";
-                router.push(qs ? `/projects?${qs}` : "/projects");
-              }}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Projekty
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                const qs = searchParams?.toString() ?? "";
-                router.push(qs ? `/projects/map?${qs}` : "/projects/map");
-              }}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Mapa
-            </button>
-          </div>
+    <div>
+      <div className="flex flex-col gap-5 pt-4 pb-10">
+        <div className="flex items-baseline justify-between gap-4 px-1">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Jednotky</h2>
+          {total > 0 && <span className="text-sm text-slate-400">{total} záznamů</span>}
+        </div>
+        <SummaryBar
+          total={summary.total}
+          averagePricePerM2={summary.averagePricePerM2}
+          averagePrice={summary.averagePrice}
+          availableCount={summary.availableCount}
+          averageLocalDiff={averageLocalDiff}
+        />
+        <div className="glass-header flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
           <button
             type="button"
             onClick={openDrawer}
@@ -1478,31 +1468,7 @@ export default function Home() {
               </button>
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setWalkPrefsOpen(true)}
-            className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 shrink-0"
-          >
-            Preference lokality
-          </button>
-          {personalizedModeEnabled && (
-            <div className="ml-2 flex flex-wrap items-center gap-1">
-              <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                Dle preferencí klienta
-              </span>
-              {getNonDefaultChips(walkPrefs)
-                .slice(0, 3)
-                .map((chip) => (
-                  <span
-                    key={chip}
-                    className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
-                  >
-                    {chip}
-                  </span>
-                ))}
-            </div>
-          )}
-          <div className="relative shrink-0" ref={actionsRef}>
+          <div className="relative ml-auto shrink-0" ref={actionsRef}>
             <button
               type="button"
               onClick={() => setActionsOpen((o) => !o)}
@@ -1511,7 +1477,7 @@ export default function Home() {
               Akce
             </button>
             {actionsOpen && (
-              <div className="absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-slate-200 bg-white/95 py-1.5 shadow-lg backdrop-blur">
+              <div className="absolute right-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-slate-200 bg-white/95 py-1.5 shadow-lg backdrop-blur">
                 <button
                   type="button"
                   onClick={() => {
@@ -1649,119 +1615,105 @@ export default function Home() {
               </div>
             )}
           </div>
-          {countActiveFilters(filters) > 0 && (
-            <div className="flex flex-wrap gap-1 text-[11px] text-gray-700">
-              {(() => {
-                type FilterBadge = { id: string; label: string; clearKeys: string[] };
-                const badges: FilterBadge[] = [];
-                const rangeBases = new Set<string>();
-                for (const [k, v] of Object.entries(filters)) {
-                  if (v === undefined) continue;
-                  if (k.endsWith("_min") || k.endsWith("_max")) {
-                    rangeBases.add(k.replace(/_(min|max)$/, ""));
-                    continue;
-                  }
-                  const spec = aliasByKey.get(k);
-                  const label = spec?.alias || k;
-                  if (Array.isArray(v) && v.length > 0) {
-                    const formattedValues = v.map((raw) => {
-                      if (k === "layout") {
-                        const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
-                        if (m) {
-                          const whole = m[1];
-                          const frac = m[2];
-                          return frac ? `${whole},${frac}kk` : `${whole}kk`;
-                        }
-                      }
-                      return String(raw);
-                    });
-                    badges.push({
-                      id: `${k}:${formattedValues.join(",")}`,
-                      label: `${label}: ${formattedValues.join(", ")}`,
-                      clearKeys: [k],
-                    });
-                  } else if (typeof v === "boolean") {
-                    badges.push({
-                      id: `${k}:${v ? "1" : "0"}`,
-                      label: `${label}: ${v ? "Ano" : "Ne"}`,
-                      clearKeys: [k],
-                    });
-                  } else if (typeof v === "number" && !Number.isNaN(v)) {
-                    badges.push({
-                      id: `${k}:${v}`,
-                      label: `${label}: ${v}`,
-                      clearKeys: [k],
-                    });
-                  }
+        </div>
+        {countActiveFilters(filters) > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {(() => {
+              type FilterBadge = { id: string; label: string; clearKeys: string[] };
+              const badges: FilterBadge[] = [];
+              const rangeBases = new Set<string>();
+              for (const [k, v] of Object.entries(filters)) {
+                if (v === undefined) continue;
+                if (k.endsWith("_min") || k.endsWith("_max")) {
+                  rangeBases.add(k.replace(/_(min|max)$/, ""));
+                  continue;
                 }
-                const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
-                for (const base of rangeBases) {
-                  const min = filters[`${base}_min`] as number | undefined;
-                  const max = filters[`${base}_max`] as number | undefined;
-                  if (
-                    (min === undefined || Number.isNaN(min as number)) &&
-                    (max === undefined || Number.isNaN(max as number))
-                  ) {
-                    continue;
-                  }
-                  const spec = aliasByKey.get(base);
-                  const label = spec?.alias || base;
-                  const asPercent = percentRangeBases.has(base);
-                  const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
-                  const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
-                  const suf = asPercent ? " %" : "";
-                  let value = "";
-                  if (dispMin != null) {
-                    value += `od ${dispMin}${suf}`;
-                  }
-                  if (dispMax != null) {
-                    value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
-                  }
+                const spec = aliasByKey.get(k);
+                const label = spec?.alias || k;
+                if (Array.isArray(v) && v.length > 0) {
+                  const formattedValues = v.map((raw) => {
+                    const str = String(raw);
+                    if (k === "layout") {
+                      const f = formatLayout(str);
+                      return f !== "—" ? f : str;
+                    }
+                    return FILTER_ENUM_LABELS[k]?.[str] ?? str;
+                  });
                   badges.push({
-                    id: `${base}:${value}`,
-                    label: `${label}: ${value}`,
-                    clearKeys: [`${base}_min`, `${base}_max`],
+                    id: `${k}:${formattedValues.join(",")}`,
+                    label: `${label}: ${formattedValues.join(", ")}`,
+                    clearKeys: [k],
+                  });
+                } else if (typeof v === "boolean") {
+                  badges.push({
+                    id: `${k}:${v ? "1" : "0"}`,
+                    label: `${label}: ${v ? "Ano" : "Ne"}`,
+                    clearKeys: [k],
+                  });
+                } else if (typeof v === "number" && !Number.isNaN(v)) {
+                  badges.push({
+                    id: `${k}:${v}`,
+                    label: `${label}: ${v}`,
+                    clearKeys: [k],
                   });
                 }
-                return badges.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => {
-                      const next: CurrentFilters = { ...filters };
-                      for (const ck of b.clearKeys) {
-                        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                        delete (next as any)[ck];
-                      }
-                      applyFilters(next);
-                    }}
-                    className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
-                  >
-                    <span>{b.label}</span>
-                    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
-                      ×
-                    </span>
-                  </button>
-                ));
-              })()}
-            </div>
-          )}
-        </div>
-      </header>
-
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {error && (
-          <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
+              }
+              const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
+              for (const base of rangeBases) {
+                const min = filters[`${base}_min`] as number | undefined;
+                const max = filters[`${base}_max`] as number | undefined;
+                if (
+                  (min === undefined || Number.isNaN(min as number)) &&
+                  (max === undefined || Number.isNaN(max as number))
+                ) {
+                  continue;
+                }
+                const spec = aliasByKey.get(base);
+                const label = spec?.alias || base;
+                const asPercent = percentRangeBases.has(base);
+                const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
+                const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
+                const suf = asPercent ? " %" : "";
+                let value = "";
+                if (dispMin != null) {
+                  value += `od ${dispMin}${suf}`;
+                }
+                if (dispMax != null) {
+                  value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
+                }
+                badges.push({
+                  id: `${base}:${value}`,
+                  label: `${label}: ${value}`,
+                  clearKeys: [`${base}_min`, `${base}_max`],
+                });
+              }
+              return badges.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => {
+                    const next: CurrentFilters = { ...filters };
+                    for (const ck of b.clearKeys) {
+                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                      delete (next as any)[ck];
+                    }
+                    applyFilters(next);
+                  }}
+                  className="group inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-white"
+                >
+                  <span>{b.label}</span>
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-600 group-hover:bg-slate-400 group-hover:text-white">
+                    ×
+                  </span>
+                </button>
+              ));
+            })()}
+          </div>
         )}
-        <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
-          <SummaryBar
-            total={summary.total}
-            averagePricePerM2={summary.averagePricePerM2}
-            averagePrice={summary.averagePrice}
-            availableCount={summary.availableCount}
-            averageLocalDiff={averageLocalDiff}
-          />
-          <div className="data-grid-wrapper rounded-xl border border-slate-200 bg-white shadow-sm">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
+        )}
+        <div className="data-grid-wrapper">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-xs sm:text-sm">
@@ -2072,7 +2024,7 @@ export default function Home() {
                                     : ""
                                 } ${
                                   localDiffClass
-                                } ${isStickyFirst ? "sticky left-0 z-10 bg-inherit" : ""} ${
+                                } ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${
                                   isEditable ? "cursor-pointer" : ""
                                 }`}
                                 onDoubleClick={() => {
@@ -2192,8 +2144,7 @@ export default function Home() {
               </table>
             </div>
           </div>
-        </div>
-      </main>
+      </div>
 
       <FiltersDrawer
         open={drawerOpen}

@@ -15,7 +15,7 @@ import {
   flattenFilterSpecsByKey,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
-import { formatAreaM2, formatCurrencyCzk, formatCurrencyPerM2, formatLayout, formatMinutes, formatPercent } from "@/lib/format";
+import { formatAreaM2, formatByDisplayFormat, formatCurrencyCzk, formatCurrencyPerM2, formatDate, formatLayout, formatLayoutsList, formatMinutes, formatPercent } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import {
@@ -73,40 +73,19 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
   const num = Number(value);
   const isNumber = !Number.isNaN(num);
 
-  // Rekonstrukce – vlastní texty
-  if (column.key === "renovation") {
-    const raw = String(value ?? "").toLowerCase();
-    const isTrue =
-      value === true ||
-      ["true", "1", "yes", "ano"].includes(raw);
-    return isTrue ? "rekonstrukce" : "novostavba";
+  // Rekonstrukce a žaluzie – vlastní texty podle katalogového klíče
+  if (column.key === "renovation" || column.key === "exterior_blinds") {
+    return formatByDisplayFormat(value, column.display_format ?? "", column.key);
   }
 
-  // Žaluzie – ponecháme původní hodnoty z dat (preparation/true/false)
-  if (column.key === "exterior_blinds") {
-    const numVal = Number(value);
-    if (!Number.isNaN(numVal)) {
-      return numVal === 1 ? "true" : "false";
-    }
-    return String(value);
-  }
-
-  // Obecné booleany: ANO/NE (klimatizace, chlazení stropem, žaluzie, smart home, ...)
+  // Obecné booleany: ANO/NE
   if (column.data_type === "bool" || typeof value === "boolean") {
-    const raw = String(value ?? "").toLowerCase();
-    const isTrue =
-      value === true ||
-      ["true", "1", "yes", "ano"].includes(raw);
-    return isTrue ? "ANO" : "NE";
+    return formatByDisplayFormat(value, "boolean", column.key);
   }
 
   // Layouts list
   if (column.key === "layouts_present") {
-    if (Array.isArray(value)) {
-      const parts = value.map((v) => formatLayout(typeof v === "string" ? v : String(v)));
-      return parts.length ? parts.join(", ") : "—";
-    }
-    return String(value);
+    return formatLayoutsList(value);
   }
 
   // Ceny: vždy Kč, bez desetinných míst, s mezerou mezi tisíci (jako na jednotkách)
@@ -124,17 +103,13 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
   ) {
     return formatCurrencyCzk(isNumber ? num : null);
   }
-  if (
-    column.key.includes("parking") && column.key.endsWith("_czk")
-  ) {
+  if (column.key.includes("parking") && column.key.endsWith("_czk")) {
     return formatCurrencyCzk(isNumber ? num : null);
   }
 
   // Počet jednotek (celá čísla)
   if (column.key === "units_total" || column.key === "units_available" || column.key === "units_priced") {
-    if (value == null || value === "") return "—";
-    const n = Number(value);
-    return Number.isNaN(n) ? "—" : String(Math.round(n));
+    return isNumber ? String(Math.round(num)) : "—";
   }
 
   // Plocha v m² (včetně průměrné plochy): jedno desetinné místo
@@ -155,27 +130,17 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
     return formatMinutes(isNumber ? num : null);
   }
 
-  // Hluk (dB) – denní / noční
-  if (column.key === "noise_day_db" || column.key === "noise_night_db") {
-    return isNumber ? `${num} dB` : "—";
-  }
-  // Hluk lokality (klasifikace)
-  if (column.key === "noise_label") {
-    return value != null && String(value).trim() !== "" ? String(value) : "—";
-  }
-
-  // Vzdálenost v m: do 999 m => "123 m", od 1000 m => "1.2 km", null => "—"
-  const distanceKeys = [
-    "distance_to_primary_road_m",
-    "distance_to_tram_tracks_m",
-    "distance_to_railway_m",
-    "distance_to_airport_m",
-  ];
-  if (distanceKeys.includes(column.key)) {
-    if (value == null || value === "" || !isNumber) return "—";
-    const m = Number(value);
-    if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
-    return `${Math.round(m)} m`;
+  // Hluk (dB a klasifikace) a vzdálenosti – delegujeme na sdílenou lib
+  if (
+    column.key === "noise_day_db" ||
+    column.key === "noise_night_db" ||
+    column.key === "noise_label" ||
+    column.key === "distance_to_primary_road_m" ||
+    column.key === "distance_to_tram_tracks_m" ||
+    column.key === "distance_to_railway_m" ||
+    column.key === "distance_to_airport_m"
+  ) {
+    return formatByDisplayFormat(value, column.display_format ?? "", column.key);
   }
 
   // Mikro-lokalita: skóre (číslo) a hodnocení (text)
@@ -207,13 +172,7 @@ function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
 
   // Dates
   if (column.data_type === "date") {
-    try {
-      const d = value instanceof Date ? value : new Date(String(value));
-      if (Number.isNaN(d.getTime())) return String(value);
-      return d.toLocaleDateString("cs-CZ");
-    } catch {
-      return String(value);
-    }
+    return formatDate(value);
   }
 
   // Generic number
@@ -360,6 +319,21 @@ function downloadProjectsCsv(
   a.click();
   URL.revokeObjectURL(url);
 }
+
+const FILTER_ENUM_LABELS: Record<string, Record<string, string>> = {
+  availability: {
+    available: "Dostupná",
+    unseen: "Neviděná",
+    not_seen: "Neviděná",
+    reserved: "Rezervovaná",
+    sold: "Prodaná",
+    unavailable: "Nedostupná",
+  },
+  category: {
+    flat: "Byt",
+    house: "Dům",
+  },
+};
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -841,39 +815,21 @@ export default function ProjectsPage() {
   }, []);
 
   return (
-    <div className="flex min-h-screen flex-col">
-      <header className="glass-header sticky top-0 z-20 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-          <h1 className="text-lg font-semibold tracking-tight text-slate-900 shrink-0">Reamar</h1>
-          <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur shrink-0">
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/units?${qs}` : "/units";
-              })()}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Jednotky
-            </Link>
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/projects?${qs}` : "/projects";
-              })()}
-              className="rounded-full bg-slate-900 px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm"
-            >
-              Projekty
-            </Link>
-            <Link
-              href={(() => {
-                const qs = searchParams?.toString() ?? "";
-                return qs ? `/projects/map?${qs}` : "/projects/map";
-              })()}
-              className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
-            >
-              Mapa
-            </Link>
-          </div>
+    <div>
+      <div className="flex flex-col gap-5 pt-4 pb-10">
+        <div className="flex items-baseline justify-between gap-4 px-1">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Projekty</h2>
+          {total > 0 && <span className="text-sm text-slate-400">{total} záznamů</span>}
+        </div>
+        <SummaryBar
+          total={summary.total}
+          averagePricePerM2={summary.averagePricePerM2}
+          averagePrice={summary.averagePrice}
+          availableCount={summary.availableCount}
+          averageLocalDiff={null}
+          totalLabel="Celkem projektů"
+        />
+        <div className="glass-header flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
           <button
             type="button"
             onClick={openDrawer}
@@ -920,7 +876,7 @@ export default function ProjectsPage() {
               </button>
             </div>
           )}
-          <div className="relative shrink-0" ref={actionsRef}>
+          <div className="relative ml-auto shrink-0" ref={actionsRef}>
             <button
               type="button"
               onClick={() => setActionsOpen((o) => !o)}
@@ -929,7 +885,7 @@ export default function ProjectsPage() {
               Akce
             </button>
             {actionsOpen && (
-              <div className="absolute left-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-slate-200 bg-white/95 py-1.5 shadow-lg backdrop-blur">
+              <div className="absolute right-0 top-full z-30 mt-1 min-w-[220px] rounded-xl border border-slate-200 bg-white/95 py-1.5 shadow-lg backdrop-blur">
                 <button
                   type="button"
                   onClick={() => { setColumnsOpen(true); setActionsOpen(false); }}
@@ -1006,120 +962,105 @@ export default function ProjectsPage() {
               </div>
             )}
           </div>
-          {countActiveFilters(filters) > 0 && (
-            <div className="flex flex-wrap gap-1 text-[11px] text-gray-700">
-              {(() => {
-                type FilterBadge = { id: string; label: string; clearKeys: string[] };
-                const badges: FilterBadge[] = [];
-                const rangeBases = new Set<string>();
-                for (const [k, v] of Object.entries(filters)) {
-                  if (v === undefined) continue;
-                  if (k.endsWith("_min") || k.endsWith("_max")) {
-                    rangeBases.add(k.replace(/_(min|max)$/, ""));
-                    continue;
-                  }
-                  const spec = aliasByKey.get(k);
-                  const label = spec?.alias || k;
-                  if (Array.isArray(v) && v.length > 0) {
-                    const formattedValues = v.map((raw) => {
-                      if (k === "layout") {
-                        const m = /^layout_(\d+)(?:_(\d+))?$/.exec(String(raw));
-                        if (m) {
-                          const whole = m[1];
-                          const frac = m[2];
-                          return frac ? `${whole},${frac}kk` : `${whole}kk`;
-                        }
-                      }
-                      return String(raw);
-                    });
-                    badges.push({
-                      id: `${k}:${formattedValues.join(",")}`,
-                      label: `${label}: ${formattedValues.join(", ")}`,
-                      clearKeys: [k],
-                    });
-                  } else if (typeof v === "boolean") {
-                    badges.push({
-                      id: `${k}:${v ? "1" : "0"}`,
-                      label: `${label}: ${v ? "Ano" : "Ne"}`,
-                      clearKeys: [k],
-                    });
-                  } else if (typeof v === "number" && !Number.isNaN(v)) {
-                    badges.push({
-                      id: `${k}:${v}`,
-                      label: `${label}: ${v}`,
-                      clearKeys: [k],
-                    });
-                  }
+        </div>
+        {countActiveFilters(filters) > 0 && (
+          <div className="flex flex-wrap gap-1.5 px-1">
+            {(() => {
+              type FilterBadge = { id: string; label: string; clearKeys: string[] };
+              const badges: FilterBadge[] = [];
+              const rangeBases = new Set<string>();
+              for (const [k, v] of Object.entries(filters)) {
+                if (v === undefined) continue;
+                if (k.endsWith("_min") || k.endsWith("_max")) {
+                  rangeBases.add(k.replace(/_(min|max)$/, ""));
+                  continue;
                 }
-                const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
-                for (const base of rangeBases) {
-                  const min = filters[`${base}_min`] as number | undefined;
-                  const max = filters[`${base}_max`] as number | undefined;
-                  if (
-                    (min === undefined || Number.isNaN(min as number)) &&
-                    (max === undefined || Number.isNaN(max as number))
-                  ) {
-                    continue;
-                  }
-                  const spec = aliasByKey.get(base);
-                  const label = spec?.alias || base;
-                  const asPercent = percentRangeBases.has(base);
-                  const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
-                  const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
-                  const suf = asPercent ? " %" : "";
-                  let value = "";
-                  if (dispMin != null) {
-                    value += `od ${dispMin}${suf}`;
-                  }
-                  if (dispMax != null) {
-                    value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
-                  }
+                const spec = aliasByKey.get(k);
+                const label = spec?.alias || k;
+                if (Array.isArray(v) && v.length > 0) {
+                  const formattedValues = v.map((raw) => {
+                    const str = String(raw);
+                    if (k === "layout") {
+                      const f = formatLayout(str);
+                      return f !== "—" ? f : str;
+                    }
+                    return FILTER_ENUM_LABELS[k]?.[str] ?? str;
+                  });
                   badges.push({
-                    id: `${base}:${value}`,
-                    label: `${label}: ${value}`,
-                    clearKeys: [`${base}_min`, `${base}_max`],
+                    id: `${k}:${formattedValues.join(",")}`,
+                    label: `${label}: ${formattedValues.join(", ")}`,
+                    clearKeys: [k],
+                  });
+                } else if (typeof v === "boolean") {
+                  badges.push({
+                    id: `${k}:${v ? "1" : "0"}`,
+                    label: `${label}: ${v ? "Ano" : "Ne"}`,
+                    clearKeys: [k],
+                  });
+                } else if (typeof v === "number" && !Number.isNaN(v)) {
+                  badges.push({
+                    id: `${k}:${v}`,
+                    label: `${label}: ${v}`,
+                    clearKeys: [k],
                   });
                 }
-                return badges.map((b) => (
-                  <button
-                    key={b.id}
-                    type="button"
-                    onClick={() => {
-                      const next: CurrentFilters = { ...filters };
-                      for (const ck of b.clearKeys) {
-                        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                        delete (next as Record<string, unknown>)[ck];
-                      }
-                      applyFilters(next);
-                    }}
-                    className="group inline-flex items-center gap-1 rounded-full border border-gray-300 bg-gray-50 px-2 py-0.5 hover:border-gray-400 hover:bg-gray-100"
-                  >
-                    <span>{b.label}</span>
-                    <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-gray-300 text-[9px] text-gray-800 group-hover:bg-gray-500 group-hover:text-white">
-                      ×
-                    </span>
-                  </button>
-                ));
-              })()}
-            </div>
-          )}
-        </div>
-      </header>
-
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {error && (
-          <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>
+              }
+              const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
+              for (const base of rangeBases) {
+                const min = filters[`${base}_min`] as number | undefined;
+                const max = filters[`${base}_max`] as number | undefined;
+                if (
+                  (min === undefined || Number.isNaN(min as number)) &&
+                  (max === undefined || Number.isNaN(max as number))
+                ) {
+                  continue;
+                }
+                const spec = aliasByKey.get(base);
+                const label = spec?.alias || base;
+                const asPercent = percentRangeBases.has(base);
+                const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
+                const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
+                const suf = asPercent ? " %" : "";
+                let value = "";
+                if (dispMin != null) {
+                  value += `od ${dispMin}${suf}`;
+                }
+                if (dispMax != null) {
+                  value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
+                }
+                badges.push({
+                  id: `${base}:${value}`,
+                  label: `${label}: ${value}`,
+                  clearKeys: [`${base}_min`, `${base}_max`],
+                });
+              }
+              return badges.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  onClick={() => {
+                    const next: CurrentFilters = { ...filters };
+                    for (const ck of b.clearKeys) {
+                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
+                      delete (next as Record<string, unknown>)[ck];
+                    }
+                    applyFilters(next);
+                  }}
+                  className="group inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-white"
+                >
+                  <span>{b.label}</span>
+                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-600 group-hover:bg-slate-400 group-hover:text-white">
+                    ×
+                  </span>
+                </button>
+              ));
+            })()}
+          </div>
         )}
-        <div className="flex flex-1 flex-col gap-4 overflow-hidden p-4">
-          <SummaryBar
-            total={summary.total}
-            averagePricePerM2={summary.averagePricePerM2}
-            averagePrice={summary.averagePrice}
-            availableCount={summary.availableCount}
-            averageLocalDiff={null}
-            totalLabel="Celkem projektů"
-          />
-          <div className="data-grid-wrapper rounded-xl border border-slate-200 bg-white shadow-sm">
+        {error && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
+        )}
+        <div className="data-grid-wrapper">
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-xs sm:text-sm">
@@ -1299,7 +1240,7 @@ export default function ProjectsPage() {
                             key={col.key}
                             className={`px-3 py-1.5 text-xs sm:text-sm text-slate-900 ${
                               alignRight ? "text-right" : "text-left"
-                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-inherit" : ""}`}
+                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
                             onDoubleClick={() => {
                               if (!isEditable || loading || savingOverride) return;
                               const projectId = p.id as number;
@@ -1371,8 +1312,7 @@ export default function ProjectsPage() {
             </table>
           </div>
         </div>
-        </div>
-      </main>
+      </div>
       <FiltersDrawer
         open={drawerOpen}
         onClose={closeDrawer}

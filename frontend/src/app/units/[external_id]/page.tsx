@@ -731,7 +731,8 @@ export default function UnitDetailPage() {
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+      <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+        {/* Title row */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button
@@ -741,7 +742,7 @@ export default function UnitDetailPage() {
             >
               ← Zpět
             </button>
-            <h1 className="text-lg font-semibold text-slate-900">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
               {unit.unit_name ?? unit.external_id}
             </h1>
           </div>
@@ -777,9 +778,36 @@ export default function UnitDetailPage() {
             )}
           </div>
         </div>
-      </header>
 
-      <main className="mx-auto max-w-6xl space-y-6 p-4">
+        {/* Hero stats strip */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Cena</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {formatCurrencyCzk(unit.price_czk ?? null)}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Cena za m²</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {formatCurrencyCzk(unit.price_per_m2_czk ?? null)}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Dispozice / plocha</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {[formatLayout(unit.layout ?? null), formatAreaM2(unit.floor_area_m2 ?? null)].filter(Boolean).join(" / ") || "—"}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Dostupnost</p>
+            <p className={`mt-1 text-lg font-semibold ${unit.available ? "text-emerald-600" : "text-rose-600"}`}>
+              {unit.availability_status ?? (unit.available ? "Dostupná" : "Nedostupná")}
+            </p>
+          </div>
+        </div>
+
+
         {unit.pending_api_updates && unit.pending_api_updates.length > 0 && (
           <section className="rounded-xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
             <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">
@@ -825,8 +853,8 @@ export default function UnitDetailPage() {
         )}
         {/* Řádek: Přehled + Mapa vedle sebe */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <section className="glass-card p-5">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
               Přehled
             </h2>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -911,8 +939,8 @@ export default function UnitDetailPage() {
 
           {/* Mapa na stejném řádku jako přehled */}
           {hasGps && gpsLat != null && gpsLng != null && (
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+              <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
                 Poloha
               </h2>
               <UnitDetailMap
@@ -941,8 +969,8 @@ export default function UnitDetailPage() {
           }
           if (!unitUrl && !projectUrl) return null;
           return (
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-              <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+              <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
                 Odkazy
               </h2>
               <div className="flex flex-wrap gap-3">
@@ -977,14 +1005,14 @@ export default function UnitDetailPage() {
         })()}
 
         {/* Data o projektu */}
-        <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-4 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Data o projektu
           </h2>
           <div className="space-y-4">
             {overviewStandards.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
                   Standardy
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -994,7 +1022,7 @@ export default function UnitDetailPage() {
             )}
             {overviewFinanceParking.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
                   Financování a parkování
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -1004,7 +1032,7 @@ export default function UnitDetailPage() {
             )}
             {overviewUnitsStats.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
                   Statistiky
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -1014,7 +1042,7 @@ export default function UnitDetailPage() {
             )}
             {overviewLocation.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
                   Lokalita
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -1024,7 +1052,7 @@ export default function UnitDetailPage() {
             )}
             {otherOverviewColumns.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">
-                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-700">
                   Ostatní
                 </h3>
                 <div className="grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
@@ -1037,8 +1065,8 @@ export default function UnitDetailPage() {
 
         {/* Data o jednotce – zobrazení a při „Editovat“ inline úprava editovatelných polí */}
         {unitColumns.length > 0 && (
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
               Data o jednotce
             </h2>
             <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -1202,8 +1230,8 @@ export default function UnitDetailPage() {
         )}
 
         {/* Historie ceny */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Historie ceny
           </h2>
           <div className="h-72 w-full">
@@ -1247,7 +1275,7 @@ export default function UnitDetailPage() {
             )}
           </div>
         </section>
-      </main>
+      </div>
     </div>
   );
 }

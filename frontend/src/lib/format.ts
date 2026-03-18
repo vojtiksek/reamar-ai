@@ -205,3 +205,29 @@ export function formatValue(value: unknown, meta: FormatValueMeta): string {
   const catalogKey = meta.key;
   return formatByDisplayFormat(value, displayFormat, catalogKey);
 }
+
+/**
+ * Format a date value to Czech locale string (e.g. "1. 3. 2026").
+ */
+export function formatDate(value: unknown): string {
+  if (value == null || value === "") return "—";
+  try {
+    const d = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString("cs-CZ");
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Format a list of layout codes (e.g. ["layout_2", "layout_3"]) to a display string.
+ */
+export function formatLayoutsList(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => formatLayout(typeof v === "string" ? v : String(v)));
+    return parts.length ? parts.join(", ") : "—";
+  }
+  return String(value);
+}

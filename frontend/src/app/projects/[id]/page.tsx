@@ -127,6 +127,23 @@ type UnitsSortKey =
   | "price_per_m2_czk"
   | "availability_status";
 
+function scoreBarColor(score: number): string {
+  if (score >= 80) return "bg-emerald-500";
+  if (score >= 60) return "bg-sky-500";
+  if (score >= 40) return "bg-amber-400";
+  return "bg-rose-500";
+}
+
+function ScoreBar({ score }: { score: number | null | undefined }) {
+  if (score == null) return null;
+  const pct = Math.max(0, Math.min(100, score));
+  return (
+    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className={`h-full rounded-full ${scoreBarColor(pct)}`} style={{ width: `${pct}%` }} />
+    </div>
+  );
+}
+
 function availabilityStatusLabel(status: string | null | undefined, available: boolean): string {
   if (status != null && status !== "") {
     const s = String(status).toLowerCase();
@@ -754,22 +771,18 @@ export default function ProjectDetailPage() {
   if (projectState.error) {
     return (
       <div className="min-h-screen">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              ← Zpět
-            </button>
-          </div>
-        </header>
-        <main className="mx-auto max-w-6xl p-4">
+        <div className="mx-auto max-w-6xl space-y-4 p-4 pt-6">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            ← Zpět
+          </button>
           <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {projectState.error}
           </div>
-        </main>
+        </div>
       </div>
     );
   }
@@ -777,27 +790,24 @@ export default function ProjectDetailPage() {
   if (!project) {
     return (
       <div className="min-h-screen">
-        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
-              ← Zpět
-            </button>
-          </div>
-        </header>
-        <main className="mx-auto max-w-6xl p-4">
+        <div className="mx-auto max-w-6xl space-y-4 p-4 pt-6">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            ← Zpět
+          </button>
           <p className="text-slate-600">Projekt nenalezen.</p>
-        </main>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen">
-      <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-4 py-3 shadow-sm backdrop-blur">
+      <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+        {/* Title row */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <button
@@ -807,7 +817,7 @@ export default function ProjectDetailPage() {
             >
               ← Zpět
             </button>
-            <h1 className="text-lg font-semibold text-slate-900">{name || "Projekt"}</h1>
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{name || "Projekt"}</h1>
           </div>
           <div className="flex items-center gap-2">
             {!editMode ? (
@@ -841,13 +851,39 @@ export default function ProjectDetailPage() {
             )}
           </div>
         </div>
-      </header>
 
-      <main className="mx-auto max-w-6xl space-y-6 p-4">
+        {/* Hero stats strip */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Min. cena</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {formatCurrencyCzk((project["min_price_czk"] as number | null | undefined) ?? null)}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Max. cena</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {formatCurrencyCzk((project["max_price_czk"] as number | null | undefined) ?? null)}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Jednotek celkem</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {project["total_units"] != null ? String(project["total_units"]) : "—"}
+            </p>
+          </div>
+          <div className="glass-card px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Dostupných</p>
+            <p className="mt-1 text-lg font-semibold text-slate-900">
+              {project["available_units"] != null ? String(project["available_units"]) : "—"}
+            </p>
+          </div>
+        </div>
+
         {/* Řádek: Přehled + Mapa vedle sebe */}
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+          <section className="glass-card p-5">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
               Přehled
             </h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -974,7 +1010,7 @@ export default function ProjectDetailPage() {
           </section>
 
           {projectGpsLat != null && projectGpsLng != null && (
-            <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+            <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
               <h2 className="mb-4 text-sm font-semibold tracking-wide text-slate-500">
                 <span className="uppercase">Poloha</span>:{" "}
                 <span className="font-medium normal-case text-slate-900">
@@ -992,8 +1028,8 @@ export default function ProjectDetailPage() {
         </div>
 
         {/* Financování a parkování – celá šířka */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Financování a parkování
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -1156,8 +1192,8 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Standardy – všechna pole upravitelná, enum z filtrů */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Standardy
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -1485,8 +1521,8 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Amenities – nová sekce, jen pro detail projektu */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Amenities
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -1632,8 +1668,8 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Lokalita */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Lokalita
           </h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
@@ -1784,9 +1820,9 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Walkability */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
           <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
               Walkability
             </h2>
             <div className="flex items-center gap-2">
@@ -1826,7 +1862,7 @@ export default function ProjectDetailPage() {
           <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
             <div>
               <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
-              <p className="mt-0.5 font-medium text-slate-900">
+              <p className="mt-0.5 text-2xl font-bold text-slate-900">
                 {personalizedWalk?.score != null ? (
                   (() => {
                     const main = Math.round(personalizedWalk.score as number);
@@ -1863,6 +1899,7 @@ export default function ProjectDetailPage() {
                   "—"
                 )}
               </p>
+              <ScoreBar score={personalizedWalk?.score != null ? Math.round(personalizedWalk.score as number) : project["walkability_score"] != null ? Math.round(Number(project["walkability_score"])) : null} />
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Walkability hodnocení</p>
@@ -1881,6 +1918,7 @@ export default function ProjectDetailPage() {
                     ? String(project["walkability_daily_needs_score"])
                     : "—"}
               </p>
+              <ScoreBar score={personalizedWalk?.daily_needs != null ? Math.round(personalizedWalk.daily_needs) : project["walkability_daily_needs_score"] != null ? Number(project["walkability_daily_needs_score"]) : null} />
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Doprava</p>
@@ -1891,6 +1929,7 @@ export default function ProjectDetailPage() {
                     ? String(project["walkability_transport_score"])
                     : "—"}
               </p>
+              <ScoreBar score={personalizedWalk?.transport != null ? Math.round(personalizedWalk.transport) : project["walkability_transport_score"] != null ? Number(project["walkability_transport_score"]) : null} />
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Volný čas</p>
@@ -1901,6 +1940,7 @@ export default function ProjectDetailPage() {
                     ? String(project["walkability_leisure_score"])
                     : "—"}
               </p>
+              <ScoreBar score={personalizedWalk?.leisure != null ? Math.round(personalizedWalk.leisure) : project["walkability_leisure_score"] != null ? Number(project["walkability_leisure_score"]) : null} />
             </div>
             <div>
               <p className="text-xs font-medium text-slate-500">Rodina</p>
@@ -1911,6 +1951,7 @@ export default function ProjectDetailPage() {
                     ? String(project["walkability_family_score"])
                     : "—"}
               </p>
+              <ScoreBar score={personalizedWalk?.family != null ? Math.round(personalizedWalk.family) : project["walkability_family_score"] != null ? Number(project["walkability_family_score"]) : null} />
             </div>
           </div>
           <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
@@ -1919,7 +1960,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("supermarkets", "Supermarkety")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("supermarkets", "Supermarkety")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Supermarket</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -1938,7 +1979,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("pharmacies", "Lékárny")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("pharmacies", "Lékárny")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Lékárna</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -1957,7 +1998,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("tram_stops", "Tram zastávky")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("tram_stops", "Tram zastávky")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Tram zastávka</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -1974,7 +2015,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("bus_stops", "Bus zastávky")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("bus_stops", "Bus zastávky")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Bus zastávka</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -1991,7 +2032,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("metro_stations", "Metro")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("metro_stations", "Metro")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Metro</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2008,7 +2049,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("parks", "Parky")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("parks", "Parky")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Park</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2027,7 +2068,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("restaurants", "Restaurace")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("restaurants", "Restaurace")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Restaurace</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2046,7 +2087,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("cafes", "Kavárny")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("cafes", "Kavárny")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Kavárny</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2065,7 +2106,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("fitness", "Fitness")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("fitness", "Fitness")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Fitness</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2084,7 +2125,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("playgrounds", "Hřiště")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("playgrounds", "Hřiště")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Hřiště</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2103,7 +2144,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("kindergartens", "Školky")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("kindergartens", "Školky")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Školka</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2122,7 +2163,7 @@ export default function ProjectDetailPage() {
               tabIndex={0}
               onClick={() => openPoiModal("primary_schools", "Základní školy")}
               onKeyDown={(e) => e.key === "Enter" && openPoiModal("primary_schools", "Základní školy")}
-              className="cursor-pointer rounded-lg px-2 py-1.5 transition hover:bg-slate-50"
+              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
             >
               <p className="text-xs font-medium text-slate-500">Základní škola</p>
               <p className="mt-0.5 font-medium text-slate-900">
@@ -2140,8 +2181,8 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Ostatní – Zajímavosti upravitelné */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Ostatní
           </h2>
           <div>
@@ -2162,8 +2203,8 @@ export default function ProjectDetailPage() {
         </section>
 
         {/* Jednotky v projektu */}
-        <section className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
-          <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-slate-500">
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
+          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
             Jednotky v projektu
           </h2>
           {unitsState.loading ? (
@@ -2257,8 +2298,12 @@ export default function ProjectDetailPage() {
                             b ? `${a},${b} kk` : `${a} kk`
                           )
                         : u.layout ?? "—";
+                    const isSold = (() => {
+                      const s = String(u.availability_status ?? "").toLowerCase();
+                      return s === "sold" || s === "prodané" || (!u.available && s !== "reserved" && s !== "rezervované");
+                    })();
                     return (
-                      <tr key={u.external_id} className="hover:bg-slate-50">
+                      <tr key={u.external_id} className={`hover:bg-slate-50 ${isSold ? "opacity-50" : ""}`}>
                         <td className="px-4 py-2">
                           <Link
                             href={`/units/${encodeURIComponent(u.external_id)}`}
@@ -2350,7 +2395,12 @@ export default function ProjectDetailPage() {
               onClick={(e) => e.stopPropagation()}
             >
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel} v okolí</h3>
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel}</h3>
+                  <p className="text-[11px] text-slate-500">
+                    do 500 m{!poiModal.loading && poiModal.items.length > 0 ? ` · ${poiModal.items.length} míst` : ""}
+                  </p>
+                </div>
                 <button
                   type="button"
                   onClick={closePoiModal}
@@ -2467,7 +2517,7 @@ export default function ProjectDetailPage() {
           setWalkPrefsOpen(false);
         }}
       />
-      </main>
+      </div>
     </div>
   );
 }

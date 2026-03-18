@@ -2,12 +2,14 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 
 import { API_BASE } from "@/lib/api";
+import { formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
 import type { WalkabilityPreferences } from "@/lib/walkabilityPreferences";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
+import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
 import { ClientLocationMap, type LocationProjectPoint } from "@/components/ClientLocationMap";
 import {
   InfoBox,
@@ -21,11 +23,13 @@ import {
 } from "@/components/ui/reamar-ui";
 import { WizardSteps } from "@/components/ui/WizardSteps";
 import {
+  DEFAULT_PREFERENCES,
   getDefaultPreferences,
   loadPreferences as loadWalkPrefs,
   savePreferences as saveWalkPrefs,
 } from "@/lib/walkabilityPreferences";
-import { filtersToUnitsParams, parseFiltersFromSearchParams, type CurrentFilters } from "@/lib/filters";
+import { parseFiltersFromSearchParams, type CurrentFilters } from "@/lib/filters";
+import { isPointInPolygon } from "@/lib/geo";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -222,9 +226,24 @@ export default function ClientDetailPage() {
   };
 
   const [wizardExtras, setWizardExtras] = useState<WizardExtras>({});
+  const nextStepGuard = useRef(false);
   const [locationPolygons, setLocationPolygons] = useState<{ lat: number; lng: number }[][]>([]);
   const [activeAreaIndex, setActiveAreaIndex] = useState<number>(0);
   const [locationProjects, setLocationProjects] = useState<LocationProjectPoint[]>([]);
+
+  const projectsInsidePolygon = useMemo(() => {
+    if (!locationProjects.length) return 0;
+    return locationProjects.filter(
+      (p) =>
+        p.gps_latitude != null &&
+        p.gps_longitude != null &&
+        locationPolygons.some(
+          (poly) =>
+            poly.length >= 3 &&
+            isPointInPolygon(p.gps_latitude!, p.gps_longitude!, poly)
+        )
+    ).length;
+  }, [locationPolygons, locationProjects]);
 
   useEffect(() => {
     const stored = loadWalkPrefs();
@@ -344,17 +363,17 @@ export default function ClientDetailPage() {
     }
     setLoading(true);
     // Odvoď filtry z URL stejně jako na stránce units – hlavně availability (skrýt / zobrazit archiv).
-    let filtersFromUrl: CurrentFilters = {};
+    let availabilityParams = "";
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      filtersFromUrl = parseFiltersFromSearchParams(params);
+      const filtersFromUrl: CurrentFilters = parseFiltersFromSearchParams(params);
+      const availability = filtersFromUrl.availability as string[] | undefined;
+      if (Array.isArray(availability) && availability.length > 0) {
+        const ap = new URLSearchParams();
+        availability.forEach((v) => ap.append("availability", v));
+        availabilityParams = ap.toString();
+      }
     }
-    const availabilityParams = new URLSearchParams(
-      filtersToUnitsParams(filtersFromUrl, new Set<string>(["availability"])) as Record<
-        string,
-        string | string[]
-      >
-    );
     Promise.all([
       fetch(`${API_BASE}/clients/${clientId}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -372,7 +391,7 @@ export default function ClientDetailPage() {
         headers: { Authorization: `Bearer ${token}` },
       }).then((r) => (r.ok ? r.json() : null)),
       fetch(
-        `${API_BASE}/projects?${availabilityParams.toString()}&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
+        `${API_BASE}/projects?${availabilityParams}&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -417,51 +436,51 @@ export default function ClientDetailPage() {
       .finally(() => setLoading(false));
   }, [clientId, token, hydrated]);
 
+  const buildProfileBody = (): ClientProfile => ({
+    ...(profile ?? {}),
+    layouts: selectedLayouts.length ? { values: selectedLayouts } : null,
+    walkability_preferences_json: walkPrefs,
+    filter_json: {
+      ...(profile?.filter_json ?? {}),
+      wizard: wizardExtras,
+    },
+    polygon_geojson:
+      locationPolygons.length === 0 || locationPolygons[0].length < 3
+        ? null
+        : locationPolygons.length === 1
+        ? JSON.stringify({
+            type: "Polygon",
+            coordinates: [locationPolygons[0].map((p) => [p.lng, p.lat])],
+          })
+        : JSON.stringify({
+            type: "MultiPolygon",
+            coordinates: locationPolygons.map((poly) => [
+              poly.map((p) => [p.lng, p.lat]),
+            ]),
+          }),
+    commute_points_json: {
+      points:
+        wizardExtras.commute?.points?.map((p) => ({
+          id: p.id,
+          label: p.label,
+          lat: p.lat,
+          lng: p.lng,
+          mode: p.mode,
+          max_minutes: p.max_minutes,
+          priority: p.priority,
+          tolerance_minutes: p.tolerance_minutes,
+          address: p.address,
+          place_id: p.place_id,
+        })) ?? [],
+    },
+  });
+
   const handleSaveProfile = async () => {
     if (!token || !clientId) return;
     setProfileSaving(true);
     setProfileSavedMessage(null);
     try {
-      const body: ClientProfile = {
-        ...(profile ?? {}),
-        layouts: selectedLayouts.length ? { values: selectedLayouts } : null,
-        walkability_preferences_json: walkPrefs,
-        filter_json: {
-          ...(profile?.filter_json ?? {}),
-          wizard: wizardExtras,
-        },
-        polygon_geojson:
-          locationPolygons.length === 0 || locationPolygons[0].length < 3
-            ? null
-            : locationPolygons.length === 1
-            ? JSON.stringify({
-                type: "Polygon",
-                coordinates: [
-                  locationPolygons[0].map((p) => [p.lng, p.lat]),
-                ],
-              })
-            : JSON.stringify({
-                type: "MultiPolygon",
-                coordinates: locationPolygons.map((poly) => [
-                  poly.map((p) => [p.lng, p.lat]),
-                ]),
-              }),
-        commute_points_json: {
-          points:
-            wizardExtras.commute?.points?.map((p) => ({
-              id: p.id,
-              label: p.label,
-              lat: p.lat,
-              lng: p.lng,
-              mode: p.mode,
-              max_minutes: p.max_minutes,
-              priority: p.priority,
-              tolerance_minutes: p.tolerance_minutes,
-              address: p.address,
-              place_id: p.place_id,
-            })) ?? [],
-        },
-      };
+      const body = buildProfileBody();
       const res = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
         method: "POST",
         headers: {
@@ -478,6 +497,38 @@ export default function ClientDetailPage() {
       setError(e instanceof Error ? e.message : "Chyba při ukládání profilu");
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const handleSilentSave = async () => {
+    if (!token || !clientId) return;
+    try {
+      const body = buildProfileBody();
+      const res = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        const json = (await res.json()) as ClientProfile;
+        setProfile(json);
+      }
+    } catch {
+      console.warn("[wizard] auto-save failed, continuing navigation");
+    }
+  };
+
+  const handleNext = async () => {
+    if (nextStepGuard.current) return;
+    nextStepGuard.current = true;
+    try {
+      await handleSilentSave();
+      setWizardStep((s) => (s < TOTAL_WIZARD_STEPS ? s + 1 : s));
+    } finally {
+      nextStepGuard.current = false;
     }
   };
 
@@ -935,7 +986,32 @@ export default function ClientDetailPage() {
                                   Odebrat oblast
                                 </ReamarButton>
                               )}
+                              {locationPolygons.some((p) => p.length > 0) && (
+                                <ReamarButton
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    setLocationPolygons([]);
+                                    setActiveAreaIndex(0);
+                                  }}
+                                >
+                                  Smazat vše
+                                </ReamarButton>
+                              )}
                             </div>
+                            <div className="flex items-center gap-3">
+                              {locationPolygons.some((p) => p.length >= 3) && (
+                                <span className="text-[11px] text-slate-500">
+                                  {projectsInsidePolygon}{" "}
+                                  {projectsInsidePolygon === 1
+                                    ? "projekt"
+                                    : projectsInsidePolygon >= 2 && projectsInsidePolygon <= 4
+                                    ? "projekty"
+                                    : "projektů"}{" "}
+                                  uvnitř oblasti
+                                </span>
+                              )}
                             {locationPolygons.length > 1 && (
                               <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
                                 <span>Aktivní oblast:</span>
@@ -955,6 +1031,7 @@ export default function ClientDetailPage() {
                                 ))}
                               </div>
                             )}
+                            </div>
                           </div>
                         </ReamarSubtleCard>
                       )}
@@ -1062,6 +1139,9 @@ export default function ClientDetailPage() {
                           className={cn("mt-1", reamarInputClass)}
                           placeholder="Např. 8 500 000"
                         />
+                        {wizardExtras.budget?.ideal_price != null && (
+                          <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>
+                        )}
                       </div>
                       <div className="grid grid-cols-2 gap-2">
                         <div>
@@ -1080,6 +1160,9 @@ export default function ClientDetailPage() {
                             className={cn("mt-1", reamarInputClass)}
                             placeholder="Absolutní strop"
                           />
+                          {profile?.budget_max != null && (
+                            <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(profile.budget_max)}</p>
+                          )}
                         </div>
                         <div>
                           <label className={reamarLabelClass}>
@@ -1133,6 +1216,9 @@ export default function ClientDetailPage() {
                             className={cn("mt-1", reamarInputClass)}
                             placeholder="Např. 75"
                           />
+                          {wizardExtras.budget?.ideal_area != null && (
+                            <p className="mt-1 text-xs text-slate-500">{formatAreaM2(wizardExtras.budget.ideal_area)}</p>
+                          )}
                         </div>
                         <div>
                           <label className={reamarLabelClass}>
@@ -1150,6 +1236,9 @@ export default function ClientDetailPage() {
                             className={cn("mt-1", reamarInputClass)}
                             placeholder="Absolutní minimum"
                           />
+                          {profile?.area_min != null && (
+                            <p className="mt-1 text-xs text-slate-500">{formatAreaM2(profile.area_min)}</p>
+                          )}
                         </div>
                       </div>
                       <div>
@@ -1191,26 +1280,29 @@ export default function ClientDetailPage() {
                         <label className={reamarLabelClass}>
                           Dispozice (více možností)
                         </label>
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                        <div className="mt-2 flex flex-wrap gap-2">
                           {LAYOUT_OPTIONS.map((opt) => {
                             const checked = selectedLayouts.includes(opt.value);
                             return (
-                              <label key={opt.value} className="inline-flex items-center gap-1">
-                                <input
-                                  type="checkbox"
-                                  className="h-3 w-3 rounded border-slate-300"
-                                  checked={checked}
-                                  onChange={(e) => {
-                                    setSelectedLayouts((prev) => {
-                                      if (e.target.checked) {
-                                        return Array.from(new Set([...prev, opt.value]));
-                                      }
-                                      return prev.filter((v) => v !== opt.value);
-                                    });
-                                  }}
-                                />
-                                <span className="text-slate-700">{opt.label}</span>
-                              </label>
+                              <button
+                                key={opt.value}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedLayouts((prev) =>
+                                    checked
+                                      ? prev.filter((v) => v !== opt.value)
+                                      : Array.from(new Set([...prev, opt.value]))
+                                  )
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                                  checked
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                                )}
+                              >
+                                {opt.label}
+                              </button>
                             );
                           })}
                         </div>
@@ -1252,6 +1344,44 @@ export default function ClientDetailPage() {
                             <option value="own_use">Vlastní bydlení</option>
                             <option value="investment">Investice</option>
                           </select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className={reamarLabelClass}>Minimální plocha (m²)</label>
+                          <input
+                            type="number"
+                            value={profile?.area_min ?? ""}
+                            onChange={(e) =>
+                              setProfile((prev) => ({
+                                ...(prev ?? {}),
+                                area_min: e.target.value ? Number(e.target.value) : null,
+                              }))
+                            }
+                            className={cn("mt-1", reamarInputClass)}
+                            placeholder="Absolutní minimum"
+                          />
+                          {profile?.area_min != null && (
+                            <p className="mt-1 text-xs text-slate-500">{formatAreaM2(profile.area_min)}</p>
+                          )}
+                        </div>
+                        <div>
+                          <label className={reamarLabelClass}>Maximální plocha (m²)</label>
+                          <input
+                            type="number"
+                            value={profile?.area_max ?? ""}
+                            onChange={(e) =>
+                              setProfile((prev) => ({
+                                ...(prev ?? {}),
+                                area_max: e.target.value ? Number(e.target.value) : null,
+                              }))
+                            }
+                            className={cn("mt-1", reamarInputClass)}
+                            placeholder="Horní limit"
+                          />
+                          {profile?.area_max != null && (
+                            <p className="mt-1 text-xs text-slate-500">{formatAreaM2(profile.area_max)}</p>
+                          )}
                         </div>
                       </div>
                       <div className="mt-4 space-y-3 rounded-lg bg-slate-50 p-3">
@@ -1718,6 +1848,100 @@ export default function ClientDetailPage() {
                           ))}
                         </div>
                       </div>
+                      <div className="space-y-4 rounded-lg bg-slate-50 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <h5 className="text-xs font-semibold text-slate-900">
+                            Walkability – dostupnost v okolí
+                          </h5>
+                          <div className="flex gap-1">
+                            {[
+                              {
+                                label: "Rodina",
+                                prefs: {
+                                  ...DEFAULT_PREFERENCES,
+                                  playground: "high" as const,
+                                  kindergarten: "high" as const,
+                                  primary_school: "high" as const,
+                                  park: "high" as const,
+                                  supermarket: "high" as const,
+                                  restaurant: "ignore" as const,
+                                  cafe: "ignore" as const,
+                                  fitness: "ignore" as const,
+                                },
+                              },
+                              {
+                                label: "Městský život",
+                                prefs: {
+                                  ...DEFAULT_PREFERENCES,
+                                  restaurant: "high" as const,
+                                  cafe: "high" as const,
+                                  metro: "high" as const,
+                                  tram: "high" as const,
+                                  bus: "high" as const,
+                                  supermarket: "high" as const,
+                                  playground: "ignore" as const,
+                                  kindergarten: "ignore" as const,
+                                  primary_school: "ignore" as const,
+                                },
+                              },
+                              {
+                                label: "Klid a zeleň",
+                                prefs: {
+                                  ...DEFAULT_PREFERENCES,
+                                  park: "high" as const,
+                                  metro: "ignore" as const,
+                                  tram: "ignore" as const,
+                                  restaurant: "ignore" as const,
+                                  cafe: "ignore" as const,
+                                  fitness: "ignore" as const,
+                                },
+                              },
+                            ].map(({ label, prefs }) => (
+                              <button
+                                key={label}
+                                type="button"
+                                onClick={() => setWalkPrefs(prefs)}
+                                className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900"
+                              >
+                                {label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <WalkabilityPreferencesGroup
+                          title="Služby a příroda"
+                          items={[
+                            { key: "supermarket", label: "Supermarket" },
+                            { key: "pharmacy", label: "Lékárna" },
+                            { key: "park", label: "Park" },
+                            { key: "restaurant", label: "Restaurace" },
+                            { key: "cafe", label: "Kavárna" },
+                            { key: "fitness", label: "Fitness" },
+                          ]}
+                          prefs={walkPrefs}
+                          onChange={setWalkPrefs}
+                        />
+                        <WalkabilityPreferencesGroup
+                          title="Vzdělávání a rodina"
+                          items={[
+                            { key: "playground", label: "Hřiště" },
+                            { key: "kindergarten", label: "Školka" },
+                            { key: "primary_school", label: "ZŠ" },
+                          ]}
+                          prefs={walkPrefs}
+                          onChange={setWalkPrefs}
+                        />
+                        <WalkabilityPreferencesGroup
+                          title="Doprava"
+                          items={[
+                            { key: "metro", label: "Metro" },
+                            { key: "tram", label: "Tramvaj" },
+                            { key: "bus", label: "Bus" },
+                          ]}
+                          prefs={walkPrefs}
+                          onChange={setWalkPrefs}
+                        />
+                      </div>
                     </div>
                   )}
 
@@ -1781,11 +2005,7 @@ export default function ClientDetailPage() {
                           type="button"
                           variant="secondary"
                           size="sm"
-                          onClick={() =>
-                          setWizardStep((s) =>
-                            s < TOTAL_WIZARD_STEPS ? s + 1 : s
-                          )
-                        }
+                          onClick={handleNext}
                         >
                           Další
                         </ReamarButton>

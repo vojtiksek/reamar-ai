@@ -30,9 +30,9 @@ export function SummaryBar({
   const diffNegative = averageLocalDiff != null && !Number.isNaN(averageLocalDiff) && averageLocalDiff < 0;
 
   const diffCardClasses = diffPositive
-    ? "from-rose-500/30 via-rose-500/10 to-rose-500/0 border-rose-400/60"
+    ? "from-rose-500/15 via-rose-500/5 to-rose-500/0 border-rose-300/50"
     : diffNegative
-      ? "from-emerald-500/30 via-emerald-500/10 to-emerald-500/0 border-emerald-400/60"
+      ? "from-emerald-500/15 via-emerald-500/5 to-emerald-500/0 border-emerald-300/50"
       : "from-slate-500/10 via-slate-500/3 to-slate-500/0 border-slate-200";
 
   return (
