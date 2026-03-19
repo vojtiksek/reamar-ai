@@ -758,11 +758,46 @@ export default function ProjectDetailPage() {
     });
   }, []);
 
+  // -- Collapsible state (must be before early returns) --
+  const [showTechData, setShowTechData] = useState(false);
+  const [unitsFilter, setUnitsFilter] = useState<"all" | "available" | "reserved" | "sold">("all");
+
+  // Filter units (must be before early returns - Rules of Hooks)
+  const filteredUnits = useMemo(() => {
+    if (unitsFilter === "all") return sortedUnits;
+    return sortedUnits.filter((u) => {
+      const s = String(u.availability_status ?? "").toLowerCase();
+      if (unitsFilter === "available") return s === "available" || s === "volné" || (u.available && !s);
+      if (unitsFilter === "reserved") return s === "reserved" || s === "rezervované";
+      if (unitsFilter === "sold") return s === "sold" || s === "prodané";
+      return true;
+    });
+  }, [sortedUnits, unitsFilter]);
+
+  // -- Loading --
   if (projectState.loading) {
     return (
-      <div className="min-h-screen">
-        <div className="mx-auto max-w-6xl p-4">
-          <p className="text-slate-600">Načítání…</p>
+      <div className="min-h-screen animate-pulse">
+        <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-16 rounded-full bg-slate-200" />
+            <div className="h-7 w-64 rounded bg-slate-200" />
+          </div>
+          <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-6 space-y-4">
+            <div className="h-8 w-48 rounded bg-slate-200" />
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="space-y-2">
+                  <div className="h-3 w-20 rounded bg-slate-200" />
+                  <div className="h-6 w-24 rounded bg-slate-200" />
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div className="rounded-2xl border border-slate-200/80 bg-slate-200 h-64" />
+            <div className="rounded-2xl border border-slate-200/80 bg-slate-200 h-64" />
+          </div>
         </div>
       </div>
     );
@@ -772,14 +807,11 @@ export default function ProjectDetailPage() {
     return (
       <div className="min-h-screen">
         <div className="mx-auto max-w-6xl space-y-4 p-4 pt-6">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <button type="button" onClick={() => router.back()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             ← Zpět
           </button>
-          <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+          <div className="rounded-2xl border border-rose-200 bg-rose-50/80 px-4 py-3 text-sm text-rose-700">
             {projectState.error}
           </div>
         </div>
@@ -791,11 +823,8 @@ export default function ProjectDetailPage() {
     return (
       <div className="min-h-screen">
         <div className="mx-auto max-w-6xl space-y-4 p-4 pt-6">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-          >
+          <button type="button" onClick={() => router.back()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             ← Zpět
           </button>
           <p className="text-slate-600">Projekt nenalezen.</p>
@@ -804,1529 +833,433 @@ export default function ProjectDetailPage() {
     );
   }
 
+  // -- Null/false helpers --
+  const isNullish = (v: unknown): boolean => v === null || v === undefined || v === "" || v === "—";
+  const isFalseValue = (v: unknown): boolean => {
+    if (v === false) return true;
+    const s = String(v ?? "").toLowerCase().trim();
+    return s === "false" || s === "0" || s === "ne";
+  };
+  const hasValue = (key: string) => {
+    const v = project[key];
+    return !isNullish(v);
+  };
+
+  // Project URL
+  const projectUrl = project["project_url"] as string | undefined;
+
+  // Availability ratio
+  const availRatio = project["available_units"] != null && project["total_units"] != null && Number(project["total_units"]) > 0
+    ? Math.round((Number(project["available_units"]) / Number(project["total_units"])) * 100)
+    : null;
+
+  // -- Editable field render helper for bool select --
+  const renderBoolEditField = (key: string, label: string) => {
+    const val = project[key];
+    if (!editMode && isNullish(val)) return null;
+    return (
+      <div key={key}>
+        <p className="text-xs font-medium text-slate-500">{label}</p>
+        {editMode ? (
+          <select
+            className="mt-0.5 w-full max-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={(() => {
+              const v = displayOrDraft(key, project[key]);
+              if (v === "true" || v === true) return "true";
+              if (v === "false" || v === false) return "false";
+              return "";
+            })()}
+            onChange={(e) => handleChangeDraft(key, e.target.value)}>
+            <option value="">—</option>
+            <option value="true">Ano</option>
+            <option value="false">Ne</option>
+          </select>
+        ) : (
+          <p className="mt-0.5 font-medium text-slate-900">{formatBoolOrDash(val)}</p>
+        )}
+      </div>
+    );
+  };
+
+  const renderEnumEditField = (key: string, label: string, mapKey?: string) => {
+    const val = project[key];
+    if (!editMode && isNullish(val)) return null;
+    return (
+      <div key={key}>
+        <p className="text-xs font-medium text-slate-500">{label}</p>
+        {editMode ? (
+          <select
+            className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            value={(displayOrDraft(key, project[key]) as string) ?? ""}
+            onChange={(e) => handleChangeDraft(key, e.target.value)}>
+            <option value="">—</option>
+            {(filterSpecsByKey.get(key)?.options as string[] | undefined)?.map((opt) => (
+              <option key={opt} value={opt}>{standardLabelToCzech(mapKey ?? key, String(opt))}</option>
+            ))}
+          </select>
+        ) : (
+          <p className="mt-0.5 font-medium text-slate-900">{standardLabelToCzech(mapKey ?? key, String(val ?? ""))}</p>
+        )}
+      </div>
+    );
+  };
+
+  // -- Standards that have values --
+  const STANDARDS_FIELDS = [
+    { key: "renovation", label: "Rekonstrukce", type: "bool" },
+    { key: "overall_quality", label: "Kvalita", type: "enum" },
+    { key: "windows", label: "Okna", type: "enum" },
+    { key: "partition_walls", label: "Příčky", type: "enum" },
+    { key: "heating", label: "Topení", type: "enum" },
+    { key: "category", label: "Kategorie", type: "enum" },
+    { key: "floors", label: "Podlaha", type: "enum" },
+    { key: "air_conditioning", label: "Klimatizace", type: "bool" },
+    { key: "cooling_ceilings", label: "Chlazení stropem", type: "bool" },
+    { key: "exterior_blinds", label: "Žaluzie", type: "blinds" },
+    { key: "smart_home", label: "Smart home", type: "bool" },
+    { key: "ceiling_height", label: "Výška stropů", type: "text" },
+    { key: "recuperation", label: "Rekuperace", type: "bool" },
+    { key: "cooling", label: "Chlazení podlahou", type: "bool" },
+  ] as const;
+
+  const filledStandards = STANDARDS_FIELDS.filter((f) => hasValue(f.key) && !isFalseValue(project[f.key]));
+  const falseStandards = STANDARDS_FIELDS.filter((f) => isFalseValue(project[f.key]));
+
+  const AMENITY_FIELDS = [
+    { key: "concierge", label: "Concierge" },
+    { key: "reception", label: "Recepce" },
+    { key: "bike_room", label: "Kolárna" },
+    { key: "stroller_room", label: "Kočárkárna" },
+    { key: "fitness", label: "Fitness" },
+    { key: "courtyard_garden", label: "Vnitroblok / zahrada" },
+  ] as const;
+
+  const filledAmenities = AMENITY_FIELDS.filter((f) => hasValue(f.key) && !isFalseValue(project[f.key]));
+  const falseAmenities = AMENITY_FIELDS.filter((f) => isFalseValue(project[f.key]));
+
+  // Financing has data?
+  const hasFinancingData = editMode || ["payment_contract","payment_construction","payment_occupancy","min_parking_indoor_price_czk","min_parking_outdoor_price_czk"]
+    .some((k) => hasValue(k));
+
+  // Location fields
+  const LOCATION_ADMIN = [
+    { key: "municipality", label: "Obec" },
+    { key: "city", label: "Město" },
+    { key: "district", label: "Okres" },
+    { key: "cadastral_area_iga", label: "Katastrální území" },
+    { key: "administrative_district_iga", label: "Obvod Prahy" },
+    { key: "region_iga", label: "Kraj" },
+  ] as const;
+
+  const LOCATION_TECH = [
+    { key: "noise_day_db", label: "Denní hluk", suffix: " dB" },
+    { key: "noise_night_db", label: "Noční hluk", suffix: " dB" },
+    { key: "noise_label", label: "Hluk (klasifikace)" },
+    { key: "distance_to_primary_road_m", label: "Vzdálenost od hlavní silnice", distance: true },
+    { key: "distance_to_tram_tracks_m", label: "Vzdálenost od tramvajových kolejí", distance: true },
+    { key: "distance_to_railway_m", label: "Vzdálenost od železnice", distance: true },
+    { key: "distance_to_airport_m", label: "Vzdálenost od letiště", distance: true },
+    { key: "micro_location_score", label: "Mikro-lokalita skóre", round: true },
+    { key: "micro_location_label", label: "Mikro-lokalita hodnocení" },
+  ] as const;
+
+  const formatDistance = (v: unknown) => {
+    if (v == null) return "—";
+    const m = Number(v);
+    return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
+  };
+
+  // -- RENDER --
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
       <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
-        {/* Title row */}
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
-            >
+
+        {/* HERO BLOCK */}
+        <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+            <button type="button" onClick={() => router.back()}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
               ← Zpět
             </button>
-            <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{name || "Projekt"}</h1>
+            <div className="flex items-center gap-2">
+              {!editMode ? (
+                <button type="button" onClick={handleStartEdit} disabled={saving}
+                  className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                  Editovat
+                </button>
+              ) : (
+                <>
+                  <button type="button" onClick={handleSave} disabled={saving}
+                    className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 transition-colors">
+                    {saving ? "Ukládám…" : "Uložit"}
+                  </button>
+                  <button type="button" onClick={handleCancel} disabled={saving}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 transition-colors">
+                    Zrušit
+                  </button>
+                </>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {!editMode ? (
-              <button
-                type="button"
-                onClick={handleStartEdit}
-                disabled={saving}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Editovat
-              </button>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="rounded-full bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50"
-                >
-                  {saving ? "Ukládám…" : "Uložit"}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  disabled={saving}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50"
-                >
-                  Zrušit
-                </button>
-              </>
+          <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500 mb-1">
+                {developer !== "—" ? developer : "Developer neuveden"}
+                {address !== "—" && <span className="text-slate-400"> · {address}</span>}
+              </p>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{name || "Projekt"}</h1>
+            </div>
+            {availRatio != null && (
+              <div className="flex items-center gap-2">
+                <div className={`h-2.5 w-2.5 rounded-full ${availRatio > 50 ? "bg-emerald-500" : availRatio > 20 ? "bg-amber-500" : "bg-rose-500"}`} />
+                <span className="text-xs font-medium text-slate-600">
+                  {String(project["available_units"])} / {String(project["total_units"])} dostupných ({availRatio}%)
+                </span>
+              </div>
             )}
           </div>
-        </div>
-
-        {/* Hero stats strip */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="glass-card px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Min. cena</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">
-              {formatCurrencyCzk((project["min_price_czk"] as number | null | undefined) ?? null)}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Max. cena</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">
-              {formatCurrencyCzk((project["max_price_czk"] as number | null | undefined) ?? null)}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Jednotek celkem</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">
-              {project["total_units"] != null ? String(project["total_units"]) : "—"}
-            </p>
-          </div>
-          <div className="glass-card px-4 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Dostupných</p>
-            <p className="mt-1 text-lg font-semibold text-slate-900">
-              {project["available_units"] != null ? String(project["available_units"]) : "—"}
-            </p>
-          </div>
-        </div>
-
-        {/* Řádek: Přehled + Mapa vedle sebe */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <section className="glass-card p-5">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-              Přehled
-            </h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Název</p>
-                <p className="mt-0.5 font-medium text-slate-900">{name || "—"}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Developer</p>
-                <p className="mt-0.5 font-medium text-slate-900">{developer}</p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Odkaz projektu</p>
-                {editMode ? (
-                  <input
-                    type="url"
-                    className="mt-0.5 w-full max-w-md rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                    value={(displayOrDraft("project_url", project["project_url"]) as string) ?? ""}
-                    onChange={(e) => handleChangeDraft("project_url", e.target.value)}
-                    placeholder="https://…"
-                  />
-                ) : (project["project_url"] as string | undefined) ? (
-                  <p className="mt-0.5 font-medium text-slate-900">
-                    <a
-                      href={project["project_url"] as string}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600"
-                    >
-                      {(project["project_url"] as string).replace(/^https?:\/\//i, "").replace(/\/$/, "")}
-                    </a>
-                  </p>
-                ) : (
-                  <p className="mt-0.5 font-medium text-slate-900">—</p>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Dní na trhu (max)</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["max_days_on_market"] != null ? `${project["max_days_on_market"]} dní` : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">První výskyt</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["project_first_seen"] as string | undefined) ?? "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Poslední výskyt</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["project_last_seen"] as string | undefined) ?? "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Datum prodeje</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {(project["sold_date"] as string | undefined) ?? "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Počet jednotek</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["total_units"] != null ? String(project["total_units"]) : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Dostupných jednotek</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["available_units"] != null ? String(project["available_units"]) : "—"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Podíl dostupných</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatPercent(
-                    (project["availability_ratio"] as number | null | undefined) ?? null,
-                    undefined,
-                    true
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Min cena</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    (project["min_price_czk"] as number | null | undefined) ?? null
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Max cena</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    (project["max_price_czk"] as number | null | undefined) ?? null
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Průměrná cena</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    (project["avg_price_czk"] as number | null | undefined) ?? null
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Průměrná cena/m²</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    (project["avg_price_per_m2_czk"] as number | null | undefined) ?? null
-                  )}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Průměrná plocha m²</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["avg_floor_area_m2"] != null
-                    ? `${Math.round(Number(project["avg_floor_area_m2"])).toLocaleString("cs-CZ")} m²`
-                    : "—"}
-                </p>
-              </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Min. cena</p>
+              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["min_price_czk"] as number | null) ?? null)}</p>
             </div>
-          </section>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Max. cena</p>
+              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["max_price_czk"] as number | null) ?? null)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Ø cena/m²</p>
+              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["avg_price_per_m2_czk"] as number | null) ?? null)}</p>
+            </div>
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Ø plocha</p>
+              <p className="text-xl font-bold text-slate-900">
+                {project["avg_floor_area_m2"] != null ? `${Math.round(Number(project["avg_floor_area_m2"]))} m²` : "—"}
+              </p>
+            </div>
+          </div>
+          {/* Project URL and key dates */}
+          <div className="flex flex-wrap gap-4 pt-2 border-t border-slate-100 items-center">
+            {editMode ? (
+              <div className="flex-1 min-w-[200px]">
+                <p className="text-xs font-medium text-slate-500 mb-1">Odkaz projektu</p>
+                <input type="url"
+                  className="w-full max-w-md rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={(displayOrDraft("project_url", project["project_url"]) as string) ?? ""}
+                  onChange={(e) => handleChangeDraft("project_url", e.target.value)}
+                  placeholder="https://…" />
+              </div>
+            ) : projectUrl ? (
+              <a href={projectUrl} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 no-underline transition hover:bg-slate-100 hover:border-slate-300">
+                ↗ {projectUrl.replace(/^https?:\/\//i, "").replace(/\/$/, "")}
+              </a>
+            ) : null}
+            {hasValue("max_days_on_market") && (
+              <span className="text-xs text-slate-500">{String(project["max_days_on_market"])} dní na trhu</span>
+            )}
+            {hasValue("project_first_seen") && (
+              <span className="text-xs text-slate-500">Od: {project["project_first_seen"] as string}</span>
+            )}
+          </div>
+        </section>
 
+        {/* MAP + WALKABILITY side by side */}
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           {projectGpsLat != null && projectGpsLng != null && (
-            <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-              <h2 className="mb-4 text-sm font-semibold tracking-wide text-slate-500">
-                <span className="uppercase">Poloha</span>:{" "}
-                <span className="font-medium normal-case text-slate-900">
-                  {address || name || "—"}
-                </span>
-              </h2>
-              <ProjectDetailMap
-                lat={projectGpsLat}
-                lng={projectGpsLng}
-                label={name || undefined}
-                poiOverview={overviewPoi ?? undefined}
-              />
+            <section className="rounded-2xl border border-slate-200/70 bg-white/80 shadow-[0_14px_30px_rgba(15,23,42,0.06)] overflow-hidden">
+              <div className="px-5 pt-4 pb-2">
+                <h2 className="text-sm font-semibold tracking-wide text-slate-500">
+                  <span className="uppercase">Poloha</span>: <span className="font-medium normal-case text-slate-900">{address || name || "—"}</span>
+                </h2>
+              </div>
+              <ProjectDetailMap lat={projectGpsLat} lng={projectGpsLng} label={name || undefined} poiOverview={overviewPoi ?? undefined} />
             </section>
           )}
-        </div>
 
-        {/* Financování a parkování – celá šířka */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Financování a parkování
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Platba po SOSBK (%)</p>
-              {editMode ? (
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={
-                    draft("payment_contract") !== undefined
-                      ? String(draft("payment_contract"))
-                      : (project["payment_contract"] as number) != null
-                        ? ((project["payment_contract"] as number) > 1
-                          ? (project["payment_contract"] as number)
-                          : (project["payment_contract"] as number) * 100)
-                        : ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
-                    handleChangeDraft("payment_contract", v);
-                  }}
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatPercent(
-                    (project["payment_contract"] as number | null | undefined) ?? null,
-                    undefined,
-                    true
-                  )}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Platba při výstavbě (%)</p>
-              {editMode ? (
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={
-                    draft("payment_construction") !== undefined
-                      ? String(draft("payment_construction"))
-                      : (project["payment_construction"] as number) != null
-                        ? ((project["payment_construction"] as number) > 1
-                          ? (project["payment_construction"] as number)
-                          : (project["payment_construction"] as number) * 100)
-                        : ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
-                    handleChangeDraft("payment_construction", v);
-                  }}
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatPercent(
-                    (project["payment_construction"] as number | null | undefined) ?? null,
-                    undefined,
-                    true
-                  )}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Platba po dokončení (%)</p>
-              {editMode ? (
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="mt-0.5 w-full max-w-[8rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={
-                    draft("payment_occupancy") !== undefined
-                      ? String(draft("payment_occupancy"))
-                      : (project["payment_occupancy"] as number) != null
-                        ? ((project["payment_occupancy"] as number) > 1
-                          ? (project["payment_occupancy"] as number)
-                          : (project["payment_occupancy"] as number) * 100)
-                        : ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value)));
-                    handleChangeDraft("payment_occupancy", v);
-                  }}
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatPercent(
-                    (project["payment_occupancy"] as number | null | undefined) ?? null,
-                    undefined,
-                    true
-                  )}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Cena garáže (Kč)</p>
-              {editMode ? (
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={
-                    (displayOrDraft(
-                      "min_parking_indoor_price_czk",
-                      (project["min_parking_indoor_price_czk"] ?? project["max_parking_indoor_price_czk"]) ?? ""
-                    ) as string) || ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value)));
-                    handleChangeDraft("min_parking_indoor_price_czk", v);
-                  }}
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    ((project["min_parking_indoor_price_czk"] as number | null | undefined) ??
-                      (project["max_parking_indoor_price_czk"] as number | null | undefined)) ?? null
-                  )}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Cena stání (Kč)</p>
-              {editMode ? (
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={
-                    (displayOrDraft(
-                      "min_parking_outdoor_price_czk",
-                      (project["min_parking_outdoor_price_czk"] ?? project["max_parking_outdoor_price_czk"]) ?? ""
-                    ) as string) || ""
-                  }
-                  onChange={(e) => {
-                    const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value)));
-                    handleChangeDraft("min_parking_outdoor_price_czk", v);
-                  }}
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatCurrencyCzk(
-                    ((project["min_parking_outdoor_price_czk"] as number | null | undefined) ??
-                      (project["max_parking_outdoor_price_czk"] as number | null | undefined)) ?? null
-                  )}
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Standardy – všechna pole upravitelná, enum z filtrů */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Standardy
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Rekonstrukce</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("renovation", project["renovation"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("renovation", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["renovation"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Kvalita</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("overall_quality", project["overall_quality"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("overall_quality", e.target.value)}
-                >
-                  <option value="">—</option>
-                  {(filterSpecsByKey.get("overall_quality")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{standardLabelToCzech("overall_quality", String(opt))}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {standardLabelToCzech("overall_quality", (project["overall_quality"] as string) ?? "")}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Okna</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("windows", project["windows"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("windows", e.target.value)}
-                >
-                  <option value="">—</option>
-                  {(filterSpecsByKey.get("windows")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{standardLabelToCzech("windows", String(opt))}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {standardLabelToCzech("windows", (project["windows"] as string) ?? "")}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Příčky</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("partition_walls", project["partition_walls"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("partition_walls", e.target.value)}
-                >
-                  <option value="">—</option>
-                  {(filterSpecsByKey.get("partition_walls")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{standardLabelToCzech("partition_walls", String(opt))}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {standardLabelToCzech("partition_walls", (project["partition_walls"] as string) ?? "")}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Topení</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("heating", project["heating"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("heating", e.target.value)}
-                >
-                  <option value="">—</option>
-                  {(filterSpecsByKey.get("heating")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{standardLabelToCzech("heating", String(opt))}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {standardLabelToCzech("heating", (project["heating"] as string) ?? "")}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Kategorie</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("category", project["category"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("category", e.target.value)}
-                >
-                  <option value="">—</option>
-                  {(filterSpecsByKey.get("category")?.options as string[] | undefined)?.map((opt) => (
-                    <option key={opt} value={opt}>{standardLabelToCzech("category", String(opt))}</option>
-                  ))}
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {standardLabelToCzech("category", (project["category"] as string) ?? "")}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Podlaha</p>
-              {editMode ? (
-                (() => {
-                  const floorsOpts = filterSpecsByKey.get("floors")?.options as string[] | undefined;
-                  if (floorsOpts?.length) {
-                    return (
-                      <select
-                        className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={(displayOrDraft("floors", project["floors"]) as string) ?? ""}
-                        onChange={(e) => handleChangeDraft("floors", e.target.value)}
-                      >
-                        <option value="">—</option>
-                        {floorsOpts.map((opt) => (
-                          <option key={String(opt)} value={String(opt)}>{standardLabelToCzech("floors", String(opt))}</option>
-                        ))}
-                      </select>
-                    );
-                  }
-                  return (
-                    <input
-                      type="text"
-                      className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                      value={(displayOrDraft("floors", project["floors"]) as string) ?? ""}
-                      onChange={(e) => handleChangeDraft("floors", e.target.value)}
-                    />
-                  );
-                })()
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["floors"] != null && project["floors"] !== "" ? standardLabelToCzech("floors", String(project["floors"])) : "—"}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Klimatizace</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("air_conditioning", project["air_conditioning"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("air_conditioning", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["air_conditioning"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Chlazení stropem</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("cooling_ceilings", project["cooling_ceilings"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("cooling_ceilings", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["cooling_ceilings"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Žaluzie</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("exterior_blinds", project["exterior_blinds"]);
-                    if (v == null || v === "") return "";
-                    const s = String(v).toLowerCase();
-                    if (s === "true" || s === "1" || s === "ano") return "true";
-                    if (s === "false" || s === "0" || s === "ne") return "false";
-                    if (s === "preparation" || s === "priprava" || s === "příprava") return "preparation";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("exterior_blinds", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                  <option value="preparation">Příprava</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {(() => {
-                    const v = project["exterior_blinds"];
-                    if (v == null || v === "") return "—";
-                    const s = String(v).toLowerCase();
-                    if (s === "true" || s === "1" || s === "ano") return "Ano";
-                    if (s === "false" || s === "0" || s === "ne") return "Ne";
-                    if (s === "preparation" || s === "priprava" || s === "příprava") return "Příprava";
-                    return "—";
-                  })()}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Smart home</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("smart_home", project["smart_home"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("smart_home", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["smart_home"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Výška stropů</p>
-              {editMode ? (
-                <input
-                  type="text"
-                  className="mt-0.5 w-full max-w-xs rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("ceiling_height", project["ceiling_height"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("ceiling_height", e.target.value)}
-                  placeholder="např. 2,9 m"
-                />
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {project["ceiling_height"] != null && project["ceiling_height"] !== ""
-                    ? (project["ceiling_height"] as string)
-                    : "—"}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Rekuperace</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("recuperation", project["recuperation"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("recuperation", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["recuperation"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Chlazení podlahou</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("cooling", project["cooling"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("cooling", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["cooling"])}
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Amenities – nová sekce, jen pro detail projektu */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Amenities
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Concierge</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("concierge", project["concierge"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("concierge", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["concierge"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Recepce</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("reception", project["reception"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("reception", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["reception"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Kolárna</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("bike_room", project["bike_room"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("bike_room", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["bike_room"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Kočárkárna</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("stroller_room", project["stroller_room"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("stroller_room", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["stroller_room"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Fitness</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("fitness", project["fitness"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("fitness", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["fitness"])}
-                </p>
-              )}
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Vnitroblok / zahrada</p>
-              {editMode ? (
-                <select
-                  className="mt-0.5 w-full max-w-[10rem] rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(() => {
-                    const v = displayOrDraft("courtyard_garden", project["courtyard_garden"]);
-                    if (v === "true" || v === true) return "true";
-                    if (v === "false" || v === false) return "false";
-                    return "";
-                  })()}
-                  onChange={(e) => handleChangeDraft("courtyard_garden", e.target.value)}
-                >
-                  <option value="">—</option>
-                  <option value="true">Ano</option>
-                  <option value="false">Ne</option>
-                </select>
-              ) : (
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {formatBoolOrDash(project["courtyard_garden"])}
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-
-        {/* Lokalita */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Lokalita
-          </h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Autem do centra</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {formatMinutes(
-                  (project["ride_to_center_min"] as number | null | undefined) ??
-                    (project["ride_to_center"] as number | null | undefined) ??
-                    null
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">MHD do centra</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {formatMinutes(
-                  (project["public_transport_to_center_min"] as number | null | undefined) ??
-                    (project["public_transport_to_center"] as number | null | undefined) ??
-                    null
-                )}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Obec</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["municipality"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Město</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["city"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Okres</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["district"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Katastrální území</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["cadastral_area_iga"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Obvod Prahy</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["administrative_district_iga"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Kraj</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["region_iga"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Denní hluk</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["noise_day_db"] != null
-                  ? `${project["noise_day_db"] as number} dB`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Noční hluk</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["noise_night_db"] != null
-                  ? `${project["noise_night_db"] as number} dB`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Hluk (klasifikace)</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["noise_label"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            {/* Mikro-lokalita */}
-            <div>
-              <p className="text-xs font-medium text-slate-500">Vzdálenost od hlavní silnice</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_primary_road_m"] != null
-                  ? Number(project["distance_to_primary_road_m"]) >= 1000
-                    ? `${(Number(project["distance_to_primary_road_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_primary_road_m"]))} m`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Vzdálenost od tramvajových kolejí</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_tram_tracks_m"] != null
-                  ? Number(project["distance_to_tram_tracks_m"]) >= 1000
-                    ? `${(Number(project["distance_to_tram_tracks_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_tram_tracks_m"]))} m`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Vzdálenost od železnice</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_railway_m"] != null
-                  ? Number(project["distance_to_railway_m"]) >= 1000
-                    ? `${(Number(project["distance_to_railway_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_railway_m"]))} m`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Vzdálenost od letiště</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_airport_m"] != null
-                  ? Number(project["distance_to_airport_m"]) >= 1000
-                    ? `${(Number(project["distance_to_airport_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_airport_m"]))} m`
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Mikro-lokalita skóre</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["micro_location_score"] != null
-                  ? String(Math.round(Number(project["micro_location_score"])))
-                  : "—"}
-              </p>
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Mikro-lokalita hodnocení</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["micro_location_label"] as string | null | undefined) ?? "—"}
-              </p>
-            </div>
-            <div className="mt-3">
-              <button
-                type="button"
-                onClick={handleRecomputeLocationMetrics}
-                disabled={recomputingLocation}
-                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                {recomputingLocation ? "Přepočítávám…" : "Přepočítat hluk a mikro-lokalitu"}
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Walkability */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <div className="mb-4 flex items-center justify-between gap-2">
-            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-              Walkability
-            </h2>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                className="glass-pill border border-transparent px-3 py-1.5 text-xs font-medium text-slate-800 hover:bg-slate-50"
-                onClick={() => setWalkPrefsOpen(true)}
-              >
-                Preference lokality
-              </button>
-              {personalizedModeEnabled && (
-                <div className="flex flex-wrap items-center gap-1">
-                  <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                    Dle preferencí klienta
-                  </span>
-                  {getNonDefaultChips(walkPrefs)
-                    .slice(0, 3)
-                    .map((chip) => (
-                      <span
-                        key={chip}
-                        className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700"
-                      >
-                        {chip}
-                      </span>
+          {/* Walkability */}
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Walkability</h2>
+              <div className="flex items-center gap-2">
+                <button type="button"
+                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                  onClick={() => setWalkPrefsOpen(true)}>
+                  Preference lokality
+                </button>
+                {personalizedModeEnabled && (
+                  <div className="flex flex-wrap items-center gap-1">
+                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Dle preferencí</span>
+                    {getNonDefaultChips(walkPrefs).slice(0, 3).map((chip) => (
+                      <span key={chip} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">{chip}</span>
                     ))}
-                  <button
-                    type="button"
-                    className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline decoration-dotted"
-                    onClick={() => setPersonalizedModeEnabled(false)}
-                  >
-                    Vypnout
-                  </button>
-                </div>
-              )}
+                    <button type="button" className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline decoration-dotted"
+                      onClick={() => setPersonalizedModeEnabled(false)}>Vypnout</button>
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-            <div>
-              <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
-              <p className="mt-0.5 text-2xl font-bold text-slate-900">
-                {personalizedWalk?.score != null ? (
-                  (() => {
+            <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
+              <div>
+                <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
+                <p className="mt-0.5 text-2xl font-bold text-slate-900">
+                  {personalizedWalk?.score != null ? (() => {
                     const main = Math.round(personalizedWalk.score as number);
                     const baseRaw = project["walkability_score"] as number | string | null | undefined;
-                    const base =
-                      typeof baseRaw === "number"
-                        ? baseRaw
-                        : baseRaw != null
-                          ? Number(baseRaw)
-                          : null;
-                    const delta =
-                      base != null && !Number.isNaN(base)
-                        ? main - Math.round(base)
-                        : null;
+                    const base = typeof baseRaw === "number" ? baseRaw : baseRaw != null ? Number(baseRaw) : null;
+                    const delta = base != null && !Number.isNaN(base) ? main - Math.round(base) : null;
                     return (
                       <span className="inline-flex items-baseline gap-1">
                         <span>{main}</span>
-                        {delta != null && delta !== 0 && (
-                          <span
-                            className={`text-xs ${
-                              delta > 0 ? "text-emerald-600" : "text-rose-600"
-                            }`}
-                          >
-                            {delta > 0 ? `+${delta}` : delta}
-                          </span>
-                        )}
+                        {delta != null && delta !== 0 && <span className={`text-xs ${delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{delta > 0 ? `+${delta}` : delta}</span>}
                         <span className="text-[11px] text-slate-500">dle preferencí</span>
                       </span>
                     );
-                  })()
-                ) : project["walkability_score"] != null ? (
-                  String(Math.round(Number(project["walkability_score"])))
-                ) : (
-                  "—"
-                )}
-              </p>
-              <ScoreBar score={personalizedWalk?.score != null ? Math.round(personalizedWalk.score as number) : project["walkability_score"] != null ? Math.round(Number(project["walkability_score"])) : null} />
+                  })() : project["walkability_score"] != null ? String(Math.round(Number(project["walkability_score"]))) : "—"}
+                </p>
+                <ScoreBar score={personalizedWalk?.score != null ? Math.round(personalizedWalk.score as number) : project["walkability_score"] != null ? Math.round(Number(project["walkability_score"])) : null} />
+              </div>
+              <div>
+                <p className="text-xs font-medium text-slate-500">Hodnocení</p>
+                <p className="mt-0.5 font-medium text-slate-900">
+                  {personalizedWalk?.label ? `${personalizedWalk.label}` : ((project["walkability_label"] as string | null) ?? "—")}
+                </p>
+              </div>
+              {[
+                { key: "daily_needs", pKey: "walkability_daily_needs_score", label: "Denní potřeby" },
+                { key: "transport", pKey: "walkability_transport_score", label: "Doprava" },
+                { key: "leisure", pKey: "walkability_leisure_score", label: "Volný čas" },
+                { key: "family", pKey: "walkability_family_score", label: "Rodina" },
+              ].map(({ key, pKey, label }) => (
+                <div key={key}>
+                  <p className="text-xs font-medium text-slate-500">{label}</p>
+                  <p className="mt-0.5 font-medium text-slate-900">
+                    {(personalizedWalk as Record<string, unknown> | null)?.[key] != null
+                      ? String(Math.round((personalizedWalk as Record<string, unknown>)[key] as number))
+                      : project[pKey] != null ? String(project[pKey]) : "—"}
+                  </p>
+                  <ScoreBar score={(personalizedWalk as Record<string, unknown> | null)?.[key] != null ? Math.round((personalizedWalk as Record<string, unknown>)[key] as number) : project[pKey] != null ? Number(project[pKey]) : null} />
+                </div>
+              ))}
             </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Walkability hodnocení</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.label
-                  ? `${personalizedWalk.label} (dle preferencí)`
-                  : ((project["walkability_label"] as string | null | undefined) ?? "—")}
-              </p>
+            {/* POI distances */}
+            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
+              {[
+                { cat: "supermarkets", label: "Supermarket", dist: "distance_to_supermarket_m", count: "count_supermarket_500m" },
+                { cat: "pharmacies", label: "Lékárna", dist: "distance_to_pharmacy_m", count: "count_pharmacy_500m" },
+                { cat: "tram_stops", label: "Tram zastávka", dist: ["walking_distance_to_tram_stop_m","distance_to_tram_stop_m"] },
+                { cat: "bus_stops", label: "Bus zastávka", dist: ["walking_distance_to_bus_stop_m","distance_to_bus_stop_m"] },
+                { cat: "metro_stations", label: "Metro", dist: ["walking_distance_to_metro_station_m","distance_to_metro_station_m"] },
+                { cat: "parks", label: "Park", dist: "distance_to_park_m", count: "count_park_500m" },
+                { cat: "restaurants", label: "Restaurace", dist: "distance_to_restaurant_m", count: "count_restaurant_500m" },
+                { cat: "cafes", label: "Kavárny", dist: "distance_to_cafe_m", count: "count_cafe_500m" },
+                { cat: "fitness", label: "Fitness", dist: "distance_to_fitness_m", count: "count_fitness_500m" },
+                { cat: "playgrounds", label: "Hřiště", dist: "distance_to_playground_m", count: "count_playground_500m" },
+                { cat: "kindergartens", label: "Školka", dist: "distance_to_kindergarten_m", count: "count_kindergarten_500m" },
+                { cat: "primary_schools", label: "Základní škola", dist: "distance_to_primary_school_m", count: "count_primary_school_500m" },
+              ].map(({ cat, label: catLabel, dist, count }) => {
+                const distKey = Array.isArray(dist) ? dist.find((k) => project[k] != null) : dist;
+                const distVal = distKey ? project[distKey as string] : null;
+                const countVal = count ? project[count as string] : null;
+                return (
+                  <div key={cat} role="button" tabIndex={0}
+                    onClick={() => openPoiModal(cat, catLabel)}
+                    onKeyDown={(e) => e.key === "Enter" && openPoiModal(cat, catLabel)}
+                    className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm">
+                    <p className="text-xs font-medium text-slate-500">{catLabel}</p>
+                    <p className="mt-0.5 font-medium text-slate-900">
+                      {distVal != null ? formatDistance(distVal) : "—"}
+                      {countVal != null && Number(countVal) > 0 && (
+                        <span className="ml-1 text-slate-500">({String(countVal)} v 500 m)</span>
+                      )}
+                    </p>
+                  </div>
+                );
+              })}
             </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Denní potřeby</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.daily_needs != null
-                  ? String(Math.round(personalizedWalk.daily_needs))
-                  : project["walkability_daily_needs_score"] != null
-                    ? String(project["walkability_daily_needs_score"])
-                    : "—"}
-              </p>
-              <ScoreBar score={personalizedWalk?.daily_needs != null ? Math.round(personalizedWalk.daily_needs) : project["walkability_daily_needs_score"] != null ? Number(project["walkability_daily_needs_score"]) : null} />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Doprava</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.transport != null
-                  ? String(Math.round(personalizedWalk.transport))
-                  : project["walkability_transport_score"] != null
-                    ? String(project["walkability_transport_score"])
-                    : "—"}
-              </p>
-              <ScoreBar score={personalizedWalk?.transport != null ? Math.round(personalizedWalk.transport) : project["walkability_transport_score"] != null ? Number(project["walkability_transport_score"]) : null} />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Volný čas</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.leisure != null
-                  ? String(Math.round(personalizedWalk.leisure))
-                  : project["walkability_leisure_score"] != null
-                    ? String(project["walkability_leisure_score"])
-                    : "—"}
-              </p>
-              <ScoreBar score={personalizedWalk?.leisure != null ? Math.round(personalizedWalk.leisure) : project["walkability_leisure_score"] != null ? Number(project["walkability_leisure_score"]) : null} />
-            </div>
-            <div>
-              <p className="text-xs font-medium text-slate-500">Rodina</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {personalizedWalk?.family != null
-                  ? String(Math.round(personalizedWalk.family))
-                  : project["walkability_family_score"] != null
-                    ? String(project["walkability_family_score"])
-                    : "—"}
-              </p>
-              <ScoreBar score={personalizedWalk?.family != null ? Math.round(personalizedWalk.family) : project["walkability_family_score"] != null ? Number(project["walkability_family_score"]) : null} />
-            </div>
-          </div>
-          <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("supermarkets", "Supermarkety")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("supermarkets", "Supermarkety")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Supermarket</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_supermarket_m"] != null
-                  ? Number(project["distance_to_supermarket_m"]) >= 1000
-                    ? `${(Number(project["distance_to_supermarket_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_supermarket_m"]))} m`
-                  : "—"}
-                {project["count_supermarket_500m"] != null && Number(project["count_supermarket_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_supermarket_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("pharmacies", "Lékárny")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("pharmacies", "Lékárny")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Lékárna</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_pharmacy_m"] != null
-                  ? Number(project["distance_to_pharmacy_m"]) >= 1000
-                    ? `${(Number(project["distance_to_pharmacy_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_pharmacy_m"]))} m`
-                  : "—"}
-                {project["count_pharmacy_500m"] != null && Number(project["count_pharmacy_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_pharmacy_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("tram_stops", "Tram zastávky")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("tram_stops", "Tram zastávky")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Tram zastávka</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["walking_distance_to_tram_stop_m"] ?? project["distance_to_tram_stop_m"]) != null
-                  ? (() => {
-                      const m = Number(project["walking_distance_to_tram_stop_m"] ?? project["distance_to_tram_stop_m"]);
-                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-                    })()
-                  : "—"}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("bus_stops", "Bus zastávky")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("bus_stops", "Bus zastávky")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Bus zastávka</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["walking_distance_to_bus_stop_m"] ?? project["distance_to_bus_stop_m"]) != null
-                  ? (() => {
-                      const m = Number(project["walking_distance_to_bus_stop_m"] ?? project["distance_to_bus_stop_m"]);
-                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-                    })()
-                  : "—"}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("metro_stations", "Metro")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("metro_stations", "Metro")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Metro</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {(project["walking_distance_to_metro_station_m"] ?? project["distance_to_metro_station_m"]) != null
-                  ? (() => {
-                      const m = Number(project["walking_distance_to_metro_station_m"] ?? project["distance_to_metro_station_m"]);
-                      return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`;
-                    })()
-                  : "—"}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("parks", "Parky")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("parks", "Parky")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Park</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_park_m"] != null
-                  ? Number(project["distance_to_park_m"]) >= 1000
-                    ? `${(Number(project["distance_to_park_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_park_m"]))} m`
-                  : "—"}
-                {project["count_park_500m"] != null && Number(project["count_park_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_park_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("restaurants", "Restaurace")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("restaurants", "Restaurace")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Restaurace</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_restaurant_m"] != null
-                  ? Number(project["distance_to_restaurant_m"]) >= 1000
-                    ? `${(Number(project["distance_to_restaurant_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_restaurant_m"]))} m`
-                  : "—"}
-                {project["count_restaurant_500m"] != null && Number(project["count_restaurant_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_restaurant_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("cafes", "Kavárny")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("cafes", "Kavárny")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Kavárny</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_cafe_m"] != null
-                  ? Number(project["distance_to_cafe_m"]) >= 1000
-                    ? `${(Number(project["distance_to_cafe_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_cafe_m"]))} m`
-                  : "—"}
-                {project["count_cafe_500m"] != null && Number(project["count_cafe_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_cafe_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("fitness", "Fitness")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("fitness", "Fitness")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Fitness</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_fitness_m"] != null
-                  ? Number(project["distance_to_fitness_m"]) >= 1000
-                    ? `${(Number(project["distance_to_fitness_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_fitness_m"]))} m`
-                  : "—"}
-                {project["count_fitness_500m"] != null && Number(project["count_fitness_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_fitness_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("playgrounds", "Hřiště")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("playgrounds", "Hřiště")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Hřiště</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_playground_m"] != null
-                  ? Number(project["distance_to_playground_m"]) >= 1000
-                    ? `${(Number(project["distance_to_playground_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_playground_m"]))} m`
-                  : "—"}
-                {project["count_playground_500m"] != null && Number(project["count_playground_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_playground_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("kindergartens", "Školky")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("kindergartens", "Školky")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Školka</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_kindergarten_m"] != null
-                  ? Number(project["distance_to_kindergarten_m"]) >= 1000
-                    ? `${(Number(project["distance_to_kindergarten_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_kindergarten_m"]))} m`
-                  : "—"}
-                {project["count_kindergarten_500m"] != null && Number(project["count_kindergarten_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_kindergarten_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => openPoiModal("primary_schools", "Základní školy")}
-              onKeyDown={(e) => e.key === "Enter" && openPoiModal("primary_schools", "Základní školy")}
-              className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm"
-            >
-              <p className="text-xs font-medium text-slate-500">Základní škola</p>
-              <p className="mt-0.5 font-medium text-slate-900">
-                {project["distance_to_primary_school_m"] != null
-                  ? Number(project["distance_to_primary_school_m"]) >= 1000
-                    ? `${(Number(project["distance_to_primary_school_m"]) / 1000).toFixed(1)} km`
-                    : `${Math.round(Number(project["distance_to_primary_school_m"]))} m`
-                  : "—"}
-                {project["count_primary_school_500m"] != null && Number(project["count_primary_school_500m"]) > 0 && (
-                  <span className="ml-1 text-slate-500">({project["count_primary_school_500m"]} v 500 m)</span>
-                )}
-              </p>
-            </div>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        {/* Ostatní – Zajímavosti upravitelné */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Ostatní
-          </h2>
-          <div>
-            <p className="text-xs font-medium text-slate-500">Zajímavosti</p>
-            {editMode ? (
-              <textarea
-                className="mt-0.5 w-full max-w-2xl rounded-md border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                rows={4}
-                value={(displayOrDraft("amenities", project["amenities"]) as string) ?? ""}
-                onChange={(e) => handleChangeDraft("amenities", e.target.value)}
-              />
-            ) : (
-              <p className="mt-0.5 font-medium text-slate-900 whitespace-pre-wrap">
-                {(project["amenities"] as string | null | undefined) ?? "—"}
-              </p>
-            )}
+        {/* UNITS TABLE */}
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+              Jednotky v projektu {unitsState.data ? `(${unitsState.data.length})` : ""}
+            </h2>
+            <div className="flex gap-1">
+              {(["all", "available", "reserved", "sold"] as const).map((f) => (
+                <button key={f} type="button" onClick={() => setUnitsFilter(f)}
+                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                    unitsFilter === f
+                      ? "bg-slate-900 text-white"
+                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}>
+                  {f === "all" ? "Vše" : f === "available" ? "Volné" : f === "reserved" ? "Rezervované" : "Prodané"}
+                </button>
+              ))}
+            </div>
           </div>
-        </section>
-
-        {/* Jednotky v projektu */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-sm backdrop-blur-sm">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
-            Jednotky v projektu
-          </h2>
           {unitsState.loading ? (
             <p className="text-sm text-slate-600">Načítání jednotek…</p>
           ) : unitsState.error ? (
             <p className="text-sm text-red-600">{unitsState.error}</p>
           ) : !unitsState.data || unitsState.data.length === 0 ? (
             <p className="text-sm text-slate-600">Žádné jednotky.</p>
+          ) : filteredUnits.length === 0 ? (
+            <p className="text-sm text-slate-500 italic">Žádné jednotky v kategorii &quot;{unitsFilter === "available" ? "volné" : unitsFilter === "reserved" ? "rezervované" : "prodané"}&quot;.</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50">
+                <thead className="bg-slate-50/80">
                   <tr>
-                    <th className="px-4 py-2 text-left">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("unit_name")}
-                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Jednotka
-                        {unitsSortBy === "unit_name" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-left">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("layout")}
-                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Dispozice
-                        {unitsSortBy === "layout" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("floor_area_m2")}
-                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Plocha
-                        {unitsSortBy === "floor_area_m2" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("exterior_area_m2")}
-                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Venek
-                        {unitsSortBy === "exterior_area_m2" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("price_czk")}
-                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Cena
-                        {unitsSortBy === "price_czk" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("price_per_m2_czk")}
-                        className="ml-auto flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Cena/m²
-                        {unitsSortBy === "price_per_m2_czk" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
-                    <th className="px-4 py-2 text-left">
-                      <button
-                        type="button"
-                        onClick={() => handleUnitsSort("availability_status")}
-                        className="flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900"
-                      >
-                        Stav
-                        {unitsSortBy === "availability_status" && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                      </button>
-                    </th>
+                    {([
+                      ["unit_name", "Jednotka", "text-left"],
+                      ["layout", "Dispozice", "text-left"],
+                      ["floor_area_m2", "Plocha", "text-right"],
+                      ["exterior_area_m2", "Venek", "text-right"],
+                      ["price_czk", "Cena", "text-right"],
+                      ["price_per_m2_czk", "Cena/m²", "text-right"],
+                      ["availability_status", "Stav", "text-left"],
+                    ] as [UnitsSortKey, string, string][]).map(([key, label, align]) => (
+                      <th key={key} className={`px-4 py-2 ${align}`}>
+                        <button type="button" onClick={() => handleUnitsSort(key)}
+                          className={`flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900 ${align === "text-right" ? "ml-auto" : ""}`}>
+                          {label}{unitsSortBy === key && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                        </button>
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
-                  {sortedUnits.map((u) => {
-                    const layoutStr =
-                      u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
-                        ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) =>
-                            b ? `${a},${b} kk` : `${a} kk`
-                          )
-                        : u.layout ?? "—";
+                  {filteredUnits.map((u) => {
+                    const layoutStr = u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
+                      ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) => b ? `${a},${b} kk` : `${a} kk`)
+                      : u.layout ?? "—";
                     const isSold = (() => {
                       const s = String(u.availability_status ?? "").toLowerCase();
                       return s === "sold" || s === "prodané" || (!u.available && s !== "reserved" && s !== "rezervované");
                     })();
                     return (
-                      <tr key={u.external_id} className={`hover:bg-slate-50 ${isSold ? "opacity-50" : ""}`}>
+                      <tr key={u.external_id} className={`hover:bg-slate-50 transition-colors ${isSold ? "opacity-50" : ""}`}>
                         <td className="px-4 py-2">
-                          <Link
-                            href={`/units/${encodeURIComponent(u.external_id)}`}
-                            className="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600"
-                          >
+                          <Link href={`/units/${encodeURIComponent(u.external_id)}`}
+                            className="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600">
                             {u.unit_name ?? u.external_id}
                           </Link>
                         </td>
                         <td className="px-4 py-2 text-slate-900">{layoutStr}</td>
-                        <td className="px-4 py-2 text-right text-slate-900">
-                          {u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}
-                        </td>
-                        <td className="px-4 py-2 text-right text-slate-900">
-                          {u.exterior_area_m2 != null ? `${u.exterior_area_m2.toFixed(1)} m²` : "—"}
-                        </td>
-                        <td className="px-4 py-2 text-right text-slate-900">
-                          {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
-                        </td>
-                        <td className="px-4 py-2 text-right text-slate-900">
-                          {u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}
-                        </td>
-                        <td className="px-4 py-2 text-slate-900">
-                          {availabilityStatusLabel(u.availability_status, u.available)}
+                        <td className="px-4 py-2 text-right text-slate-900">{u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}</td>
+                        <td className="px-4 py-2 text-right text-slate-900">{u.exterior_area_m2 != null ? `${u.exterior_area_m2.toFixed(1)} m²` : "—"}</td>
+                        <td className="px-4 py-2 text-right text-slate-900">{u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}</td>
+                        <td className="px-4 py-2 text-right text-slate-900">{u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}</td>
+                        <td className="px-4 py-2">
+                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                            u.available ? "bg-emerald-100 text-emerald-700" :
+                            String(u.availability_status ?? "").toLowerCase() === "reserved" || String(u.availability_status ?? "").toLowerCase() === "rezervované" ? "bg-amber-100 text-amber-700" :
+                            "bg-rose-100 text-rose-700"
+                          }`}>
+                            {availabilityStatusLabel(u.availability_status, u.available)}
+                          </span>
                         </td>
                       </tr>
                     );
@@ -2337,94 +1270,244 @@ export default function ProjectDetailPage() {
           )}
         </section>
 
-        {/* Dev: přepočet všech projektů a refresh zdrojových dat */}
-        {debugMode && (
-          <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">Dev / Admin</h2>
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={handleAdminRecomputeAll}
-                disabled={adminJobState.loading}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {adminJobState.loading ? "…" : "Přepočítat všechny projekty"}
-              </button>
-              <button
-                type="button"
-                onClick={handleAdminRefreshAndRecompute}
-                disabled={adminJobState.loading}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {adminJobState.loading ? "…" : "Obnovit zdrojová data + přepočítat vše"}
-              </button>
-              <button
-                type="button"
-                onClick={handleAdminDownloadOsmAndRecompute}
-                disabled={adminJobState.loading}
-                className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {adminJobState.loading ? "Stahování OSM… (1–2 min)" : "Stáhnout OSM infrastrukturu + přepočítat projekty"}
-              </button>
-              <button
-                type="button"
-                onClick={handleAdminWalkabilityRefreshAndRecompute}
-                disabled={adminJobState.loading}
-                className="glass-pill border border-amber-400 px-3 py-1.5 text-sm font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-              >
-                {adminJobState.loading ? "…" : "Obnovit walkability POI + přepočítat"}
-              </button>
+        {/* FINANCING (only if data) */}
+        {hasFinancingData && (
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Financování a parkování</h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              {[
+                { key: "payment_contract", label: "Platba po SOSBK (%)" },
+                { key: "payment_construction", label: "Platba při výstavbě (%)" },
+                { key: "payment_occupancy", label: "Platba po dokončení (%)" },
+              ].map(({ key, label }) => {
+                const val = project[key];
+                if (!editMode && isNullish(val)) return null;
+                return (
+                  <div key={key}>
+                    <p className="text-xs font-medium text-slate-500">{label}</p>
+                    {editMode ? (
+                      <input type="number" min={0} max={100} step={1}
+                        className="mt-0.5 w-full max-w-[8rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={draft(key) !== undefined ? String(draft(key)) : (project[key] as number) != null ? ((project[key] as number) > 1 ? (project[key] as number) : (project[key] as number) * 100) : ""}
+                        onChange={(e) => { const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value))); handleChangeDraft(key, v); }} />
+                    ) : (
+                      <p className="mt-0.5 font-medium text-slate-900">{formatPercent((val as number | null) ?? null, undefined, true)}</p>
+                    )}
+                  </div>
+                );
+              })}
+              {[
+                { key: "min_parking_indoor_price_czk", altKey: "max_parking_indoor_price_czk", label: "Cena garáže (Kč)" },
+                { key: "min_parking_outdoor_price_czk", altKey: "max_parking_outdoor_price_czk", label: "Cena stání (Kč)" },
+              ].map(({ key, altKey, label }) => {
+                const val = (project[key] ?? project[altKey]) as number | null;
+                if (!editMode && isNullish(val)) return null;
+                return (
+                  <div key={key}>
+                    <p className="text-xs font-medium text-slate-500">{label}</p>
+                    {editMode ? (
+                      <input type="number" min={0} step={1}
+                        className="mt-0.5 w-full max-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={(displayOrDraft(key, val ?? "") as string) || ""}
+                        onChange={(e) => { const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value))); handleChangeDraft(key, v); }} />
+                    ) : (
+                      <p className="mt-0.5 font-medium text-slate-900">{formatCurrencyCzk(val)}</p>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {adminJobState.message != null && (
-              <p className="mt-2 text-sm text-amber-900">{adminJobState.message}</p>
+          </section>
+        )}
+
+        {/* STANDARDS (only filled) */}
+        {(filledStandards.length > 0 || editMode) && (
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Standardy</h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {(editMode ? STANDARDS_FIELDS : filledStandards).map((f) => {
+                if (f.type === "bool") return renderBoolEditField(f.key, f.label);
+                if (f.type === "enum") return renderEnumEditField(f.key, f.label);
+                if (f.key === "exterior_blinds") {
+                  const val = project[f.key];
+                  if (!editMode && isNullish(val)) return null;
+                  return (
+                    <div key={f.key}>
+                      <p className="text-xs font-medium text-slate-500">{f.label}</p>
+                      {editMode ? (
+                        <select className="mt-0.5 w-full max-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                          value={(() => { const v = displayOrDraft(f.key, val); if (v == null || v === "") return ""; const s = String(v).toLowerCase(); if (s === "true" || s === "1" || s === "ano") return "true"; if (s === "false" || s === "0" || s === "ne") return "false"; if (s === "preparation" || s === "priprava" || s === "příprava") return "preparation"; return ""; })()}
+                          onChange={(e) => handleChangeDraft(f.key, e.target.value)}>
+                          <option value="">—</option>
+                          <option value="true">Ano</option>
+                          <option value="false">Ne</option>
+                          <option value="preparation">Příprava</option>
+                        </select>
+                      ) : (
+                        <p className="mt-0.5 font-medium text-slate-900">{(() => { const s = String(val ?? "").toLowerCase(); if (s === "true" || s === "1" || s === "ano") return "Ano"; if (s === "false" || s === "0" || s === "ne") return "Ne"; if (s === "preparation" || s === "priprava" || s === "příprava") return "Příprava"; return "—"; })()}</p>
+                      )}
+                    </div>
+                  );
+                }
+                // text fields (ceiling_height)
+                const val = project[f.key];
+                if (!editMode && isNullish(val)) return null;
+                return (
+                  <div key={f.key}>
+                    <p className="text-xs font-medium text-slate-500">{f.label}</p>
+                    {editMode ? (
+                      <input type="text" className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                        value={(displayOrDraft(f.key, val) as string) ?? ""} onChange={(e) => handleChangeDraft(f.key, e.target.value)} placeholder="např. 2,9 m" />
+                    ) : (
+                      <p className="mt-0.5 font-medium text-slate-900">{val != null && val !== "" ? String(val) : "—"}</p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {!editMode && falseStandards.length > 0 && (
+              <details className="mt-3 group">
+                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
+                  <span className="group-open:hidden">Zobrazit vlastnosti s hodnotou Ne ({falseStandards.length})</span>
+                  <span className="hidden group-open:inline">Skrýt</span>
+                </summary>
+                <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                  {falseStandards.map((f) => (
+                    <div key={f.key}>
+                      <p className="text-xs font-medium text-slate-500">{f.label}</p>
+                      <p className="mt-0.5 font-medium text-slate-900">{formatBoolOrDash(project[f.key])}</p>
+                    </div>
+                  ))}
+                </div>
+              </details>
             )}
           </section>
         )}
 
-        {/* Walkability POI list modal */}
+        {/* AMENITIES (only filled) */}
+        {(filledAmenities.length > 0 || editMode) && (
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Amenities</h2>
+            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              {(editMode ? AMENITY_FIELDS : filledAmenities).map((f) => renderBoolEditField(f.key, f.label))}
+            </div>
+            {!editMode && falseAmenities.length > 0 && (
+              <details className="mt-3 group">
+                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
+                  <span className="group-open:hidden">Zobrazit s hodnotou Ne ({falseAmenities.length})</span>
+                  <span className="hidden group-open:inline">Skrýt</span>
+                </summary>
+                <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                  {falseAmenities.map((f) => (
+                    <div key={f.key}><p className="text-xs font-medium text-slate-500">{f.label}</p><p className="mt-0.5 font-medium text-slate-900">{formatBoolOrDash(project[f.key])}</p></div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </section>
+        )}
+
+        {/* OSTATNI (amenities text) */}
+        {(editMode || hasValue("amenities")) && (
+          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Zajímavosti</h2>
+            {editMode ? (
+              <textarea className="w-full max-w-2xl rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200" rows={4}
+                value={(displayOrDraft("amenities", project["amenities"]) as string) ?? ""} onChange={(e) => handleChangeDraft("amenities", e.target.value)} />
+            ) : (
+              <p className="font-medium text-slate-900 whitespace-pre-wrap">{(project["amenities"] as string) ?? "—"}</p>
+            )}
+          </section>
+        )}
+
+        {/* LOCATION + TECH DATA (collapsible) */}
+        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Lokalita a technická data</h2>
+            <button type="button" onClick={() => setShowTechData((v) => !v)}
+              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+              {showTechData ? "Skrýt" : "Zobrazit"}
+            </button>
+          </div>
+          {/* Always show transport times */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-3">
+            {hasValue("ride_to_center_min") && (
+              <div><p className="text-xs font-medium text-slate-500">Autem do centra</p><p className="mt-0.5 font-medium text-slate-900">{formatMinutes((project["ride_to_center_min"] ?? project["ride_to_center"]) as number | null)}</p></div>
+            )}
+            {hasValue("public_transport_to_center_min") && (
+              <div><p className="text-xs font-medium text-slate-500">MHD do centra</p><p className="mt-0.5 font-medium text-slate-900">{formatMinutes((project["public_transport_to_center_min"] ?? project["public_transport_to_center"]) as number | null)}</p></div>
+            )}
+          </div>
+          {showTechData && (
+            <div className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {LOCATION_ADMIN.filter((f) => hasValue(f.key)).map((f) => (
+                  <div key={f.key}><p className="text-xs font-medium text-slate-500">{f.label}</p><p className="mt-0.5 font-medium text-slate-900">{(project[f.key] as string) ?? "—"}</p></div>
+                ))}
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                {LOCATION_TECH.filter((f) => hasValue(f.key)).map((f) => (
+                  <div key={f.key}>
+                    <p className="text-xs font-medium text-slate-500">{f.label}</p>
+                    <p className="mt-0.5 font-medium text-slate-900">
+                      {"distance" in f && f.distance ? formatDistance(project[f.key]) :
+                       "round" in f && f.round ? (project[f.key] != null ? String(Math.round(Number(project[f.key]))) : "—") :
+                       "suffix" in f && f.suffix ? (project[f.key] != null ? `${project[f.key]}${f.suffix}` : "—") :
+                       (project[f.key] as string | null) ?? "—"}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={handleRecomputeLocationMetrics} disabled={recomputingLocation}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                {recomputingLocation ? "Přepočítávám…" : "Přepočítat hluk a mikro-lokalitu"}
+              </button>
+            </div>
+          )}
+        </section>
+
+        {/* DEV / ADMIN */}
+        {debugMode && (
+          <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5">
+            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">Dev / Admin</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" onClick={handleAdminRecomputeAll} disabled={adminJobState.loading}
+                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                {adminJobState.loading ? "…" : "Přepočítat všechny projekty"}
+              </button>
+              <button type="button" onClick={handleAdminRefreshAndRecompute} disabled={adminJobState.loading}
+                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                {adminJobState.loading ? "…" : "Obnovit zdrojová data + přepočítat vše"}
+              </button>
+              <button type="button" onClick={handleAdminDownloadOsmAndRecompute} disabled={adminJobState.loading}
+                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                {adminJobState.loading ? "Stahování OSM… (1–2 min)" : "Stáhnout OSM infrastrukturu + přepočítat projekty"}
+              </button>
+              <button type="button" onClick={handleAdminWalkabilityRefreshAndRecompute} disabled={adminJobState.loading}
+                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                {adminJobState.loading ? "…" : "Obnovit walkability POI + přepočítat"}
+              </button>
+            </div>
+            {adminJobState.message != null && <p className="mt-2 text-sm text-amber-900">{adminJobState.message}</p>}
+          </section>
+        )}
+
+        {/* POI MODAL */}
         {poiModal.open && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-            onClick={closePoiModal}
-            role="dialog"
-            aria-modal="true"
-            aria-label="Seznam POI"
-          >
-            <div
-              className="max-h-[90vh] w-full max-w-5xl rounded-xl border border-slate-200 bg-white shadow-xl"
-              onClick={(e) => e.stopPropagation()}
-            >
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closePoiModal} role="dialog" aria-modal="true" aria-label="Seznam POI">
+            <div className="max-h-[90vh] w-full max-w-5xl rounded-2xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
               <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
                 <div>
                   <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel}</h3>
-                  <p className="text-[11px] text-slate-500">
-                    do 500 m{!poiModal.loading && poiModal.items.length > 0 ? ` · ${poiModal.items.length} míst` : ""}
-                  </p>
+                  <p className="text-[11px] text-slate-500">do 500 m{!poiModal.loading && poiModal.items.length > 0 ? ` · ${poiModal.items.length} míst` : ""}</p>
                 </div>
-                <button
-                  type="button"
-                  onClick={closePoiModal}
-                  className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-                  aria-label="Zavřít"
-                >
-                  ×
-                </button>
+                <button type="button" onClick={closePoiModal} className="rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" aria-label="Zavřít">×</button>
               </div>
               <div className="flex border-b border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => setPoiModal((p) => ({ ...p, view: "list" }))}
-                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "list" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
-                >
-                  Seznam
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPoiModal((p) => ({ ...p, view: "map" }))}
-                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "map" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
-                >
-                  Mapa
-                </button>
+                <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "list" }))}
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "list" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Seznam</button>
+                <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "map" }))}
+                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "map" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Mapa</button>
               </div>
               <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
                 {poiModal.loading ? (
@@ -2433,65 +1516,25 @@ export default function ProjectDetailPage() {
                   (() => {
                     const lat = projectState.data?.["gps_latitude"];
                     const lon = projectState.data?.["gps_longitude"];
-                    if (lat == null || lon == null || typeof lat !== "number" || typeof lon !== "number") {
-                      return <p className="text-sm text-slate-500">Pro zobrazení mapy jsou potřeba souřadnice projektu.</p>;
-                    }
-                    if (poiModal.items.length === 0) {
-                      return <p className="text-sm text-slate-500">Žádné záznamy k zobrazení na mapě.</p>;
-                    }
-                    return (
-                      <WalkabilityPoiModalMap
-                        projectLat={lat}
-                        projectLon={lon}
-                        items={poiModal.items}
-                        highlightIndices={[0, 1]}
-                      />
-                    );
+                    if (lat == null || lon == null || typeof lat !== "number" || typeof lon !== "number") return <p className="text-sm text-slate-500">Pro zobrazení mapy jsou potřeba souřadnice projektu.</p>;
+                    if (poiModal.items.length === 0) return <p className="text-sm text-slate-500">Žádné záznamy k zobrazení na mapě.</p>;
+                    return <WalkabilityPoiModalMap projectLat={lat} projectLon={lon} items={poiModal.items} highlightIndices={[0, 1]} />;
                   })()
                 ) : poiModal.items.length === 0 ? (
                   <p className="text-sm text-slate-500">Žádné záznamy</p>
                 ) : (
                   <ul className="space-y-2">
                     {poiModal.items.map((item, idx) => (
-                      <li
-                        key={idx}
-                        className={`rounded-lg border px-3 py-2 text-sm ${
-                          idx === 0
-                            ? "border-emerald-300 bg-emerald-50/70"
-                            : idx === 1
-                              ? "border-sky-300 bg-sky-50/70"
-                              : "border-slate-100 bg-slate-50/50"
-                        }`}
-                      >
+                      <li key={idx} className={`rounded-xl border px-3 py-2 text-sm ${idx === 0 ? "border-emerald-300 bg-emerald-50/70" : idx === 1 ? "border-sky-300 bg-sky-50/70" : "border-slate-100 bg-slate-50/50"}`}>
                         <p className="flex items-center justify-between font-medium text-slate-900">
                           <span>{item.name ?? "—"}</span>
-                          {idx === 0 && (
-                            <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
-                              1. nejbližší
-                            </span>
-                          )}
-                          {idx === 1 && (
-                            <span className="ml-2 inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
-                              2. nejbližší
-                            </span>
-                          )}
+                          {idx === 0 && <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">1. nejbližší</span>}
+                          {idx === 1 && <span className="ml-2 inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">2. nejbližší</span>}
                         </p>
-                        <p className="mt-0.5 text-slate-600">
-                          {item.distance_m != null
-                            ? item.distance_m >= 1000
-                              ? `${(item.distance_m / 1000).toFixed(1)} km`
-                              : `${Math.round(item.distance_m)} m`
-                            : "—"}
-                        </p>
+                        <p className="mt-0.5 text-slate-600">{item.distance_m != null ? (item.distance_m >= 1000 ? `${(item.distance_m / 1000).toFixed(1)} km` : `${Math.round(item.distance_m)} m`) : "—"}</p>
                         {item.lat != null && item.lon != null && (
-                          <a
-                            href={`https://mapy.cz/zakladni?source=coor&id=${item.lon}&id=${item.lat}&x=${item.lon}&y=${item.lat}&z=17`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-1 inline-block text-xs text-blue-600 hover:underline"
-                          >
-                            Zobrazit na mapě
-                          </a>
+                          <a href={`https://mapy.cz/zakladni?source=coor&id=${item.lon}&id=${item.lat}&x=${item.lon}&y=${item.lat}&z=17`} target="_blank" rel="noopener noreferrer"
+                            className="mt-1 inline-block text-xs text-blue-600 hover:underline">Zobrazit na mapě</a>
                         )}
                       </li>
                     ))}
@@ -2502,23 +1545,13 @@ export default function ProjectDetailPage() {
           </div>
         )}
 
-      <WalkabilityPreferencesDrawer
-        open={walkPrefsOpen}
-        value={walkPrefs}
-        onChange={setWalkPrefs}
-        onClose={() => setWalkPrefsOpen(false)}
-        onReset={() => {
-          const def = resetWalkPrefs();
-          setWalkPrefs(def);
-        }}
-        onApply={() => {
-          saveWalkPrefs(walkPrefs);
-          setPersonalizedModeEnabled(true);
-          setWalkPrefsOpen(false);
-        }}
-      />
+        <WalkabilityPreferencesDrawer
+          open={walkPrefsOpen} value={walkPrefs} onChange={setWalkPrefs}
+          onClose={() => setWalkPrefsOpen(false)}
+          onReset={() => { const def = resetWalkPrefs(); setWalkPrefs(def); }}
+          onApply={() => { saveWalkPrefs(walkPrefs); setPersonalizedModeEnabled(true); setWalkPrefsOpen(false); }}
+        />
       </div>
     </div>
   );
 }
-
