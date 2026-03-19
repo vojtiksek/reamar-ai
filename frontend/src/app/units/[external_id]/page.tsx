@@ -722,7 +722,11 @@ export default function UnitDetailPage() {
     { label: "Cena za m²", value: unit.price_per_m2_czk ? formatCurrencyCzk(unit.price_per_m2_czk) : null },
     { label: "Původní cena", value: unit.original_price_czk ? formatCurrencyCzk(unit.original_price_czk) : null },
     { label: "Původní cena/m²", value: unit.original_price_per_m2_czk ? formatCurrencyCzk(unit.original_price_per_m2_czk) : null },
-    { label: "Patro", value: (unit as Record<string, unknown>)["floor"] != null ? String((unit as Record<string, unknown>)["floor"]) : null },
+    { label: "Patro", value: (() => {
+      const category = String((unit.project as Record<string, unknown>)?.category ?? (unit.data?.category ?? "")).toLowerCase();
+      if (category === "house" || category === "dům") return null; // domy mají vždy patro 1
+      return (unit as Record<string, unknown>)["floor"] != null ? String((unit as Record<string, unknown>)["floor"]) : null;
+    })() },
     { label: "Orientace", value: (unit as Record<string, unknown>)["orientation"] ? String((unit as Record<string, unknown>)["orientation"]) : null },
   ].filter((p) => editMode || p.value != null) as KeyProp[];
 
