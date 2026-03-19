@@ -1,26 +1,27 @@
 "use client";
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
+import { FilterChips } from "@/components/FilterChips";
+import { ClientModeBar } from "@/components/ClientModeBar";
+import { useFilterGroups } from "@/hooks/useFilterGroups";
+import { useFilterDrawer } from "@/hooks/useFilterDrawer";
 import { SummaryBar } from "@/components/SummaryBar";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import {
   buildUnitsQuery,
   countActiveFilters,
   type CurrentFilters,
-  type FilterGroup,
-  type FiltersResponse,
-  flattenFilterSpecsByKey,
   filtersToSearchParams,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
-import { formatValue, formatLayout } from "@/lib/format";
+import { formatValue, formatLayout, formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type React from "react";
+import React from "react";
 import {
   type WalkabilityPreferences,
   loadPreferences as loadWalkPrefs,
@@ -30,6 +31,8 @@ import {
   getNonDefaultChips,
   getDefaultPreferences,
 } from "@/lib/walkabilityPreferences";
+import { useActiveClient } from "@/contexts/ActiveClientContext";
+import { filtersEqual, filtersToProfilePatch } from "@/lib/clientFilters";
 
 type Unit = {
   external_id: string;
@@ -45,6 +48,32 @@ type Unit = {
   /** Flat catalog-keyed values (Unit + Project fields) from backend */
   data?: Record<string, unknown>;
   pending_api_updates?: { field: string; api_value: string }[];
+};
+
+type ClientRecommendationItem = {
+  rec_id: number;
+  pinned_by_broker: boolean;
+  unit_external_id: string | null;
+  project_id: number | null;
+  project_name?: string | null;
+  layout?: string | null;
+  layout_label?: string | null;
+  floor_area_m2?: number | null;
+  exterior_area_m2?: number | null;
+  price_czk?: number | null;
+  price_per_m2_czk?: number | null;
+  floor?: number | null;
+  district?: string | null;
+  score: number;
+  budget_fit: number;
+  walkability_fit: number;
+  location_fit: number;
+  layout_fit: number;
+  area_fit: number;
+  outdoor_fit: number;
+  distance_to_tram_stop_m?: number | null;
+  distance_to_metro_station_m?: number | null;
+  distance_to_bus_stop_m?: number | null;
 };
 
 type UnitsListResponse = {
@@ -609,27 +638,39 @@ function computeSummaryFromUnits(units: Unit[], total: number) {
   };
 }
 
-const FILTER_ENUM_LABELS: Record<string, Record<string, string>> = {
-  availability: {
-    available: "Dostupná",
-    unseen: "Neviděná",
-    not_seen: "Neviděná",
-    reserved: "Rezervovaná",
-    sold: "Prodaná",
-    unavailable: "Nedostupná",
-  },
-  category: {
-    flat: "Byt",
-    house: "Dům",
-  },
-};
+
+function scoreLabel(score: number): { label: string; cls: string } {
+  if (score >= 80) return { label: "Výborné", cls: "bg-emerald-100 text-emerald-800" };
+  if (score >= 60) return { label: "Dobré",   cls: "bg-blue-100 text-blue-800" };
+  if (score >= 40) return { label: "OK",      cls: "bg-amber-100 text-amber-800" };
+  return                    { label: "Slabé",  cls: "bg-slate-100 text-slate-600" };
+}
+
+function FitDot({ value, title }: { value: number; title: string }) {
+  const color = value >= 70 ? "bg-emerald-400" : value >= 40 ? "bg-amber-400" : "bg-red-400";
+  return <span title={`${title}: ${Math.round(value)}`} className={`inline-block h-2 w-2 rounded-full ${color}`} />;
+}
+
+function FitBar({ label, value }: { label: string; value: number }) {
+  const bar = value >= 70 ? "bg-emerald-400" : value >= 40 ? "bg-amber-400" : "bg-red-400";
+  const text = value >= 70 ? "text-emerald-700" : value >= 40 ? "text-amber-700" : "text-red-600";
+  return (
+    <div className="flex items-center gap-2">
+      <span className="w-28 shrink-0 text-right text-[11px] text-slate-500">{label}</span>
+      <div className="h-1.5 w-24 overflow-hidden rounded-full bg-slate-200">
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
+      </div>
+      <span className={`w-7 text-right text-[11px] font-semibold ${text}`}>{Math.round(value)}</span>
+    </div>
+  );
+}
 
 export default function Home() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
+  const filterGroups = useFilterGroups("filters");
   const [filters, setFilters] = useState<CurrentFilters>(() =>
     parseSearchParams(new URLSearchParams(searchParams?.toString() ?? "")).filters
   );
@@ -648,12 +689,25 @@ export default function Home() {
   const [polygon, setPolygon] = useState<string | null>(() =>
     parseSearchParams(new URLSearchParams(searchParams?.toString() ?? "")).polygon ?? null
   );
-  const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { currentFilters, drawerOpen, openDrawer, closeDrawer, onReset, onChangeFilter } = useFilterDrawer(filters);
+  const { activeClient, activate } = useActiveClient();
   const [units, setUnits] = useState<Unit[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savingToClient, setSavingToClient] = useState(false);
+  const [recomputingRecs, setRecomputingRecs] = useState(false);
+
+  // ── Recommendation mode ───────────────────────────────────────────────────
+  const [viewMode, setViewMode] = useState<"recommendations" | "manual">("manual");
+  const [recs, setRecs] = useState<ClientRecommendationItem[]>([]);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [recsError, setRecsError] = useState<string | null>(null);
+  const [recThreshold, setRecThreshold] = useState(0);
+  const [recSort, setRecSort] = useState<"score" | "price" | "area" | "floor">("score");
+  const [recPinnedOnly, setRecPinnedOnly] = useState(false);
+  const [expandedRec, setExpandedRec] = useState<number | null>(null);
+
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsConfig, setColumnsConfig] = useState<ColumnConfig[] | null>(null);
   const [serverColumns, setServerColumns] = useState<ColumnDef[] | null>(null);
@@ -685,14 +739,14 @@ export default function Home() {
   const [actionsOpen, setActionsOpen] = useState(false);
 
   const rowClickTimeoutRef = useRef<number | null>(null);
-  /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL“ přepsat state starou URL (router.replace je async). */
+  /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL” přepsat state starou URL (router.replace je async). */
   const skipSyncSortPaginationRef = useRef(false);
+  const activeClientIdRef = useRef<number | null>(null);
 
   const supportedFilterKeys = useMemo(
     () => new Set(filterGroups.flatMap((g) => g.filters.filter((f) => f.backend_supported).map((f) => f.key))),
     [filterGroups]
   );
-  const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
 
   const getExternalIdForRow = useCallback((u: Unit): string | null => {
     const rawExternalId = (u as any).external_id ?? (u as any).source_unit_id ?? (u as any).id;
@@ -807,17 +861,6 @@ export default function Home() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/filters`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: FiltersResponse) => {
-        const groups = data?.groups ?? [];
-        // Necháme backendový enum filter "availability" tak, jak je,
-        // aby bylo možné kombinovat hodnoty (available + reserved).
-        setFilterGroups(groups);
-      })
-      .catch(() => setFilterGroups([]));
-  }, []);
 
   const safeLimit = ROWS_PER_PAGE_OPTIONS.includes(limit as (typeof ROWS_PER_PAGE_OPTIONS)[number])
     ? limit
@@ -835,10 +878,14 @@ export default function Home() {
         : validSortBy;
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
+    const effectiveFilters = showOnlyPendingApi
+      ? { ...filters, availability: undefined }
+      : filters;
     let qs = buildUnitsQuery(
-      filters,
+      effectiveFilters,
       supportedFilterKeys,
       { limit: safeLimit, offset },
       { sort_by: backendSortBy, sort_dir: validSortDir }
@@ -856,13 +903,13 @@ export default function Home() {
     if (includeArchived) {
       qs += "&include_archived=1";
     }
-    fetch(`${API_BASE}/units?${qs}`)
+    if (showOnlyPendingApi) {
+      qs += "&pending_api=1";
+    }
+    fetch(`${API_BASE}/units?${qs}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((data: UnitsListResponse) => {
-        let items = data.items ?? [];
-        if (showOnlyPendingApi) {
-          items = items.filter((u: Unit) => (u.pending_api_updates?.length ?? 0) > 0);
-        }
+        const items = data.items ?? [];
         setUnits(items);
         setTotal(data.total ?? items.length);
         setSummaryOverride({
@@ -874,31 +921,216 @@ export default function Home() {
           averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
         });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
+      .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
       .finally(() => setLoading(false));
-  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger]);
+    return () => controller.abort();
+  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger, showOnlyPendingApi]);
 
-  const openDrawer = useCallback(() => {
-    setCurrentFilters({ ...filters });
-    setDrawerOpen(true);
-  }, [filters]);
+  const isClientOverridden =
+    activeClient != null && !filtersEqual(filters, activeClient.derivedFilters);
 
-  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const resetToClient = useCallback(() => {
+    if (!activeClient) return;
+    skipSyncSortPaginationRef.current = true;
+    setFilters(activeClient.derivedFilters);
+    setOffset(0);
+    syncToUrl(activeClient.derivedFilters, limit, 0, sortBy, sortDir, polygon);
+  }, [activeClient, limit, sortBy, sortDir, polygon, syncToUrl]);
 
-  const onReset = useCallback(() => setCurrentFilters({}), []);
+  const handleSaveToClient = useCallback(async () => {
+    if (!activeClient) return;
+    setSavingToClient(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const patch = filtersToProfilePatch(filters);
+      await fetch(`${API_BASE}/clients/${activeClient.clientId}/profile`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(patch),
+      }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+      // Update baseline so override state disappears
+      activate({ ...activeClient, derivedFilters: { ...filters } });
+      // Trigger recompute in background
+      fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => {});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uložení se nezdařilo");
+    } finally {
+      setSavingToClient(false);
+    }
+  }, [activeClient, filters, activate]);
+
+  const handleRecomputeRecs = useCallback(async () => {
+    if (!activeClient || recomputingRecs) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+    setRecomputingRecs(true);
+    setRecsError(null);
+    try {
+      const res = await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, { method: "POST", headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      // Re-fetch updated recommendations
+      setRecsLoading(true);
+      const r2 = await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations`, { headers });
+      if (r2.ok) setRecs(await r2.json().then((d) => (Array.isArray(d) ? d : [])));
+    } catch (e) {
+      setRecsError(e instanceof Error ? e.message : "Přepočet selhal");
+    } finally {
+      setRecomputingRecs(false);
+      setRecsLoading(false);
+    }
+  }, [activeClient, recomputingRecs]);
+
+  // ── Recommendation mode: auto-switch when client changes ─────────────────
+  useEffect(() => {
+    if (activeClient && activeClient.clientId !== activeClientIdRef.current) {
+      setViewMode("recommendations");
+      activeClientIdRef.current = activeClient.clientId;
+    }
+    if (!activeClient && activeClientIdRef.current !== null) {
+      setViewMode("manual");
+      activeClientIdRef.current = null;
+    }
+  }, [activeClient]);
+
+  // ── Recommendation mode: fetch recommendations ────────────────────────────
+  useEffect(() => {
+    if (viewMode !== "recommendations" || !activeClient) return;
+    let cancelled = false;
+    setRecsLoading(true);
+    setRecsError(null);
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: ClientRecommendationItem[]) => {
+        if (!cancelled) setRecs(Array.isArray(data) ? data : []);
+      })
+      .catch((e) => {
+        if (!cancelled) setRecsError(e instanceof Error ? e.message : "Nepodařilo se načíst doporučení");
+      })
+      .finally(() => {
+        if (!cancelled) setRecsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [viewMode, activeClient?.clientId]);
+
+  const handleRecPin = useCallback(async (recId: number, currentlyPinned: boolean) => {
+    if (!activeClient) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    setRecs((prev) => prev.map((r) => r.rec_id === recId ? { ...r, pinned_by_broker: !currentlyPinned } : r));
+    const method = currentlyPinned ? "DELETE" : "PATCH";
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${activeClient.clientId}/recommendations/${recId}/pin`,
+        { method, headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      setRecs((prev) => prev.map((r) => r.rec_id === recId ? { ...r, pinned_by_broker: currentlyPinned } : r));
+    }
+  }, [activeClient]);
+
+  const handleRecHide = useCallback(async (recId: number) => {
+    if (!activeClient) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    const removed = recs.find((r) => r.rec_id === recId);
+    setRecs((prev) => prev.filter((r) => r.rec_id !== recId));
+    setExpandedRec(null);
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${activeClient.clientId}/recommendations/${recId}/hide`,
+        { method: "PATCH", headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      if (removed) setRecs((prev) => [...prev, removed]);
+    }
+  }, [activeClient, recs]);
+
+  const handleRecDelete = useCallback(async (recId: number) => {
+    if (!activeClient) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    const removed = recs.find((r) => r.rec_id === recId);
+    setRecs((prev) => prev.filter((r) => r.rec_id !== recId));
+    setExpandedRec(null);
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${activeClient.clientId}/recommendations/${recId}`,
+        { method: "DELETE", headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      if (removed) setRecs((prev) => [...prev, removed]);
+    }
+  }, [activeClient, recs]);
+
+  const handleAddToRecs = useCallback(async (unit: Unit) => {
+    if (!activeClient) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${activeClient.clientId}/recommendations/manual-add`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ unit_external_id: unit.external_id }),
+        }
+      );
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const item: ClientRecommendationItem = await res.json();
+      setRecs((prev) => {
+        if (prev.some((r) => r.rec_id === item.rec_id)) return prev;
+        return [item, ...prev];
+      });
+    } catch {
+      // silently ignore — user will see nothing was added
+    }
+  }, [activeClient]);
+
+  const visibleRecs = useMemo(() => {
+    let list = recs;
+    if (recPinnedOnly) list = list.filter((r) => r.pinned_by_broker);
+    if (recThreshold > 0) list = list.filter((r) => r.score >= recThreshold);
+    return [...list].sort((a, b) => {
+      if (recSort === "price") return (a.price_czk ?? Infinity) - (b.price_czk ?? Infinity);
+      if (recSort === "area")  return (a.floor_area_m2 ?? Infinity) - (b.floor_area_m2 ?? Infinity);
+      if (recSort === "floor") return (a.floor ?? Infinity) - (b.floor ?? Infinity);
+      return b.score - a.score; // default: score desc
+    });
+  }, [recs, recThreshold, recSort, recPinnedOnly]);
+
+  const recSummary = useMemo(() => {
+    if (recs.length === 0) return null;
+    const scores = recs.map((r) => r.score);
+    const prices = recs.map((r) => r.price_czk).filter((v): v is number => v != null);
+    const areas  = recs.map((r) => r.floor_area_m2).filter((v): v is number => v != null);
+    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    return {
+      count:    recs.length,
+      avgScore: Math.round(avg(scores)),
+      avgPrice: prices.length > 0 ? Math.round(avg(prices)) : null,
+      avgArea:  areas.length  > 0 ? Math.round(avg(areas) * 10) / 10 : null,
+    };
+  }, [recs]);
 
   const onResetAll = useCallback(() => {
     skipSyncSortPaginationRef.current = true;
     setFilters({});
-    setCurrentFilters({});
+    onReset();
     syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
-
-  const onChange = useCallback((key: string, value: number | number[] | string[] | boolean | undefined) => {
-    setCurrentFilters((prev) => ({ ...prev, [key]: value }));
-  }, []);
+  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer, onReset]);
 
   const applyFilters = useCallback(
     (next: CurrentFilters) => {
@@ -1412,18 +1644,61 @@ export default function Home() {
   return (
     <div>
       <div className="flex flex-col gap-5 pt-4 pb-10">
-        <div className="flex items-baseline justify-between gap-4 px-1">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Jednotky</h2>
-          {total > 0 && <span className="text-sm text-slate-400">{total} záznamů</span>}
-        </div>
-        <SummaryBar
-          total={summary.total}
-          averagePricePerM2={summary.averagePricePerM2}
-          averagePrice={summary.averagePrice}
-          availableCount={summary.availableCount}
-          averageLocalDiff={averageLocalDiff}
-        />
-        <div className="glass-header flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
+        {viewMode === "recommendations" && recSummary ? (
+          <div className="grid w-full gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <div className="min-w-0 glass-card px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Doporučení</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {recSummary.count}
+                {(recPinnedOnly || recThreshold > 0) && visibleRecs.length !== recSummary.count && (
+                  <span className="ml-1.5 text-sm font-normal text-slate-400">({visibleRecs.length} filtr.)</span>
+                )}
+              </p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-violet-500/10 via-violet-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Prům. skóre</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{recSummary.avgScore}</p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-indigo-500/10 via-indigo-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Prům. cena</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{formatCurrencyCzk(recSummary.avgPrice)}</p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-sky-500/10 via-sky-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Prům. plocha</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {recSummary.avgArea != null ? formatAreaM2(recSummary.avgArea) : "—"}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <SummaryBar
+            total={summary.total}
+            averagePricePerM2={summary.averagePricePerM2}
+            averagePrice={summary.averagePrice}
+            availableCount={summary.availableCount}
+            averageLocalDiff={averageLocalDiff}
+          />
+        )}
+        <div className="glass-header relative z-20 flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
+          {/* Mode toggle — visible only in client mode */}
+          {activeClient && (
+            <div className="flex overflow-hidden rounded-lg border border-slate-200 text-xs font-medium shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode("recommendations")}
+                className={`px-3 py-1.5 transition-colors ${viewMode === "recommendations" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+              >
+                Doporučení
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("manual")}
+                className={`border-l border-slate-200 px-3 py-1.5 transition-colors ${viewMode === "manual" ? "bg-slate-900 text-white" : "bg-white text-slate-700 hover:bg-slate-50"}`}
+              >
+                Ruční hledání
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={openDrawer}
@@ -1432,11 +1707,35 @@ export default function Home() {
           >
             Filtry
             {countActiveFilters(filters) > 0 && (
-              <span className="ml-1 rounded-full bg-slate-900/80 px-2 py-[1px] text-[10px] font-semibold text-white">
+              <span className={`ml-1 rounded-full px-2 py-[1px] text-[10px] font-semibold text-white ${isClientOverridden ? "bg-amber-500" : "bg-slate-900/80"}`}>
                 {countActiveFilters(filters)}
               </span>
             )}
+            {isClientOverridden && countActiveFilters(filters) === 0 && (
+              <span className="ml-1 inline-block h-2 w-2 rounded-full bg-amber-500" />
+            )}
           </button>
+          {isClientOverridden && (
+            <button
+              type="button"
+              onClick={resetToClient}
+              className="glass-pill border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 shrink-0"
+              title="Obnovit filtry z profilu klienta"
+            >
+              Zpět na klienta
+            </button>
+          )}
+          {isClientOverridden && (
+            <button
+              type="button"
+              onClick={handleSaveToClient}
+              disabled={savingToClient}
+              className="glass-pill border border-amber-400 bg-amber-400 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 shrink-0 disabled:opacity-60"
+              title="Uložit aktuální filtry jako nový profil klienta"
+            >
+              {savingToClient ? "Ukládám…" : "Uložit změny do klienta"}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setWalkPrefsOpen(true)}
@@ -1616,104 +1915,266 @@ export default function Home() {
             )}
           </div>
         </div>
-        {countActiveFilters(filters) > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1">
-            {(() => {
-              type FilterBadge = { id: string; label: string; clearKeys: string[] };
-              const badges: FilterBadge[] = [];
-              const rangeBases = new Set<string>();
-              for (const [k, v] of Object.entries(filters)) {
-                if (v === undefined) continue;
-                if (k.endsWith("_min") || k.endsWith("_max")) {
-                  rangeBases.add(k.replace(/_(min|max)$/, ""));
-                  continue;
-                }
-                const spec = aliasByKey.get(k);
-                const label = spec?.alias || k;
-                if (Array.isArray(v) && v.length > 0) {
-                  const formattedValues = v.map((raw) => {
-                    const str = String(raw);
-                    if (k === "layout") {
-                      const f = formatLayout(str);
-                      return f !== "—" ? f : str;
-                    }
-                    return FILTER_ENUM_LABELS[k]?.[str] ?? str;
-                  });
-                  badges.push({
-                    id: `${k}:${formattedValues.join(",")}`,
-                    label: `${label}: ${formattedValues.join(", ")}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "boolean") {
-                  badges.push({
-                    id: `${k}:${v ? "1" : "0"}`,
-                    label: `${label}: ${v ? "Ano" : "Ne"}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "number" && !Number.isNaN(v)) {
-                  badges.push({
-                    id: `${k}:${v}`,
-                    label: `${label}: ${v}`,
-                    clearKeys: [k],
-                  });
-                }
-              }
-              const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
-              for (const base of rangeBases) {
-                const min = filters[`${base}_min`] as number | undefined;
-                const max = filters[`${base}_max`] as number | undefined;
-                if (
-                  (min === undefined || Number.isNaN(min as number)) &&
-                  (max === undefined || Number.isNaN(max as number))
-                ) {
-                  continue;
-                }
-                const spec = aliasByKey.get(base);
-                const label = spec?.alias || base;
-                const asPercent = percentRangeBases.has(base);
-                const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
-                const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
-                const suf = asPercent ? " %" : "";
-                let value = "";
-                if (dispMin != null) {
-                  value += `od ${dispMin}${suf}`;
-                }
-                if (dispMax != null) {
-                  value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
-                }
-                badges.push({
-                  id: `${base}:${value}`,
-                  label: `${label}: ${value}`,
-                  clearKeys: [`${base}_min`, `${base}_max`],
-                });
-              }
-              return badges.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => {
-                    const next: CurrentFilters = { ...filters };
-                    for (const ck of b.clearKeys) {
-                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                      delete (next as any)[ck];
-                    }
-                    applyFilters(next);
-                  }}
-                  className="group inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-white"
-                >
-                  <span>{b.label}</span>
-                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-600 group-hover:bg-slate-400 group-hover:text-white">
-                    ×
-                  </span>
-                </button>
-              ));
-            })()}
+        {/* ── Recommendation controls row — only in rec mode ─────────────── */}
+        {activeClient && viewMode === "recommendations" && (
+          <div className="flex flex-wrap items-center gap-2 px-1">
+            <select
+              value={recThreshold}
+              onChange={(e) => { setRecThreshold(Number(e.target.value)); setExpandedRec(null); }}
+              className="glass-pill border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 focus:outline-none shrink-0"
+              title="Minimální skóre"
+            >
+              <option value={0}>Vše</option>
+              <option value={40}>40+</option>
+              <option value={60}>60+</option>
+              <option value={80}>80+</option>
+            </select>
+            <select
+              value={recSort}
+              onChange={(e) => { setRecSort(e.target.value as "score" | "price" | "area" | "floor"); setExpandedRec(null); }}
+              className="glass-pill border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 focus:outline-none shrink-0"
+            >
+              <option value="score">Skóre ↓</option>
+              <option value="price">Cena ↑</option>
+              <option value="area">Plocha ↑</option>
+              <option value="floor">Podlaží ↑</option>
+            </select>
+            <button
+              type="button"
+              onClick={() => { setRecPinnedOnly((v) => !v); setExpandedRec(null); }}
+              className={`glass-pill border px-3 py-1.5 text-xs font-medium shrink-0 ${recPinnedOnly ? "border-amber-400 bg-amber-50 text-amber-800" : "border-slate-200 text-slate-700 hover:bg-white/90"}`}
+            >
+              ★ Jen výběr
+            </button>
+            <button
+              type="button"
+              onClick={handleRecomputeRecs}
+              disabled={recomputingRecs || recsLoading}
+              className="glass-pill border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-white/90 shrink-0 disabled:opacity-50"
+              title="Přepočítat doporučení pro tohoto klienta"
+            >
+              {recomputingRecs ? "Přepočítávám…" : "↺ Přepočítat"}
+            </button>
           </div>
         )}
+        <ClientModeBar isOverridden={isClientOverridden} />
+        <FilterChips
+          filters={filters}
+          filterGroups={filterGroups}
+          onRemove={applyFilters}
+          formatEnumValue={(key, raw) => {
+            if (key === "layout") {
+              const f = formatLayout(raw);
+              return f !== "—" ? f : raw;
+            }
+            return raw;
+          }}
+        />
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
         )}
-        <div className="data-grid-wrapper">
+
+        {/* ── Recommendation view ───────────────────────────────────────── */}
+        {activeClient && viewMode === "recommendations" && (
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+            {/* Header row */}
+            <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+              <span className="text-sm font-semibold text-slate-800">
+                Doporučení pro {activeClient.clientName}
+              </span>
+              <span className="text-xs text-slate-500">
+                {recsLoading ? "Načítám…" : `${visibleRecs.length} z ${recs.length}`}
+              </span>
+            </div>
+
+            {recsLoading && (
+              <div className="px-4 py-8 text-center text-sm text-slate-500">Načítám doporučení…</div>
+            )}
+            {recsError && (
+              <div className="px-4 py-4 text-sm text-red-600">{recsError}</div>
+            )}
+            {!recsLoading && !recsError && visibleRecs.length === 0 && (
+              <div className="px-4 py-8 text-center text-sm text-slate-500">
+                {recs.length === 0 ? "Žádná doporučení. Zkuste přepočítat doporučení v detailu klienta." : "Žádné výsledky pro aktuální filtr."}
+              </div>
+            )}
+            {!recsLoading && visibleRecs.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-600">
+                    <tr>
+                      <th className="w-6 px-1 py-2 text-center"></th>
+                      <th className="w-8 px-2 py-2 text-center"></th>
+                      <th className="px-3 py-2 text-left font-semibold">Jednotka</th>
+                      <th className="px-3 py-2 text-left font-semibold">Projekt</th>
+                      <th className="px-3 py-2 text-left font-semibold">Lokalita</th>
+                      <th className="px-3 py-2 text-right font-semibold">Plocha</th>
+                      <th className="px-3 py-2 text-right font-semibold">Venk.</th>
+                      <th className="px-3 py-2 text-right font-semibold">Cena</th>
+                      <th className="px-3 py-2 text-center font-semibold" title="Rozpočet · Poloha · Walkabilita · Dispozice · Plocha · Venkovní plocha">Shoda</th>
+                      <th className="px-3 py-2 text-right font-semibold">Skóre</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleRecs.map((r) => {
+                      const sl = scoreLabel(Math.round(r.score));
+                      const href = r.unit_external_id ? `/units/${encodeURIComponent(r.unit_external_id)}` : null;
+                      const isExpanded = expandedRec === r.rec_id;
+                      return (
+                        <React.Fragment key={r.rec_id}>
+                          <tr
+                            className={`cursor-pointer hover:bg-slate-50 ${r.pinned_by_broker ? "bg-amber-50/50" : ""}`}
+                            onClick={() => setExpandedRec(isExpanded ? null : r.rec_id)}
+                          >
+                            <td className="px-1 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                title={isExpanded ? "Skrýt náhled" : "Zobrazit náhled"}
+                                onClick={() => setExpandedRec(isExpanded ? null : r.rec_id)}
+                                className="text-slate-400 hover:text-slate-700 transition-colors leading-none text-xs"
+                              >
+                                {isExpanded ? "▾" : "▸"}
+                              </button>
+                            </td>
+                            <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                title={r.pinned_by_broker ? "Odebrat z výběru" : "Přidat do výběru"}
+                                onClick={() => handleRecPin(r.rec_id, r.pinned_by_broker)}
+                                className={`text-base leading-none transition-colors ${r.pinned_by_broker ? "text-amber-500 hover:text-amber-700" : "text-slate-300 hover:text-amber-400"}`}
+                              >
+                                {r.pinned_by_broker ? "★" : "☆"}
+                              </button>
+                            </td>
+                            <td className="px-3 py-2 font-medium text-slate-900" onClick={(e) => e.stopPropagation()}>
+                              {href ? (
+                                <a href={href} className="font-mono text-xs text-indigo-600 hover:underline">{r.unit_external_id}</a>
+                              ) : (
+                                <div className="font-mono text-xs">{r.unit_external_id ?? "—"}</div>
+                              )}
+                              {r.layout_label && (
+                                <div className="text-[10px] text-slate-500">{r.layout_label}{r.floor != null ? ` · ${r.floor}. p.` : ""}</div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">{r.project_name ?? "—"}</td>
+                            <td className="px-3 py-2 text-slate-600 text-xs">{r.district ?? "—"}</td>
+                            <td className="px-3 py-2 text-right text-slate-700">
+                              {r.floor_area_m2 != null ? formatAreaM2(r.floor_area_m2) : "—"}
+                            </td>
+                            <td className="px-3 py-2 text-right text-slate-500 text-xs">
+                              {r.exterior_area_m2 != null ? formatAreaM2(r.exterior_area_m2) : "—"}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-slate-900">
+                              {r.price_czk != null ? formatCurrencyCzk(r.price_czk) : "—"}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center justify-center gap-1">
+                                <FitDot value={r.budget_fit} title="Rozpočet" />
+                                <FitDot value={r.location_fit} title="Poloha" />
+                                <FitDot value={r.walkability_fit} title="Walkabilita" />
+                                <FitDot value={r.layout_fit} title="Dispozice" />
+                                <FitDot value={r.area_fit} title="Plocha" />
+                                <FitDot value={r.outdoor_fit} title="Venkovní plocha" />
+                              </div>
+                            </td>
+                            <td className="px-3 py-2 text-right">
+                              <div className="flex flex-col items-end gap-0.5">
+                                <span className="font-semibold text-slate-900">{Math.round(r.score)}</span>
+                                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${sl.cls}`}>{sl.label}</span>
+                              </div>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-slate-50/60">
+                              <td colSpan={10} className="px-4 pb-4 pt-2">
+                                <div className="flex flex-wrap gap-6">
+                                  <div className="flex flex-col gap-1.5 min-w-[160px]">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Detail</p>
+                                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                                      <span className="w-20 text-right text-slate-400">Cena / m²</span>
+                                      <span className="font-medium text-slate-800">{r.price_per_m2_czk != null ? formatCurrencyCzk(r.price_per_m2_czk) : "—"}</span>
+                                    </div>
+                                    <div className="flex items-center gap-2 text-xs text-slate-600">
+                                      <span className="w-20 text-right text-slate-400">Podlaží</span>
+                                      <span className="font-medium text-slate-800">{r.floor != null ? `${r.floor}. patro` : "—"}</span>
+                                    </div>
+                                    <div className="mt-2 flex items-center gap-3">
+                                      {href && (
+                                        <a
+                                          href={href}
+                                          onClick={(e) => e.stopPropagation()}
+                                          className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                                        >
+                                          Otevřít detail →
+                                        </a>
+                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleRecHide(r.rec_id); }}
+                                        disabled={r.pinned_by_broker}
+                                        title={r.pinned_by_broker ? "Odeberte z výběru před skrytím" : "Skrýt z doporučení"}
+                                        className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-red-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                        ✕ Skrýt
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); handleRecDelete(r.rec_id); }}
+                                        disabled={r.pinned_by_broker}
+                                        title={r.pinned_by_broker ? "Odeberte z výběru před smazáním" : "Smazat natrvalo"}
+                                        className="inline-flex items-center gap-1 text-xs text-slate-400 hover:text-red-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                      >
+                                        🗑 Smazat
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {(r.distance_to_tram_stop_m != null || r.distance_to_metro_station_m != null || r.distance_to_bus_stop_m != null) && (
+                                    <div className="flex flex-col gap-1.5 min-w-[140px]">
+                                      <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Doprava</p>
+                                      {r.distance_to_tram_stop_m != null && (
+                                        <div className="flex items-center gap-2 text-xs text-slate-600">
+                                          <span className="w-16 text-right text-slate-400">Tram</span>
+                                          <span className="font-medium text-slate-800">{Math.round(r.distance_to_tram_stop_m)} m</span>
+                                        </div>
+                                      )}
+                                      {r.distance_to_metro_station_m != null && (
+                                        <div className="flex items-center gap-2 text-xs text-slate-600">
+                                          <span className="w-16 text-right text-slate-400">Metro</span>
+                                          <span className="font-medium text-slate-800">{Math.round(r.distance_to_metro_station_m)} m</span>
+                                        </div>
+                                      )}
+                                      {r.distance_to_bus_stop_m != null && (
+                                        <div className="flex items-center gap-2 text-xs text-slate-600">
+                                          <span className="w-16 text-right text-slate-400">Bus</span>
+                                          <span className="font-medium text-slate-800">{Math.round(r.distance_to_bus_stop_m)} m</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                  <div className="flex flex-col gap-1.5">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Shoda</p>
+                                    <FitBar label="Rozpočet" value={r.budget_fit} />
+                                    <FitBar label="Poloha" value={r.location_fit} />
+                                    <FitBar label="Walkabilita" value={r.walkability_fit} />
+                                    <FitBar label="Dispozice" value={r.layout_fit} />
+                                    <FitBar label="Plocha" value={r.area_fit} />
+                                    <FitBar label="Venkovní plocha" value={r.outdoor_fit} />
+                                  </div>
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="data-grid-wrapper" style={{ display: viewMode === "manual" ? undefined : "none" }}>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-xs sm:text-sm">
@@ -1851,18 +2312,20 @@ export default function Home() {
                         );
                       }
                     )}
+                    {activeClient && <th className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-2 py-2"></th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 bg-white">
                   {loading && units.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={visibleColumns.length}
-                        className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
-                      >
-                        Načítání…
-                      </td>
-                    </tr>
+                    Array.from({ length: 8 }).map((_, i) => (
+                      <tr key={i} className="animate-pulse">
+                        {visibleColumns.map((col) => (
+                          <td key={col.key} className="px-3 py-2">
+                            <div className="h-4 rounded bg-slate-200" />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
                   ) : !loading && units.length === 0 ? (
                     <tr>
                       <td
@@ -2136,6 +2599,19 @@ export default function Home() {
                             );
                           }
                         )}
+                        {activeClient && (
+                          <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              data-no-row-nav
+                              title="Přidat do výběru klienta"
+                              onClick={(e) => { e.stopPropagation(); handleAddToRecs(u); }}
+                              className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-xs text-indigo-600 hover:bg-indigo-100 hover:text-indigo-800 transition-colors"
+                            >
+                              + výběr
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })
@@ -2151,7 +2627,7 @@ export default function Home() {
         onClose={closeDrawer}
         filterGroups={filterGroups}
         currentFilters={currentFilters}
-        onChange={onChange}
+        onChange={onChangeFilter}
         onReset={onReset}
         onApply={onApply}
       />

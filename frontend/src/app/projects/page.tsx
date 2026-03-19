@@ -3,16 +3,17 @@
 import type React from "react";
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
+import { FilterChips } from "@/components/FilterChips";
+import { ClientModeBar } from "@/components/ClientModeBar";
+import { useFilterGroups } from "@/hooks/useFilterGroups";
+import { useFilterDrawer } from "@/hooks/useFilterDrawer";
 import { SummaryBar } from "@/components/SummaryBar";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import {
   buildUnitsQuery,
   countActiveFilters,
   type CurrentFilters,
-  type FilterGroup,
-  type FiltersResponse,
   filtersToSearchParams,
-  flattenFilterSpecsByKey,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
 import { formatAreaM2, formatByDisplayFormat, formatCurrencyCzk, formatCurrencyPerM2, formatDate, formatLayout, formatLayoutsList, formatMinutes, formatPercent } from "@/lib/format";
@@ -32,6 +33,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { useActiveClient } from "@/contexts/ActiveClientContext";
+import { filtersEqual, filtersToProfilePatch } from "@/lib/clientFilters";
 
 type ProjectItem = {
   id: number;
@@ -43,6 +46,37 @@ type ProjectsOverviewResponse = {
   total: number;
   limit: number;
   offset: number;
+};
+
+type ProjectRecItem = {
+  rec_id: number;
+  pinned_by_broker: boolean;
+  project_id: number | null;
+  project_name?: string | null;
+  score: number;
+  budget_fit: number;
+  walkability_fit: number;
+  location_fit: number;
+  layout_fit: number;
+  area_fit: number;
+  outdoor_fit: number;
+  price_czk?: number | null;
+};
+
+type ProjectRecGroup = {
+  project_id: number;
+  project_name: string;
+  unit_count: number;
+  pinned_count: number;
+  best_score: number;
+  avg_score: number;
+  price_min: number | null;
+  avg_budget_fit: number;
+  avg_walkability_fit: number;
+  avg_location_fit: number;
+  avg_layout_fit: number;
+  avg_area_fit: number;
+  avg_outdoor_fit: number;
 };
 
 type ProjectColumnDef = {
@@ -66,6 +100,21 @@ const DEFAULT_LIMIT = 100;
 const ROWS_PER_PAGE_OPTIONS = [100, 300, 500] as const;
 const PROJECTS_COLUMNS_STORAGE_KEY = "projects_columns_v1";
 const DEFAULT_VISIBLE_COLUMNS = 10;
+
+/** Keys shown by default for users without saved column preferences, in display order. */
+const DEFAULT_VISIBLE_KEYS: string[] = [
+  "name",
+  "developer",
+  "total_units",
+  "available_units",
+  "avg_price_czk",
+  "avg_price_per_m2_czk",
+  "municipality",
+  "ride_to_center",
+  "public_transport_to_center",
+  "walkability_score",
+];
+const DEFAULT_VISIBLE_KEYS_SET = new Set(DEFAULT_VISIBLE_KEYS);
 
 function formatProjectValue(value: unknown, column: ProjectColumnDef): string {
   if (value == null || value === "") return "—";
@@ -320,20 +369,18 @@ function downloadProjectsCsv(
   URL.revokeObjectURL(url);
 }
 
-const FILTER_ENUM_LABELS: Record<string, Record<string, string>> = {
-  availability: {
-    available: "Dostupná",
-    unseen: "Neviděná",
-    not_seen: "Neviděná",
-    reserved: "Rezervovaná",
-    sold: "Prodaná",
-    unavailable: "Nedostupná",
-  },
-  category: {
-    flat: "Byt",
-    house: "Dům",
-  },
-};
+
+function scoreLabel(score: number): { label: string; cls: string } {
+  if (score >= 80) return { label: "Výborné", cls: "bg-emerald-100 text-emerald-800" };
+  if (score >= 60) return { label: "Dobré",   cls: "bg-blue-100 text-blue-800" };
+  if (score >= 40) return { label: "OK",      cls: "bg-amber-100 text-amber-800" };
+  return                    { label: "Slabé",  cls: "bg-slate-100 text-slate-600" };
+}
+
+function FitDot({ value, title }: { value: number; title: string }) {
+  const color = value >= 70 ? "bg-emerald-400" : value >= 40 ? "bg-amber-400" : "bg-red-400";
+  return <span title={`${title}: ${Math.round(value)}`} className={`inline-block h-2 w-2 rounded-full ${color}`} />;
+}
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -345,10 +392,10 @@ export default function ProjectsPage() {
     []
   );
 
-  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
+  const filterGroups = useFilterGroups("projects/filters");
   const [filters, setFilters] = useState<CurrentFilters>(initial.filters);
-  const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const { currentFilters, drawerOpen, openDrawer, closeDrawer, onReset, onChangeFilter } = useFilterDrawer(filters);
+  const { activeClient, activate } = useActiveClient();
   const [columnsOpen, setColumnsOpen] = useState(false);
 
   const [columns, setColumns] = useState<ProjectColumnDef[]>([]);
@@ -363,6 +410,7 @@ export default function ProjectsPage() {
   const [polygon, setPolygon] = useState<string | null>(initial.polygon ?? null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savingToClient, setSavingToClient] = useState(false);
   const [editingCell, setEditingCell] = useState<{ projectId: number; field: string } | null>(null);
   const [editValue, setEditValue] = useState<string | boolean>("");
   const [linkCopied, setLinkCopied] = useState(false);
@@ -452,13 +500,6 @@ export default function ProjectsPage() {
     [filterGroups]
   );
 
-  // Fetch filter metadata
-  useEffect(() => {
-    fetch(`${API_BASE}/projects/filters`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: FiltersResponse) => setFilterGroups(data?.groups ?? []))
-      .catch(() => setFilterGroups([]));
-  }, []);
 
   // Fetch column definitions
   useEffect(() => {
@@ -475,12 +516,15 @@ export default function ProjectsPage() {
     if (columnsConfig !== null) return;
     if (!columns || columns.length === 0) return;
 
-    const defaults: ProjectColumnConfig[] = columns.map((col, idx) => ({
-      key: col.key,
-      label: col.label,
-      // first N columns visible by default
-      visible: idx < DEFAULT_VISIBLE_COLUMNS,
-    }));
+    // Build defaults with visible columns first (in DEFAULT_VISIBLE_KEYS order), then hidden columns.
+    const byKey = new Map(columns.map((c) => [c.key, c]));
+    const visibleDefaults: ProjectColumnConfig[] = DEFAULT_VISIBLE_KEYS
+      .filter((k) => byKey.has(k))
+      .map((k) => ({ key: k, label: byKey.get(k)!.label, visible: true }));
+    const hiddenDefaults: ProjectColumnConfig[] = columns
+      .filter((c) => !DEFAULT_VISIBLE_KEYS_SET.has(c.key))
+      .map((c) => ({ key: c.key, label: c.label, visible: false }));
+    const defaults: ProjectColumnConfig[] = [...visibleDefaults, ...hiddenDefaults];
 
     if (typeof window === "undefined") {
       setColumnsConfig(defaults);
@@ -555,6 +599,7 @@ export default function ProjectsPage() {
 
   // Fetch projects list (paginated, server-side sort, with filters)
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setError(null);
     let qs = buildUnitsQuery(
@@ -573,7 +618,7 @@ export default function ProjectsPage() {
         qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
       }
     }
-    fetch(`${API_BASE}/projects?${qs}`)
+    fetch(`${API_BASE}/projects?${qs}`, { signal: controller.signal })
       .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
       .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
         const rows: ProjectItem[] = Array.isArray(json)
@@ -584,8 +629,9 @@ export default function ProjectsPage() {
         setProjects(rows);
         setTotal(totalValue);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
+      .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
       .finally(() => setLoading(false));
+    return () => controller.abort();
   }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon, refetchTrigger]);
 
   const visibleColumns = useMemo(() => {
@@ -638,13 +684,6 @@ export default function ProjectsPage() {
     []
   );
 
-  const openDrawer = useCallback(() => {
-    setCurrentFilters({ ...filters });
-    setDrawerOpen(true);
-  }, [filters]);
-
-  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
-
   const onApply = useCallback(() => {
     setFilters(currentFilters);
     syncToUrl(currentFilters, limit, 0, sortBy, sortDir, polygon);
@@ -655,29 +694,55 @@ export default function ProjectsPage() {
   const applyFilters = useCallback(
     (next: CurrentFilters) => {
       setFilters(next);
-      setCurrentFilters(next);
       setOffset(0);
       syncToUrl(next, limit, 0, sortBy, sortDir, polygon);
     },
     [limit, sortBy, sortDir, polygon, syncToUrl]
   );
 
-  const onReset = useCallback(() => setCurrentFilters({}), []);
+  const isClientOverridden =
+    activeClient != null && !filtersEqual(filters, activeClient.derivedFilters);
+
+  const resetToClient = useCallback(() => {
+    if (!activeClient) return;
+    setFilters(activeClient.derivedFilters);
+    setOffset(0);
+    syncToUrl(activeClient.derivedFilters, limit, 0, sortBy, sortDir, polygon);
+  }, [activeClient, limit, sortBy, sortDir, polygon, syncToUrl]);
+
+  const handleSaveToClient = useCallback(async () => {
+    if (!activeClient) return;
+    setSavingToClient(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const patch = filtersToProfilePatch(filters);
+      await fetch(`${API_BASE}/clients/${activeClient.clientId}/profile`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(patch),
+      }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+      activate({ ...activeClient, derivedFilters: { ...filters } });
+      fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => {});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uložení se nezdařilo");
+    } finally {
+      setSavingToClient(false);
+    }
+  }, [activeClient, filters, activate]);
 
   const onResetAll = useCallback(() => {
     setFilters({});
-    setCurrentFilters({});
+    onReset();
     syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer]);
-
-  const onChangeFilter = useCallback(
-    (key: string, value: number | number[] | string[] | boolean | undefined) => {
-      setCurrentFilters((prev) => ({ ...prev, [key]: value }));
-    },
-    []
-  );
+  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer, onReset]);
 
   const setPage = useCallback(
     (newOffset: number) => {
@@ -716,6 +781,43 @@ export default function ProjectsPage() {
   const showFrom = total === 0 ? 0 : offset + 1;
   const showTo = total === 0 ? 0 : Math.min(offset + safeLimit, total);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const [recs, setRecs] = useState<ProjectRecItem[]>([]);
+  const [recsLoading, setRecsLoading] = useState(false);
+  const [recsError, setRecsError] = useState<string | null>(null);
+  const [recomputingRecs, setRecomputingRecs] = useState(false);
+
+  const projectRecGroups = useMemo((): ProjectRecGroup[] => {
+    const map = new Map<number, ProjectRecItem[]>();
+    for (const r of recs) {
+      if (r.project_id == null) continue;
+      const existing = map.get(r.project_id);
+      if (existing) existing.push(r);
+      else map.set(r.project_id, [r]);
+    }
+    const avg = (arr: number[]) => arr.reduce((a, b) => a + b, 0) / arr.length;
+    const groups: ProjectRecGroup[] = [];
+    for (const [pid, items] of map.entries()) {
+      const prices = items.map((r) => r.price_czk).filter((v): v is number => v != null);
+      groups.push({
+        project_id: pid,
+        project_name: items[0].project_name ?? String(pid),
+        unit_count: items.length,
+        pinned_count: items.filter((r) => r.pinned_by_broker).length,
+        best_score: Math.max(...items.map((r) => r.score)),
+        avg_score: avg(items.map((r) => r.score)),
+        price_min: prices.length > 0 ? Math.min(...prices) : null,
+        avg_budget_fit: avg(items.map((r) => r.budget_fit)),
+        avg_walkability_fit: avg(items.map((r) => r.walkability_fit)),
+        avg_location_fit: avg(items.map((r) => r.location_fit)),
+        avg_layout_fit: avg(items.map((r) => r.layout_fit)),
+        avg_area_fit: avg(items.map((r) => r.area_fit)),
+        avg_outdoor_fit: avg(items.map((r) => r.outdoor_fit)),
+      });
+    }
+    groups.sort((a, b) => b.best_score - a.best_score);
+    return groups;
+  }, [recs]);
 
   const handleRowClick = useCallback(
     (e: React.MouseEvent<HTMLTableRowElement>, projectId: number) => {
@@ -764,12 +866,15 @@ export default function ProjectsPage() {
     []
   );
 
-  const aliasByKey = useMemo(() => flattenFilterSpecsByKey(filterGroups), [filterGroups]);
 
   const [recomputingLocationMetrics, setRecomputingLocationMetrics] = useState(false);
   const [recomputingWalkability, setRecomputingWalkability] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
+
+  const [viewMode, setViewMode] = useState<"recommendations" | "manual">(
+    activeClient ? "recommendations" : "manual"
+  );
 
   // Refresh personalized scores when mode, prefs or visible projects change
   useEffect(() => {
@@ -814,22 +919,96 @@ export default function ProjectsPage() {
     return () => document.removeEventListener("mousedown", close);
   }, []);
 
+  useEffect(() => {
+    if (viewMode !== "recommendations" || !activeClient) return;
+    let cancelled = false;
+    setRecsLoading(true);
+    setRecsError(null);
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+      .then((data) => { if (!cancelled) setRecs(Array.isArray(data) ? data : []); })
+      .catch((e) => { if (!cancelled) setRecsError(e instanceof Error ? e.message : "Nepodařilo se načíst doporučení"); })
+      .finally(() => { if (!cancelled) setRecsLoading(false); });
+    return () => { cancelled = true; };
+  }, [viewMode, activeClient?.clientId]);
+
+  const handleRecomputeRecs = useCallback(async () => {
+    if (!activeClient || recomputingRecs) return;
+    const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+    const headers: HeadersInit = token ? { Authorization: `Bearer ${token}` } : {};
+    setRecomputingRecs(true);
+    setRecsError(null);
+    try {
+      const res = await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, { method: "POST", headers });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRecsLoading(true);
+      const r2 = await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations`, { headers });
+      if (r2.ok) setRecs(await r2.json().then((d) => (Array.isArray(d) ? d : [])));
+    } catch (e) {
+      setRecsError(e instanceof Error ? e.message : "Přepočet selhal");
+    } finally {
+      setRecomputingRecs(false);
+      setRecsLoading(false);
+    }
+  }, [activeClient, recomputingRecs]);
+
   return (
     <div>
       <div className="flex flex-col gap-5 pt-4 pb-10">
-        <div className="flex items-baseline justify-between gap-4 px-1">
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Projekty</h2>
-          {total > 0 && <span className="text-sm text-slate-400">{total} záznamů</span>}
-        </div>
-        <SummaryBar
-          total={summary.total}
-          averagePricePerM2={summary.averagePricePerM2}
-          averagePrice={summary.averagePrice}
-          availableCount={summary.availableCount}
-          averageLocalDiff={null}
-          totalLabel="Celkem projektů"
-        />
-        <div className="glass-header flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
+        {total > 0 && <div className="flex justify-end px-1"><span className="text-sm text-slate-400">{total} záznamů</span></div>}
+        {viewMode === "recommendations" && activeClient ? (
+          <div className="grid w-full gap-3 md:grid-cols-2 lg:grid-cols-4">
+            <div className="min-w-0 glass-card px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Projekty s doporučením</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{projectRecGroups.length}</p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-violet-500/10 via-violet-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Doporučených jednotek</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{recs.length}</p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-amber-500/10 via-amber-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Ve výběru</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">{recs.filter((r) => r.pinned_by_broker).length}</p>
+            </div>
+            <div className="min-w-0 glass-card bg-gradient-to-br from-emerald-500/10 via-emerald-500/5 to-white/90 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Nejlepší skóre</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {projectRecGroups.length > 0 ? Math.round(projectRecGroups[0].best_score) : "—"}
+              </p>
+            </div>
+          </div>
+        ) : (
+          <SummaryBar
+            total={summary.total}
+            averagePricePerM2={summary.averagePricePerM2}
+            averagePrice={summary.averagePrice}
+            availableCount={summary.availableCount}
+            averageLocalDiff={null}
+            totalLabel="Celkem projektů"
+          />
+        )}
+        <div className="glass-header relative z-20 flex flex-wrap items-center gap-2 rounded-2xl px-4 py-3">
+          {activeClient && (
+            <div className="flex items-center rounded-lg border border-slate-200 bg-white/70 p-0.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode("recommendations")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${viewMode === "recommendations" ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                Doporučení
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("manual")}
+                className={`rounded-md px-3 py-1 text-xs font-medium transition-colors ${viewMode === "manual" ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700"}`}
+              >
+                Ruční hledání
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={openDrawer}
@@ -842,9 +1021,36 @@ export default function ProjectsPage() {
           >
             Filtry
             {countActiveFilters(filters) > 0 && (
-              <span className="ml-1 rounded bg-gray-200 px-1.5 text-xs">{countActiveFilters(filters)}</span>
+              <span className={`ml-1 rounded px-1.5 text-xs font-semibold ${isClientOverridden ? "bg-amber-200 text-amber-800" : "bg-gray-200"}`}>
+                {countActiveFilters(filters)}
+              </span>
+            )}
+            {isClientOverridden && countActiveFilters(filters) === 0 && (
+              <span className="ml-1 inline-block h-2 w-2 rounded-full bg-amber-500" />
             )}
           </button>
+          {isClientOverridden && (
+            <button
+              type="button"
+              onClick={resetToClient}
+              className="glass-pill border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 shrink-0"
+              title="Obnovit filtry z profilu klienta"
+            >
+              Zpět na klienta
+            </button>
+          )}
+          {isClientOverridden && (
+            <button
+              type="button"
+              onClick={handleSaveToClient}
+              disabled={savingToClient}
+              className="glass-pill border border-amber-400 bg-amber-400 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-500 shrink-0 disabled:opacity-60"
+              title="Uložit aktuální filtry jako nový profil klienta"
+            >
+              {savingToClient ? "Ukládám…" : "Uložit změny do klienta"}
+            </button>
+          )}
+          {viewMode === "manual" && (
           <button
             type="button"
             onClick={() => setWalkPrefsOpen(true)}
@@ -852,7 +1058,8 @@ export default function ProjectsPage() {
           >
             Preference lokality
           </button>
-          {personalizedModeEnabled && (
+          )}
+          {viewMode === "manual" && personalizedModeEnabled && (
             <div className="ml-2 flex flex-wrap items-center gap-1">
               <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">
                 Dle preferencí klienta
@@ -963,104 +1170,111 @@ export default function ProjectsPage() {
             )}
           </div>
         </div>
-        {countActiveFilters(filters) > 0 && (
-          <div className="flex flex-wrap gap-1.5 px-1">
-            {(() => {
-              type FilterBadge = { id: string; label: string; clearKeys: string[] };
-              const badges: FilterBadge[] = [];
-              const rangeBases = new Set<string>();
-              for (const [k, v] of Object.entries(filters)) {
-                if (v === undefined) continue;
-                if (k.endsWith("_min") || k.endsWith("_max")) {
-                  rangeBases.add(k.replace(/_(min|max)$/, ""));
-                  continue;
-                }
-                const spec = aliasByKey.get(k);
-                const label = spec?.alias || k;
-                if (Array.isArray(v) && v.length > 0) {
-                  const formattedValues = v.map((raw) => {
-                    const str = String(raw);
-                    if (k === "layout") {
-                      const f = formatLayout(str);
-                      return f !== "—" ? f : str;
-                    }
-                    return FILTER_ENUM_LABELS[k]?.[str] ?? str;
-                  });
-                  badges.push({
-                    id: `${k}:${formattedValues.join(",")}`,
-                    label: `${label}: ${formattedValues.join(", ")}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "boolean") {
-                  badges.push({
-                    id: `${k}:${v ? "1" : "0"}`,
-                    label: `${label}: ${v ? "Ano" : "Ne"}`,
-                    clearKeys: [k],
-                  });
-                } else if (typeof v === "number" && !Number.isNaN(v)) {
-                  badges.push({
-                    id: `${k}:${v}`,
-                    label: `${label}: ${v}`,
-                    clearKeys: [k],
-                  });
-                }
-              }
-              const percentRangeBases = new Set(["payment_contract", "payment_construction", "payment_occupancy"]);
-              for (const base of rangeBases) {
-                const min = filters[`${base}_min`] as number | undefined;
-                const max = filters[`${base}_max`] as number | undefined;
-                if (
-                  (min === undefined || Number.isNaN(min as number)) &&
-                  (max === undefined || Number.isNaN(max as number))
-                ) {
-                  continue;
-                }
-                const spec = aliasByKey.get(base);
-                const label = spec?.alias || base;
-                const asPercent = percentRangeBases.has(base);
-                const dispMin = min != null && !Number.isNaN(min) ? (asPercent ? min * 100 : min) : null;
-                const dispMax = max != null && !Number.isNaN(max) ? (asPercent ? max * 100 : max) : null;
-                const suf = asPercent ? " %" : "";
-                let value = "";
-                if (dispMin != null) {
-                  value += `od ${dispMin}${suf}`;
-                }
-                if (dispMax != null) {
-                  value += value ? ` do ${dispMax}${suf}` : `do ${dispMax}${suf}`;
-                }
-                badges.push({
-                  id: `${base}:${value}`,
-                  label: `${label}: ${value}`,
-                  clearKeys: [`${base}_min`, `${base}_max`],
-                });
-              }
-              return badges.map((b) => (
-                <button
-                  key={b.id}
-                  type="button"
-                  onClick={() => {
-                    const next: CurrentFilters = { ...filters };
-                    for (const ck of b.clearKeys) {
-                      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
-                      delete (next as Record<string, unknown>)[ck];
-                    }
-                    applyFilters(next);
-                  }}
-                  className="group inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white/80 px-2.5 py-1 text-xs font-medium text-slate-700 shadow-sm hover:border-slate-300 hover:bg-white"
-                >
-                  <span>{b.label}</span>
-                  <span className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-200 text-[9px] text-slate-600 group-hover:bg-slate-400 group-hover:text-white">
-                    ×
-                  </span>
-                </button>
-              ));
-            })()}
-          </div>
-        )}
+        <ClientModeBar isOverridden={isClientOverridden} />
+        <FilterChips
+          filters={filters}
+          filterGroups={filterGroups}
+          onRemove={applyFilters}
+        />
         {error && (
           <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</div>
         )}
-        <div className="data-grid-wrapper">
+
+        {activeClient && viewMode === "recommendations" && (
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap items-center gap-2 px-1">
+              <button
+                type="button"
+                onClick={handleRecomputeRecs}
+                disabled={recomputingRecs || recsLoading}
+                className="glass-pill border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-white/90 shrink-0 disabled:opacity-50"
+                title="Přepočítat doporučení pro tohoto klienta"
+              >
+                {recomputingRecs ? "Přepočítávám…" : "↺ Přepočítat doporučení"}
+              </button>
+            </div>
+            {recsError && (
+              <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{recsError}</div>
+            )}
+            {recsLoading && (
+              <div className="px-2 py-6 text-center text-sm text-slate-500">Načítám doporučení…</div>
+            )}
+            {!recsLoading && projectRecGroups.length === 0 && (
+              <div className="rounded-xl border border-slate-200 bg-white px-4 py-8 text-center text-sm text-slate-500">
+                Žádná doporučení. Přepočítejte doporučení nebo upravte profil klienta.
+              </div>
+            )}
+            {!recsLoading && projectRecGroups.length > 0 && (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold">Projekt</th>
+                      <th className="px-3 py-2 text-right font-semibold" title="Počet doporučených jednotek">Jedn.</th>
+                      <th className="px-3 py-2 text-right font-semibold" title="Jednotky ve výběru">★</th>
+                      <th className="px-3 py-2 text-right font-semibold">Nejlepší skóre</th>
+                      <th className="px-3 py-2 text-right font-semibold">Průměrné skóre</th>
+                      <th className="px-3 py-2 text-right font-semibold">Cena od</th>
+                      <th className="px-3 py-2 text-center font-semibold" title="Průměrná shoda: Rozpočet · Poloha · Walkabilita · Dispozice · Plocha · Venkovní plocha">Shoda</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {projectRecGroups.map((g) => {
+                      const sl = scoreLabel(Math.round(g.best_score));
+                      return (
+                        <tr
+                          key={g.project_id}
+                          className="cursor-pointer hover:bg-slate-50"
+                          onClick={() => router.push(`/projects/${g.project_id}`)}
+                        >
+                          <td className="px-3 py-2 font-medium text-slate-900">
+                            <Link
+                              href={`/projects/${g.project_id}`}
+                              className="hover:underline"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              {g.project_name}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-700">{g.unit_count}</td>
+                          <td className="px-3 py-2 text-right">
+                            {g.pinned_count > 0 ? (
+                              <span className="font-semibold text-amber-500">{g.pinned_count} ★</span>
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="font-semibold text-slate-900">{Math.round(g.best_score)}</span>
+                              <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-semibold leading-none ${sl.cls}`}>{sl.label}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-right text-slate-600">{Math.round(g.avg_score)}</td>
+                          <td className="px-3 py-2 text-right text-slate-700">
+                            {g.price_min != null ? formatCurrencyCzk(g.price_min) : "—"}
+                          </td>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center justify-center gap-1">
+                              <FitDot value={g.avg_budget_fit} title="Rozpočet" />
+                              <FitDot value={g.avg_location_fit} title="Poloha" />
+                              <FitDot value={g.avg_walkability_fit} title="Walkabilita" />
+                              <FitDot value={g.avg_layout_fit} title="Dispozice" />
+                              <FitDot value={g.avg_area_fit} title="Plocha" />
+                              <FitDot value={g.avg_outdoor_fit} title="Venkovní plocha" />
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="data-grid-wrapper" style={{ display: viewMode === "manual" ? undefined : "none" }}>
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-3 py-2 text-xs sm:text-sm">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="flex items-center gap-1.5 text-xs sm:text-sm">
@@ -1157,14 +1371,15 @@ export default function ProjectsPage() {
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {loading && projects.length === 0 ? (
-                  <tr>
-                    <td
-                      colSpan={visibleColumns.length || 1}
-                      className="px-3 py-8 text-center text-xs sm:text-sm text-slate-600"
-                    >
-                      Načítání…
-                    </td>
-                  </tr>
+                  Array.from({ length: 8 }).map((_, i) => (
+                    <tr key={i} className="animate-pulse">
+                      {visibleColumns.map((col) => (
+                        <td key={col.key} className="px-3 py-2">
+                          <div className="h-4 rounded bg-slate-200" />
+                        </td>
+                      ))}
+                    </tr>
+                  ))
                 ) : projects.length === 0 ? (
                   <tr>
                     <td

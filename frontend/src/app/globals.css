@@ -83,7 +83,7 @@ body {
   }
 
   .data-grid-wrapper {
-    @apply flex min-h-0 flex-1 flex-col;
+    @apply flex min-h-0 flex-1 flex-col overflow-hidden;
     border-radius: var(--glass-radius-lg);
     border: 1px solid rgba(148, 163, 184, 0.45);
     background: rgba(248, 250, 252, 0.9);

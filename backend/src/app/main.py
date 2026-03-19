@@ -32,6 +32,7 @@ from .models import (
     ClientProfile,
     ClientRecommendation,
     ClientUnitMatch,
+    ClientShareLink,
     UnitEvent,
 )
 from .overrides import (
@@ -309,21 +310,29 @@ class ClientProfileBody(BaseModel):
 
 
 class ClientRecommendationItem(BaseModel):
+    rec_id: int
+    pinned_by_broker: bool
     unit_external_id: str | None = None
     project_id: int | None = None
     project_name: str | None = None
     layout: str | None = None
     floor_area_m2: float | None = None
+    exterior_area_m2: float | None = None
     price_czk: int | None = None
     price_per_m2_czk: int | None = None
     floor: int | None = None
     layout_label: str | None = None
+    district: str | None = None
     score: float
     budget_fit: float
     walkability_fit: float
     location_fit: float
     layout_fit: float
     area_fit: float
+    outdoor_fit: float = 50.0
+    distance_to_tram_stop_m: float | None = None
+    distance_to_metro_station_m: float | None = None
+    distance_to_bus_stop_m: float | None = None
     reason: dict[str, Any] | None = None
 
 
@@ -768,6 +777,157 @@ def upsert_client_profile(
     )
 
 
+def _wizard_preferences_adjustment(
+    unit: Unit,
+    project: Project,
+    profile: ClientProfile | None,
+) -> float:
+    """Return a bonus/penalty adjustment (points, capped externally to ±20/+15)
+    based on wizard fields that are not part of the main weighted scoring:
+    noise sensitivity, floor preference, ground_floor_sensitive, orientation.
+
+    Convention:
+      "prefer" → mild signal  (±3–5 pts)
+      "must"   → strong signal (±8–12 pts)
+    Data absent for a given project/unit → 0 (neutral, no penalty for missing data).
+    """
+    if not profile or not profile.filter_json:
+        return 0.0
+
+    wizard = (profile.filter_json or {}).get("wizard") or {}
+    wizard_noise = wizard.get("noise") or {}
+    wizard_outdoor = wizard.get("outdoor") or {}
+
+    adj = 0.0
+
+    # ── Noise sensitivity ─────────────────────────────────────────────────────
+    # quiet_area: client prefers a quiet neighbourhood.
+    # noise_label values in DB: 'Nízký' (quiet), 'Střední' (medium),
+    #                           'Vyšší' / 'Vysoký' (noisy)
+    qa_pref = wizard_noise.get("quiet_area")
+    if qa_pref in ("prefer", "must"):
+        nl = project.noise_label
+        if nl is not None:
+            nl_low = nl.lower()
+            if "nízk" in nl_low:  # 'Nízký' → quiet ✓
+                adj += 5.0 if qa_pref == "must" else 4.0
+            elif "vyšší" in nl_low or "vysoký" in nl_low or "vysoká" in nl_low:
+                adj += -12.0 if qa_pref == "must" else -5.0
+            # 'Střední' → neutral, no adjustment
+
+    # main_road sensitivity: distance_to_primary_road_m (metres)
+    mr_pref = wizard_noise.get("main_road")
+    if mr_pref in ("prefer", "must"):
+        dist = project.distance_to_primary_road_m
+        if dist is not None:
+            if dist < 150.0:
+                adj += -12.0 if mr_pref == "must" else -5.0
+            elif dist < 400.0:
+                adj += -6.0 if mr_pref == "must" else -2.0
+            else:  # comfortably far
+                adj += 4.0 if mr_pref == "must" else 3.0
+
+    # tram sensitivity: distance_to_tram_tracks_m
+    tram_pref = wizard_noise.get("tram")
+    if tram_pref in ("prefer", "must"):
+        dist = project.distance_to_tram_tracks_m
+        if dist is not None:
+            if dist < 100.0:
+                adj += -10.0 if tram_pref == "must" else -4.0
+            elif dist < 300.0:
+                adj += -5.0 if tram_pref == "must" else -2.0
+            else:
+                adj += 3.0 if tram_pref == "must" else 2.0
+
+    # railway sensitivity: distance_to_railway_m
+    rail_pref = wizard_noise.get("railway")
+    if rail_pref in ("prefer", "must"):
+        dist = project.distance_to_railway_m
+        if dist is not None:
+            if dist < 300.0:
+                adj += -10.0 if rail_pref == "must" else -4.0
+            elif dist < 700.0:
+                adj += -5.0 if rail_pref == "must" else -2.0
+            else:
+                adj += 3.0 if rail_pref == "must" else 2.0
+
+    # airport sensitivity: distance_to_airport_m
+    airport_pref = wizard_noise.get("airport")
+    if airport_pref in ("prefer", "must"):
+        dist = project.distance_to_airport_m
+        if dist is not None:
+            if dist < 5_000.0:
+                adj += -10.0 if airport_pref == "must" else -4.0
+            elif dist < 10_000.0:
+                adj += -4.0 if airport_pref == "must" else -2.0
+            else:
+                adj += 3.0 if airport_pref == "must" else 2.0
+
+    # ── Floor preference ──────────────────────────────────────────────────────
+    # Czech floor convention in DB: 0 = přízemí (ground), 1 = 1st floor above ground, etc.
+    unit_floor = unit.floor  # int | None
+
+    # ground_floor_sensitive: client dislikes being on ground floor (floor <= 0)
+    gfs = wizard_outdoor.get("ground_floor_sensitive")
+    if gfs in ("prefer", "must") and unit_floor is not None:
+        if unit_floor <= 0:
+            adj += -15.0 if gfs == "must" else -6.0
+
+    # preferred_floor: "ground" | "low" | "middle" | "high" | "ignore"
+    pf = wizard_outdoor.get("preferred_floor")
+    if pf and pf != "ignore" and unit_floor is not None:
+        floor_match = (
+            (pf == "ground" and unit_floor <= 0)
+            or (pf == "low" and 1 <= unit_floor <= 3)
+            or (pf == "middle" and 4 <= unit_floor <= 7)
+            or (pf == "high" and unit_floor >= 8)
+        )
+        if floor_match:
+            adj += 5.0
+        elif pf == "ground" and unit_floor > 3:
+            adj += -4.0  # clearly not ground-level
+        elif pf == "high" and unit_floor <= 1:
+            adj += -4.0  # clearly not high
+
+    # ── Orientation preference ────────────────────────────────────────────────
+    # unit.orientation format: "SW", "N,E", "NE,W", "N,S,E,W" etc.
+    # Parse by scanning for compass letters N/S/E/W (commas and spaces are separators).
+    orient_prefs = wizard_outdoor.get("orientation") or {}
+    if orient_prefs and unit.orientation:
+        unit_dirs: set[str] = {ch for ch in unit.orientation.upper() if ch in "NSEW"}
+        dir_map = {"south": "S", "north": "N", "east": "E", "west": "W"}
+        for direction, letter in dir_map.items():
+            pref = orient_prefs.get(direction)
+            if pref not in ("prefer", "must"):
+                continue
+            if letter in unit_dirs:
+                adj += 5.0 if pref == "must" else 3.0
+            else:
+                adj += -8.0 if pref == "must" else -3.0
+
+    # ── Renovation / new-build preference ──────────────────────────────────
+    # renovation_preference values:
+    #   "any"               → no adjustment
+    #   "prefer_new"        → mild bonus for new build, mild penalty for renovation
+    #   "only_new"          → handled by hard filter in frontend, no scoring needed
+    #   "prefer_renovation" → mild bonus for renovation, mild penalty for new build
+    #   "only_renovation"   → handled by hard filter in frontend, no scoring needed
+    #
+    # Data field: unit.renovation (bool | None)
+    #   True  = renovation/reconstruction
+    #   False = new build
+    #   None  = unknown → neutral (no adjustment)
+    reno_pref = wizard.get("renovation_preference")
+    if reno_pref in ("prefer_new", "prefer_renovation") and unit.renovation is not None:
+        is_new_build = unit.renovation is False
+        if reno_pref == "prefer_new":
+            adj += 4.0 if is_new_build else -3.0
+        else:  # prefer_renovation
+            adj += 4.0 if unit.renovation else -3.0
+
+    return adj
+
+
 def _compute_unit_match_score(
     unit: Unit,
     project: Project,
@@ -825,16 +985,65 @@ def _compute_unit_match_score(
         layout_fit = 100.0 if unit_bucket in pref_values else 50.0
 
     # Area fit
-    area_fit = 0.0
+    # Neutral default: 50 (no opinion expressed), not 100.
+    area_fit = 50.0
     if profile and area is not None:
-        lo = profile.area_min or 0.0
-        hi = profile.area_max or area
-        if lo <= area <= hi:
-            area_fit = 100.0
+        has_lo = profile.area_min is not None
+        has_hi = profile.area_max is not None
+        if has_lo or has_hi:
+            # Explicit hard bounds set — use them as before.
+            lo = profile.area_min or 0.0
+            hi = profile.area_max or area
+            if lo <= area <= hi:
+                area_fit = 100.0
+            else:
+                center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
+                diff_ratio = abs(area - center) / max(center, 1.0)
+                area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
         else:
-            center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
-            diff_ratio = abs(area - center) / max(center, 1.0)
-            area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+            # No explicit bounds — fall back to ideal_area from wizard if present.
+            wizard_budget = (
+                ((profile.filter_json or {}).get("wizard") or {}).get("budget") or {}
+                if profile.filter_json
+                else {}
+            )
+            ideal_area = wizard_budget.get("ideal_area")
+            if ideal_area is not None:
+                try:
+                    ideal_area = float(ideal_area)
+                    # ±30 % soft window around ideal; same decay formula as before.
+                    center = ideal_area
+                    diff_ratio = abs(area - center) / max(center, 1.0)
+                    area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+                except (TypeError, ValueError):
+                    pass  # malformed value → keep neutral 50
+
+    # Outdoor fit
+    outdoor_fit = 50.0  # neutral when no preference
+    if profile and profile.filter_json:
+        wizard_outdoor = (
+            ((profile.filter_json or {}).get("wizard") or {}).get("outdoor") or {}
+        )
+        min_outdoor = wizard_outdoor.get("min_outdoor_area_m2")
+        if min_outdoor is not None:
+            try:
+                min_outdoor = float(min_outdoor)
+                if unit.exterior_area_m2 is not None:
+                    unit_outdoor = float(unit.exterior_area_m2)
+                else:
+                    unit_outdoor = (
+                        (unit.balcony_area_m2 or 0.0)
+                        + (unit.terrace_area_m2 or 0.0)
+                        + (unit.garden_area_m2 or 0.0)
+                    )
+                if min_outdoor <= 0:
+                    outdoor_fit = 100.0
+                elif unit_outdoor >= min_outdoor:
+                    outdoor_fit = 100.0
+                else:
+                    outdoor_fit = max(0.0, 100.0 * unit_outdoor / min_outdoor)
+            except (TypeError, ValueError):
+                pass  # malformed value → keep neutral 50
 
     # Commute fit – based on client commute_points_json.
     commute_fit = 0.0
@@ -910,6 +1119,7 @@ def _compute_unit_match_score(
                 "location_fit": loc_fit,
                 "layout_fit": layout_fit,
                 "area_fit": area_fit,
+                "outdoor_fit": outdoor_fit,
                 "commute_fit": 0.0,
                 "commute_details": commute_details,
             }
@@ -917,23 +1127,33 @@ def _compute_unit_match_score(
             # Use the worst (min) point score so jeden špatný dojezd nezanikne v průměru.
             commute_fit = min(per_point_scores)
 
-    # Aggregate score (weights) – přidán commute_fit
+    # Aggregate score (weights)
     total = (
         0.30 * budget_fit
         + 0.20 * walk_fit
         + 0.20 * loc_fit
         + 0.10 * layout_fit
         + 0.10 * area_fit
-        + 0.10 * commute_fit
+        + 0.05 * outdoor_fit
+        + 0.05 * commute_fit
     )
+
+    # Wizard preferences adjustment: noise sensitivity, floor, orientation.
+    # Capped to ±20 so no single preference can dominate the final score.
+    pref_adj = _wizard_preferences_adjustment(unit, project, profile)
+    pref_adj = max(-20.0, min(15.0, pref_adj))
+    total = max(0.0, min(100.0, total + pref_adj))
+
     return total, {
         "budget_fit": budget_fit,
         "walkability_fit": walk_fit,
         "location_fit": loc_fit,
         "layout_fit": layout_fit,
         "area_fit": area_fit,
+        "outdoor_fit": outdoor_fit,
         "commute_fit": commute_fit,
         "commute_details": commute_details,
+        "pref_adj": pref_adj,
     }
 
 
@@ -964,7 +1184,7 @@ def recompute_client_recommendations(
         if profile.area_max is not None:
             q = q.where(Unit.floor_area_m2 <= profile.area_max)
 
-    rows = db.execute(q.limit(500)).all()
+    rows = db.execute(q.order_by(Unit.id).limit(500)).all()
 
     # If client has explicit layout preferences, compute preferred buckets once.
     pref_layout_buckets: list[str] = []
@@ -1004,15 +1224,28 @@ def recompute_client_recommendations(
     scored.sort(key=lambda t: t[0], reverse=True)
     top = scored[:100]
 
-    # Delete existing non-pinned suggestions
+    # Delete existing non-pinned, non-hidden suggestions
     db.execute(
         sa.delete(ClientRecommendation).where(
             ClientRecommendation.client_id == client.id,
             ClientRecommendation.pinned_by_broker.is_(False),
+            ClientRecommendation.hidden_by_broker.is_(False),
         )
     )
 
+    # Collect unit_ids the broker has already hidden — don't re-insert them.
+    hidden_unit_ids: set[int] = set(
+        db.execute(
+            select(ClientRecommendation.unit_id).where(
+                ClientRecommendation.client_id == client.id,
+                ClientRecommendation.hidden_by_broker.is_(True),
+            )
+        ).scalars().all()
+    )
+
     for score, unit, project, parts in top:
+        if unit.id in hidden_unit_ids:
+            continue
         rec = ClientRecommendation(
             client_id=client.id,
             unit_id=unit.id,
@@ -1200,12 +1433,12 @@ def market_fit_analysis(
 
     # Build blockers list with percentages
     labels = {
-        "budget": "Budget",
-        "area": "Area",
-        "layout": "Layout",
-        "location": "Location (polygon)",
-        "commute": "Commute",
-        "standards": "Standards",
+        "budget": "Rozpočet",
+        "area": "Plocha",
+        "layout": "Dispozice",
+        "location": "Lokalita (polygon)",
+        "commute": "Dojíždění",
+        "standards": "Standardy",
     }
     top_blockers: list[MarketFitBlocker] = []
     for key, count in blocked_by.items():
@@ -1252,18 +1485,18 @@ def market_fit_analysis(
     # Budget relaxations
     if profile.budget_max:
         add_suggestion(
-            "Increase budget by 5%",
+            "Navýšit budget o 5 %",
             lambda p: setattr(p, "budget_max", int(profile.budget_max * 1.05)),
         )
         add_suggestion(
-            "Increase budget by 10%",
+            "Navýšit budget o 10 %",
             lambda p: setattr(p, "budget_max", int(profile.budget_max * 1.10)),
         )
 
     # Area relaxation
     if profile.area_min:
         add_suggestion(
-            "Decrease minimum area by 5%",
+            "Snížit min. plochu o 5 %",
             lambda p: setattr(p, "area_min", float(profile.area_min) * 0.95),
         )
 
@@ -1276,7 +1509,7 @@ def market_fit_analysis(
                 vals.append("2kk")
                 p.layouts = {"values": vals}
 
-            add_suggestion("Allow also 2kk", _add_2kk)
+            add_suggestion("Zahrnout i dispozici 2kk", _add_2kk)
 
     # Commute relaxation – +10 minutes on all points
     if profile.commute_points_json:
@@ -1291,7 +1524,7 @@ def market_fit_analysis(
                         continue
                 p.commute_points_json = {"points": arr}
 
-        add_suggestion("Relax commute by +10 minutes", _relax_commute)
+        add_suggestion("Uvolnit dojíždění o +10 min", _relax_commute)
 
     # Sort suggestions by delta, descending
     suggestions.sort(key=lambda s: s.delta_vs_current, reverse=True)
@@ -1492,25 +1725,186 @@ def list_client_recommendations(
         layout_label = _layout_group(raw_layout) or (raw_layout if raw_layout is not None else None)
         items.append(
             ClientRecommendationItem(
+                rec_id=rec.id,
+                pinned_by_broker=rec.pinned_by_broker,
                 unit_external_id=unit.external_id,
                 project_id=project.id,
                 project_name=project.name,
                 layout=unit.layout,
                 floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+                exterior_area_m2=float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
                 price_czk=unit.price_czk,
                 price_per_m2_czk=unit.price_per_m2_czk,
                 floor=unit.floor,
                 layout_label=layout_label,
+                district=project.district,
                 score=rec.score,
                 budget_fit=float(reason.get("budget_fit", 0.0)),
                 walkability_fit=float(reason.get("walkability_fit", 0.0)),
                 location_fit=float(reason.get("location_fit", 0.0)),
                 layout_fit=float(reason.get("layout_fit", 0.0)),
                 area_fit=float(reason.get("area_fit", 0.0)),
+                outdoor_fit=float(reason.get("outdoor_fit", 50.0)),
+                distance_to_tram_stop_m=project.distance_to_tram_stop_m,
+                distance_to_metro_station_m=project.distance_to_metro_station_m,
+                distance_to_bus_stop_m=project.distance_to_bus_stop_m,
                 reason=reason,
             )
         )
     return items
+
+
+class ManualAddRequest(BaseModel):
+    unit_external_id: str
+
+
+@app.post("/clients/{client_id}/recommendations/manual-add", response_model=ClientRecommendationItem)
+def manual_add_recommendation(
+    client_id: int,
+    body: ManualAddRequest,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientRecommendationItem:
+    client = _get_client_for_broker(db, client_id, broker)
+    unit = db.execute(select(Unit).where(Unit.external_id == body.unit_external_id)).scalar_one_or_none()
+    if not unit:
+        raise HTTPException(status_code=404, detail="Unit not found")
+    project = db.get(Project, unit.project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    # Check if already exists (including hidden ones)
+    existing = db.execute(
+        select(ClientRecommendation).where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.unit_id == unit.id,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        if existing.hidden_by_broker:
+            existing.hidden_by_broker = False
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+        rec = existing
+    else:
+        rec = ClientRecommendation(
+            client_id=client.id,
+            unit_id=unit.id,
+            project_id=project.id,
+            score=0.0,
+            pinned_by_broker=False,
+            hidden_by_broker=False,
+            reason_json={},
+        )
+        db.add(rec)
+        db.commit()
+        db.refresh(rec)
+    raw_layout = str(unit.layout) if unit.layout is not None else None
+    layout_label = _layout_group(raw_layout) or (raw_layout if raw_layout is not None else None)
+    return ClientRecommendationItem(
+        rec_id=rec.id,
+        pinned_by_broker=rec.pinned_by_broker,
+        unit_external_id=unit.external_id,
+        project_id=project.id,
+        project_name=project.name,
+        layout=unit.layout,
+        floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+        exterior_area_m2=float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
+        price_czk=unit.price_czk,
+        price_per_m2_czk=unit.price_per_m2_czk,
+        floor=unit.floor,
+        layout_label=layout_label,
+        district=project.district,
+        score=0.0,
+        budget_fit=0.0,
+        walkability_fit=0.0,
+        location_fit=0.0,
+        layout_fit=0.0,
+        area_fit=0.0,
+        outdoor_fit=50.0,
+        distance_to_tram_stop_m=project.distance_to_tram_stop_m,
+        distance_to_metro_station_m=project.distance_to_metro_station_m,
+        distance_to_bus_stop_m=project.distance_to_bus_stop_m,
+    )
+
+
+@app.patch("/clients/{client_id}/recommendations/{rec_id}/pin", status_code=204)
+def pin_recommendation(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    rec.pinned_by_broker = True
+    db.add(rec)
+    db.commit()
+
+
+@app.delete("/clients/{client_id}/recommendations/{rec_id}/pin", status_code=204)
+def unpin_recommendation(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    rec.pinned_by_broker = False
+    db.add(rec)
+    db.commit()
+
+
+@app.patch("/clients/{client_id}/recommendations/{rec_id}/hide", status_code=204)
+def hide_recommendation(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    rec.hidden_by_broker = True
+    db.add(rec)
+    db.commit()
+
+
+@app.delete("/clients/{client_id}/recommendations/{rec_id}/hide", status_code=204)
+def unhide_recommendation(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    rec.hidden_by_broker = False
+    db.add(rec)
+    db.commit()
+
+
+@app.delete("/clients/{client_id}/recommendations/{rec_id}", status_code=204)
+def delete_recommendation(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    db.delete(rec)
+    db.commit()
 
 
 @app.get("/brokers/match-feed", response_model=dict[int, list[BrokerMatchItem]])
@@ -2745,6 +3139,7 @@ def list_units(
     min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     include_archived: Annotated[bool, Query(description="Include units from fully sold projects older than 6 months")] = False,
+    pending_api: Annotated[bool, Query(description="Return only units that have pending API update proposals")] = False,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
 ) -> UnitsListResponse:
@@ -2829,6 +3224,9 @@ def list_units(
         min_payment_occupancy=min_payment_occupancy,
         max_payment_occupancy=max_payment_occupancy,
     )
+    if pending_api:
+        pending_subq = select(UnitApiPending.unit_id).where(UnitApiPending.unit_id == Unit.id)
+        base = base.where(sa.exists(pending_subq))
     if not include_archived:
         recent_sold_cutoff = date.today() - timedelta(days=183)
         first_seen_cutoff = date.today() - timedelta(days=365 * 2)
@@ -4068,7 +4466,7 @@ def _has_unit_filters(
 def list_projects(
     db: DbSession,
     q: Annotated[str | None, Query(description="Search in name, developer, address")] = None,
-    limit: Annotated[int, Query(ge=1, le=500)] = 100,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     include_archived: Annotated[bool, Query(description="Include fully sold projects older than 6 months")] = False,
     sort_by: Annotated[str, Query(description="Sort column key (catalog or computed)")] = "avg_price_per_m2_czk",
@@ -4870,4 +5268,147 @@ def admin_walkability_refresh_and_recompute(db: DbSession) -> dict[str, Any]:
 def admin_walkability_recompute_all(db: DbSession) -> dict[str, Any]:
     """Recompute walkability for all projects with GPS (uses existing POI data)."""
     return recompute_all_walkability(db)
+
+
+# ── Share-link models ────────────────────────────────────────────────────────
+
+class ShareLinkResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    url: str
+    expires_at: datetime
+
+
+class ShareUnitItem(BaseModel):
+    """Sanitised unit record for client-facing share view. No broker internals."""
+    model_config = ConfigDict(from_attributes=True)
+    project_name: str
+    developer: str | None
+    layout: str | None
+    floor_area_m2: float | None
+    exterior_area_m2: float | None
+    floor: int | None
+    price_czk: int | None
+    price_per_m2_czk: int | None
+    original_price_czk: int | None
+    availability_status: str | None
+    ride_to_center_min: float | None
+    public_transport_to_center_min: float | None
+    gps_latitude: float | None
+    gps_longitude: float | None
+    url: str | None
+
+
+class SharePayload(BaseModel):
+    """Public payload returned by GET /share/{token}."""
+    model_config = ConfigDict(from_attributes=True)
+    client_name: str
+    units: list[ShareUnitItem]
+    expires_at: datetime
+
+
+_SHARE_LINK_TTL_DAYS = 30
+
+
+@app.post("/clients/{client_id}/share-link", response_model=ShareLinkResponse)
+def create_share_link(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ShareLinkResponse:
+    """Create or replace the share link for this client+broker pair."""
+    import secrets as _secrets
+    _get_client_for_broker(db, client_id, broker)
+
+    now = datetime.utcnow().replace(tzinfo=None)
+    expires = now + timedelta(days=_SHARE_LINK_TTL_DAYS)
+    token = _secrets.token_urlsafe(32)
+
+    # Delete any existing link for this client+broker (replace semantics)
+    db.execute(
+        sa.delete(ClientShareLink).where(
+            ClientShareLink.client_id == client_id,
+            ClientShareLink.broker_id == broker.id,
+        )
+    )
+    link = ClientShareLink(
+        client_id=client_id,
+        broker_id=broker.id,
+        token=token,
+        expires_at=expires,
+    )
+    db.add(link)
+    db.commit()
+
+    base_url = "http://localhost:3000"  # Phase 3 will read this from config/env
+    return ShareLinkResponse(url=f"{base_url}/share/{token}", expires_at=expires)
+
+
+@app.get("/share/{token}", response_model=SharePayload)
+def get_share_payload(token: str, db: DbSession) -> SharePayload:
+    """Public endpoint — no broker auth. Validates token and returns sanitised shortlist."""
+    link = db.execute(
+        select(ClientShareLink).where(ClientShareLink.token == token)
+    ).scalar_one_or_none()
+
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    now = datetime.utcnow().replace(tzinfo=None)
+    # expires_at may be tz-aware from DB; strip tz for comparison
+    exp = link.expires_at.replace(tzinfo=None) if link.expires_at.tzinfo else link.expires_at
+    if now > exp:
+        raise HTTPException(status_code=410, detail="Link expired")
+
+    client = db.get(Client, link.client_id)
+    if client is None:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    # Fetch pinned recs with unit+project
+    recs = db.execute(
+        select(ClientRecommendation, Unit, Project)
+        .join(Unit, ClientRecommendation.unit_id == Unit.id)
+        .join(Project, Unit.project_id == Project.id)
+        .where(
+            ClientRecommendation.client_id == link.client_id,
+            ClientRecommendation.pinned_by_broker.is_(True),
+            ClientRecommendation.hidden_by_broker.is_(False),
+        )
+        .order_by(ClientRecommendation.id)
+    ).all()
+
+    units: list[ShareUnitItem] = []
+    for _rec, unit, project in recs:
+        developer = unit.developer or project.developer
+        # Effective GPS: unit-level first, fall back to project
+        lat = float(unit.gps_latitude) if unit.gps_latitude is not None else (
+            float(project.gps_latitude) if project.gps_latitude is not None else None
+        )
+        lng = float(unit.gps_longitude) if unit.gps_longitude is not None else (
+            float(project.gps_longitude) if project.gps_longitude is not None else None
+        )
+        ride = float(unit.ride_to_center_min) if unit.ride_to_center_min is not None else (
+            float(project.ride_to_center_min) if project.ride_to_center_min is not None else None
+        )
+        pt = float(unit.public_transport_to_center_min) if unit.public_transport_to_center_min is not None else (
+            float(project.public_transport_to_center_min) if project.public_transport_to_center_min is not None else None
+        )
+        units.append(ShareUnitItem(
+            project_name=project.name,
+            developer=developer,
+            layout=unit.layout,
+            floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+            exterior_area_m2=float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
+            floor=unit.floor,
+            price_czk=unit.price_czk,
+            price_per_m2_czk=unit.price_per_m2_czk,
+            original_price_czk=int(unit.original_price_czk) if unit.original_price_czk is not None else None,
+            availability_status=unit.availability_status,
+            ride_to_center_min=ride,
+            public_transport_to_center_min=pt,
+            gps_latitude=lat,
+            gps_longitude=lng,
+            url=unit.url,
+        ))
+
+    return SharePayload(client_name=client.name, units=units, expires_at=link.expires_at)
 

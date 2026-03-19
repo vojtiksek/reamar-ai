@@ -39,6 +39,18 @@ export function isPointInPolygon(lat: number, lng: number, polygon: LatLng[]): b
   return inside;
 }
 
+/**
+ * Serialize a LatLng[] polygon to a GeoJSON Polygon string.
+ * - Swaps to GeoJSON coordinate order: [lng, lat]
+ * - Closes the ring automatically (appends first point at end)
+ * - Returns null when pts.length < 3
+ */
+export function polygonToGeoJson(pts: LatLng[]): string | null {
+  if (pts.length < 3) return null;
+  const ring = [...pts, pts[0]].map((p) => [p.lng, p.lat]);
+  return JSON.stringify({ type: "Polygon", coordinates: [ring] });
+}
+
 export function getPolygonBounds(polygon: LatLng[]) {
   if (!polygon || polygon.length === 0) return null;
   let minLat = Infinity;

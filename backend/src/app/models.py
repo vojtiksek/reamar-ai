@@ -433,6 +433,7 @@ class ClientUnitMatch(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
     unit_id: Mapped[int] = mapped_column(ForeignKey("units.id"), nullable=False, index=True)
     score: Mapped[float] = mapped_column(Float, nullable=False)
+    event_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
@@ -614,6 +615,25 @@ class ProjectAggregates(Base):
     )
 
     project: Mapped["Project"] = relationship("Project")
+
+
+class ClientShareLink(Base):
+    __tablename__ = "client_share_links"
+    __table_args__ = (
+        UniqueConstraint("client_id", "broker_id", name="uq_share_link_client_broker"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    client: Mapped["Client"] = relationship()
+    broker: Mapped["Broker"] = relationship()
 
 
 # Indexes

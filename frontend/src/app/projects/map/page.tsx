@@ -1,6 +1,8 @@
 "use client";
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
+import { useFilterGroups } from "@/hooks/useFilterGroups";
+import { useFilterDrawer } from "@/hooks/useFilterDrawer";
 import { API_BASE } from "@/lib/api";
 import {
   buildUnitsQuery,
@@ -8,15 +10,16 @@ import {
   filtersToSearchParams,
   parseFiltersFromSearchParams,
   type CurrentFilters,
-  type FilterGroup,
-  type FiltersResponse,
 } from "@/lib/filters";
-import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, type LatLng } from "@/lib/geo";
+import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, polygonToGeoJson, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { LatLngExpression } from "leaflet";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useActiveClient } from "@/contexts/ActiveClientContext";
+import { filtersEqual, filtersToProfilePatch } from "@/lib/clientFilters";
+import { ClientModeBar } from "@/components/ClientModeBar";
 
 type ProjectMapItem = {
   id: number;
@@ -74,6 +77,29 @@ const POI_CATEGORY_LABELS: Record<string, string> = {
   primary_schools: "ZŠ",
 };
 
+/**
+ * Parse the first polygon ring from a GeoJSON Polygon or MultiPolygon string.
+ * For MultiPolygon, only the first polygon's outer ring is used (Phase 3 MVP limitation).
+ * Returns [] on any parse failure or if the ring has fewer than 3 points.
+ */
+function parseFirstPolygonFromGeoJson(geojson: string): LatLng[] {
+  try {
+    const geo = JSON.parse(geojson) as { type?: string; coordinates?: unknown };
+    let coords: number[][] | null = null;
+    if (geo?.type === "Polygon") {
+      coords = (geo.coordinates as number[][][])?.[0] ?? null;
+    } else if (geo?.type === "MultiPolygon") {
+      coords = (geo.coordinates as number[][][][])?.[0]?.[0] ?? null;
+    }
+    if (!coords || coords.length < 3) return [];
+    return coords
+      .map((c) => ({ lat: c[1], lng: c[0] }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  } catch {
+    return [];
+  }
+}
+
 export default function ProjectsMapPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -88,9 +114,7 @@ export default function ProjectsMapPage() {
   const [drawing, setDrawing] = useState(false);
   const [draftPolygon, setDraftPolygon] = useState<LatLng[]>([]);
 
-  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>([]);
-  const [currentFilters, setCurrentFilters] = useState<CurrentFilters>({});
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  const filterGroups = useFilterGroups("filters");
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [poiCategoriesEnabled, setPoiCategoriesEnabled] = useState<Set<string>>(
     () => new Set(DEFAULT_POI_CATEGORIES)
@@ -107,12 +131,14 @@ export default function ProjectsMapPage() {
     [searchParams]
   );
 
-  useEffect(() => {
-    fetch(`${API_BASE}/filters`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: FiltersResponse) => setFilterGroups(data?.groups ?? []))
-      .catch(() => setFilterGroups([]));
-  }, []);
+  const { currentFilters, drawerOpen, openDrawer, closeDrawer, onReset, onChangeFilter } = useFilterDrawer(filtersInUrl);
+
+  const { activeClient, activate } = useActiveClient();
+  const isClientOverridden = activeClient != null && !filtersEqual(filtersInUrl, activeClient.derivedFilters);
+  // On the map page, saving is available whenever a client is active — both filter overrides
+  // and polygon-only changes should be persistable, so we show the button for any active client.
+  const canSaveToClient = activeClient != null;
+  const [savingToClient, setSavingToClient] = useState(false);
 
   useEffect(() => {
     if (selectedProjectId == null) {
@@ -270,26 +296,69 @@ export default function ProjectsMapPage() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
   };
 
-  const openDrawer = useCallback(() => {
-    setCurrentFilters({ ...filtersInUrl });
-    setDrawerOpen(true);
-  }, [filtersInUrl]);
+  // Initialize polygon from active client's saved polygon when:
+  // - client mode is active and has a polygonGeoJson
+  // - the current map polygon is empty (no polygon in URL, no manually drawn polygon)
+  // Runs once per client activation. Does not override a polygon the broker drew manually.
+  const clientPolygonInitializedRef = useRef(false);
+  useEffect(() => {
+    if (clientPolygonInitializedRef.current) return;
+    if (!activeClient?.polygonGeoJson) return;
+    if (polygon.length > 0) {
+      // Map already has a polygon (from URL or prior drawing); mark as handled.
+      clientPolygonInitializedRef.current = true;
+      return;
+    }
+    const pts = parseFirstPolygonFromGeoJson(activeClient.polygonGeoJson);
+    if (pts.length >= 3) {
+      clientPolygonInitializedRef.current = true;
+      setPolygon(pts);
+      syncPolygonToUrl(pts);
+    }
+    // syncPolygonToUrl is a stable closure for the current render; intentionally omitted
+    // from deps to avoid re-running on every render. activeClient?.polygonGeoJson is the
+    // true trigger — only re-run if the client's polygon changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClient?.polygonGeoJson]);
 
-  const closeDrawer = useCallback(() => setDrawerOpen(false), []);
+  const handleSaveToClient = useCallback(async () => {
+    if (!activeClient) return;
+    setSavingToClient(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const patch = filtersToProfilePatch(filtersInUrl, polygon);
+      await fetch(`${API_BASE}/clients/${activeClient.clientId}/profile`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(patch),
+      }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+      // Update baseline so override badge disappears and polygonGeoJson is in sync
+      const savedGeoJson = polygonToGeoJson(polygon);
+      activate({ ...activeClient, derivedFilters: { ...filtersInUrl }, polygonGeoJson: savedGeoJson });
+      // Trigger recompute in background
+      fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => {});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uložení se nezdařilo");
+    } finally {
+      setSavingToClient(false);
+    }
+  }, [activeClient, filtersInUrl, polygon, activate]);
 
-  const onChangeFilter = useCallback(
-    (key: string, value: number | number[] | string[] | boolean | undefined) => {
-      setCurrentFilters((prev) => ({ ...prev, [key]: value }));
-    },
-    []
-  );
-
-  const onReset = useCallback(() => setCurrentFilters({}), []);
+  const resetToClient = useCallback(() => {
+    if (!activeClient) return;
+    applyFiltersToUrl(activeClient.derivedFilters);
+  }, [activeClient, applyFiltersToUrl]);
 
   const onResetAll = useCallback(() => {
-    setCurrentFilters({});
-    applyFiltersToUrl({});
-  }, [applyFiltersToUrl]);
+    onReset();
+    applyFiltersToUrl(activeClient ? activeClient.derivedFilters : {});
+  }, [onReset, applyFiltersToUrl, activeClient]);
 
   const onApply = useCallback(() => {
     applyFiltersToUrl(currentFilters);
@@ -360,11 +429,31 @@ export default function ProjectsMapPage() {
         >
           Filtry
           {countActiveFilters(filtersInUrl) > 0 && (
-            <span className="ml-1.5 rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+            <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white ${isClientOverridden ? "bg-amber-500" : "bg-slate-900"}`}>
               {countActiveFilters(filtersInUrl)}
             </span>
           )}
         </button>
+        {isClientOverridden && (
+          <button
+            type="button"
+            onClick={resetToClient}
+            className="glass-pill border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+          >
+            Zpět na klienta
+          </button>
+        )}
+        {canSaveToClient && (
+          <button
+            type="button"
+            onClick={handleSaveToClient}
+            disabled={savingToClient}
+            className="glass-pill border border-amber-400 bg-amber-400 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-60"
+            title="Uložit aktuální filtry a oblast jako nový profil klienta"
+          >
+            {savingToClient ? "Ukládám…" : "Uložit změny do klienta"}
+          </button>
+        )}
         <button
           type="button"
           onClick={onResetAll}
@@ -377,6 +466,8 @@ export default function ProjectsMapPage() {
           <span className="font-semibold text-slate-900">{visibleProjects.length}</span> projektů s GPS
         </span>
       </div>
+
+      <ClientModeBar isOverridden={isClientOverridden} />
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
