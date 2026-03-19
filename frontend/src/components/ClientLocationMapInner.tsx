@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, Polygon, Marker, Popup, useMapEvents, useMap } from "react-leaflet";
 import L, { type LatLngExpression, type LatLngBoundsExpression, type DivIcon } from "leaflet";
 import "leaflet/dist/leaflet.css";
@@ -65,6 +65,13 @@ function getProjectMarkerIcon(color: string, emphasized: boolean): DivIcon {
   return icon;
 }
 
+const vertexIcon = L.divIcon({
+  className: "",
+  html: `<div style="width:10px;height:10px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,0.4);"></div>`,
+  iconSize: [10, 10],
+  iconAnchor: [5, 5],
+});
+
 function pointInPolygon(point: Point, polygon: Area): boolean {
   if (polygon.length < 3) return false;
   const x = point.lng;
@@ -85,22 +92,17 @@ function pointInPolygon(point: Point, polygon: Area): boolean {
 
 function priceToColor(value: number | null | undefined, prices: number[]): string {
   if (!prices.length || value == null || !Number.isFinite(value)) {
-    return "#9ca3af"; // gray-400
+    return "#9ca3af";
   }
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   if (maxPrice <= minPrice) {
-    return "#f97316"; // orange-500
+    return "#f97316";
   }
   const tRaw = (value - minPrice) / (maxPrice - minPrice);
   const t = Math.max(0, Math.min(1, tRaw));
   const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
-
-  // 0 -> green, 0.5 -> orange, 1 -> red
-  let h: number;
-  let s: number;
-  let l: number;
-
+  let h: number, s: number, l: number;
   if (t <= 0.5) {
     const u = t / 0.5;
     h = lerp(140, 30, u);
@@ -115,6 +117,17 @@ function priceToColor(value: number | null | undefined, prices: number[]): strin
   return `hsl(${h}, ${s}%, ${l}%)`;
 }
 
+/** Same click-to-add as main map: only captures clicks during drawing mode */
+function ClickCapture({ drawing, onClick }: { drawing: boolean; onClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      if (!drawing) return;
+      onClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
 export function ClientLocationMapInner({
   areas,
   onChange,
@@ -122,66 +135,172 @@ export function ClientLocationMapInner({
   onActiveAreaChange,
   projects,
 }: EditorProps) {
-  const hasAny = areas.some((a) => a.length >= 3);
+  const [drawing, setDrawing] = useState(false);
+  const [draftPolygon, setDraftPolygon] = useState<Point[]>([]);
+
+  const savedPolygon = areas[activeAreaIndex] ?? [];
+  // During drawing show draft; otherwise show saved polygon
+  const activePolygon = draftPolygon.length >= 2 ? draftPolygon : savedPolygon;
+
   const firstPoint = areas.find((a) => a.length > 0)?.[0];
   const center: LatLngExpression = firstPoint
     ? [firstPoint.lat, firstPoint.lng]
-    : [50.0755, 14.4378]; // Praha
+    : [50.0755, 14.4378];
+
+  const handleMapClick = (lat: number, lng: number) => {
+    setDraftPolygon((prev) => [...prev, { lat, lng }]);
+  };
+
+  const handleStartDrawing = () => {
+    setDraftPolygon([]);
+    setDrawing(true);
+  };
+
+  const handleSaveArea = () => {
+    if (draftPolygon.length < 3) return;
+    const next = areas.slice();
+    if (activeAreaIndex >= 0 && activeAreaIndex < next.length) {
+      next[activeAreaIndex] = draftPolygon;
+    } else {
+      next.push(draftPolygon);
+      onActiveAreaChange(next.length - 1);
+    }
+    onChange(next);
+    setDrawing(false);
+    setDraftPolygon([]);
+  };
+
+  const handleCancelDrawing = () => {
+    setDrawing(false);
+    setDraftPolygon([]);
+  };
+
+  const handleClearArea = () => {
+    const next = areas.map((a, i) => (i === activeAreaIndex ? [] : a));
+    onChange(next);
+  };
 
   return (
     <div className="space-y-2">
+      {/* Toolbar — same pattern as main map */}
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            if (!drawing) handleStartDrawing();
+            else handleCancelDrawing();
+          }}
+          className={
+            "rounded-full border px-3 py-1.5 text-xs font-medium transition " +
+            (drawing
+              ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+              : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
+          }
+        >
+          {drawing ? "Zrušit kreslení" : "Kreslit oblast"}
+        </button>
+        {drawing && draftPolygon.length >= 3 && (
+          <button
+            type="button"
+            onClick={handleSaveArea}
+            className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+          >
+            Uložit oblast
+          </button>
+        )}
+        {!drawing && savedPolygon.length >= 3 && (
+          <button
+            type="button"
+            onClick={handleClearArea}
+            className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+          >
+            Zrušit oblast
+          </button>
+        )}
+        {drawing && (
+          <span className="text-[11px] text-slate-500">
+            Klikejte na mapu pro přidání bodů ({draftPolygon.length} bodů)
+          </span>
+        )}
+      </div>
+
       <div className="aspect-[4/3] overflow-hidden rounded-lg border border-slate-200">
         <MapContainer center={center} zoom={12} style={{ height: "100%", width: "100%" }}>
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"
           />
-          {areas.map((area, areaIndex) =>
-            area.length >= 3 ? (
-              <Polygon
-                key={areaIndex}
-                positions={area.map((p) => [p.lat, p.lng]) as LatLngExpression[]}
-                pathOptions={{
-                  color: areaIndex === activeAreaIndex ? "#2563eb" : "#94a3b8",
-                  weight: areaIndex === activeAreaIndex ? 3 : 2,
-                }}
-                eventHandlers={{
-                  click: () => {
-                    onActiveAreaChange(areaIndex);
-                  },
-                }}
-              />
-            ) : null
+          <ClickCapture drawing={drawing} onClick={handleMapClick} />
+
+          {/* Saved polygons (all areas) */}
+          {!drawing &&
+            areas.map((area, areaIndex) =>
+              area.length >= 3 ? (
+                <Polygon
+                  key={areaIndex}
+                  positions={area.map((p) => [p.lat, p.lng]) as LatLngExpression[]}
+                  pathOptions={{
+                    color: areaIndex === activeAreaIndex ? "#2563eb" : "#94a3b8",
+                    weight: areaIndex === activeAreaIndex ? 3 : 2,
+                    fillColor: "#3b82f6",
+                    fillOpacity: 0.15,
+                  }}
+                  eventHandlers={{ click: () => onActiveAreaChange(areaIndex) }}
+                />
+              ) : null
+            )}
+
+          {/* Saved polygon vertex markers (draggable, clickable to delete) — only when NOT drawing */}
+          {!drawing &&
+            areas.map((area, areaIndex) =>
+              area.map((p, pointIndex) => (
+                <Marker
+                  key={`v-${areaIndex}-${pointIndex}`}
+                  position={[p.lat, p.lng]}
+                  icon={vertexIcon}
+                  draggable
+                  eventHandlers={{
+                    dragend: (e) => {
+                      const { lat, lng } = e.target.getLatLng();
+                      const next = areas.map((poly, idx) =>
+                        idx === areaIndex
+                          ? poly.map((pt, j) => (j === pointIndex ? { lat, lng } : pt))
+                          : poly
+                      );
+                      onChange(next);
+                    },
+                    dblclick: () => {
+                      const next = areas.map((poly, idx) =>
+                        idx === areaIndex
+                          ? poly.filter((_, j) => j !== pointIndex)
+                          : poly
+                      );
+                      onChange(next);
+                    },
+                  }}
+                />
+              ))
+            )}
+
+          {/* Draft polygon during drawing */}
+          {drawing && activePolygon.length >= 2 && (
+            <Polygon
+              positions={activePolygon.map((p) => [p.lat, p.lng]) as LatLngExpression[]}
+              pathOptions={{ color: "#2563eb", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.15 }}
+            />
           )}
-          {areas.map((area, areaIndex) =>
-            area.map((p, pointIndex) => (
+
+          {/* Draft vertex markers during drawing */}
+          {drawing &&
+            draftPolygon.map((p, i) => (
               <Marker
-                // eslint-disable-next-line react/no-array-index-key
-                key={`${areaIndex}-${pointIndex}`}
+                key={`draft-${i}`}
                 position={[p.lat, p.lng]}
-                draggable
-                eventHandlers={{
-                  dragend: (e) => {
-                    const { lat, lng } = e.target.getLatLng();
-                    const next = areas.map((poly, idx) =>
-                      idx === areaIndex
-                        ? poly.map((pt, j) => (j === pointIndex ? { lat, lng } : pt))
-                        : poly
-                    );
-                    onChange(next);
-                  },
-                  click: () => {
-                    const next = areas.map((poly, idx) =>
-                      idx === areaIndex
-                        ? poly.filter((_, j) => j !== pointIndex)
-                        : poly
-                    );
-                    onChange(next);
-                  },
-                }}
+                icon={vertexIcon}
               />
-            ))
-          )}
+            ))}
+
+          {/* Project markers */}
           {(() => {
             const priced = projects
               .map((p) =>
@@ -191,6 +310,8 @@ export function ClientLocationMapInner({
               )
               .filter((v): v is number => v != null && Number.isFinite(v));
 
+            const checkArea = !drawing && savedPolygon.length >= 3 ? savedPolygon : undefined;
+
             return projects
               .filter((p) => p.gps_latitude != null && p.gps_longitude != null)
               .map((p) => {
@@ -198,13 +319,7 @@ export function ClientLocationMapInner({
                   lat: p.gps_latitude as number,
                   lng: p.gps_longitude as number,
                 };
-                const activeArea =
-                  activeAreaIndex >= 0 && activeAreaIndex < areas.length
-                    ? areas[activeAreaIndex]
-                    : undefined;
-                const isInside =
-                  activeArea && activeArea.length >= 3 ? pointInPolygon(pt, activeArea) : false;
-
+                const isInside = checkArea ? pointInPolygon(pt, checkArea) : false;
                 const color = priceToColor(p.avg_price_per_m2_czk ?? null, priced);
                 const icon = getProjectMarkerIcon(color, isInside);
 
@@ -232,10 +347,12 @@ export function ClientLocationMapInner({
                             Kč/m²
                           </div>
                         )}
-                        {isInside ? (
-                          <div className="text-[10px] text-emerald-600">Uvnitř vybrané oblasti</div>
-                        ) : (
-                          <div className="text-[10px] text-slate-500">Mimo vybranou oblast</div>
+                        {checkArea && (
+                          isInside ? (
+                            <div className="text-[10px] text-emerald-600">Uvnitř vybrané oblasti</div>
+                          ) : (
+                            <div className="text-[10px] text-slate-500">Mimo vybranou oblast</div>
+                          )
                         )}
                       </div>
                     </Popup>
@@ -244,90 +361,8 @@ export function ClientLocationMapInner({
               });
           })()}
           <FitBounds areas={areas} />
-          <ClickInsert
-            areas={areas}
-            onChange={onChange}
-            activeAreaIndex={activeAreaIndex}
-            onActiveAreaChange={onActiveAreaChange}
-          />
         </MapContainer>
-      </div>
-      <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-600">
-        <span>
-          Kliknutím do mapy vložíte nový bod (mezi stávající). Přetažením bodů je můžete upravit.
-        </span>
       </div>
     </div>
   );
 }
-
-function ClickInsert({
-  areas,
-  onChange,
-  activeAreaIndex,
-  onActiveAreaChange,
-}: {
-  areas: Area[];
-  onChange: (areas: Area[]) => void;
-  activeAreaIndex: number;
-  onActiveAreaChange: (index: number) => void;
-}) {
-  useMapEvents({
-    click(e) {
-      const { lat, lng } = e.latlng;
-      if (!areas.length) {
-        onChange([[{ lat, lng }]]);
-        onActiveAreaChange(0);
-        return;
-      }
-      const clampedIndex =
-        activeAreaIndex >= 0 && activeAreaIndex < areas.length ? activeAreaIndex : 0;
-      const area = areas[clampedIndex];
-      if (area.length < 1) {
-        const next = areas.slice();
-        next[clampedIndex] = [{ lat, lng }];
-        onChange(next);
-        return;
-      }
-      // find best segment to insert between
-      let bestIndex = 0;
-      let bestDist = Number.POSITIVE_INFINITY;
-      for (let i = 0; i < area.length; i++) {
-        const j = (i + 1) % area.length;
-        const d = segmentDistance(area[i], area[j], { lat, lng });
-        if (d < bestDist) {
-          bestDist = d;
-          bestIndex = j;
-        }
-      }
-      const newArea = [...area.slice(0, bestIndex), { lat, lng }, ...area.slice(bestIndex)];
-      const next = areas.map((poly, i) => (i === clampedIndex ? newArea : poly));
-      onChange(next);
-    },
-  });
-  return null;
-}
-
-function segmentDistance(a: Point, b: Point, p: Point): number {
-  const ax = a.lat;
-  const ay = a.lng;
-  const bx = b.lat;
-  const by = b.lng;
-  const px = p.lat;
-  const py = p.lng;
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) {
-    const dxp = px - ax;
-    const dyp = py - ay;
-    return Math.sqrt(dxp * dxp + dyp * dyp);
-  }
-  const t = ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy);
-  const tt = Math.max(0, Math.min(1, t));
-  const cx = ax + tt * dx;
-  const cy = ay + tt * dy;
-  const dcx = px - cx;
-  const dcy = py - cy;
-  return Math.sqrt(dcx * dcx + dcy * dcy);
-}
-

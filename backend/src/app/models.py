@@ -148,6 +148,12 @@ class Project(Base):
     walkability_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     walkability_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Nová pole – doplňovaná ručně brokerem
+    completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    floors_above_ground: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    energy_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     units: Mapped[list["Unit"]] = relationship(
         back_populates="project",
         cascade="all, delete-orphan",
@@ -290,6 +296,7 @@ class Unit(Base):
     postal_code: Mapped[str | None] = mapped_column(String(32), nullable=True)
     developer: Mapped[str | None] = mapped_column(String(255), nullable=True)
     url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    floorplan_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
     raw_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
@@ -367,6 +374,11 @@ class Client(Base):
     recommendations: Mapped[list["ClientRecommendation"]] = relationship(
         back_populates="client",
         cascade="all, delete-orphan",
+    )
+    notes_log: Mapped[list["ClientNote"]] = relationship(
+        back_populates="client",
+        cascade="all, delete-orphan",
+        order_by="ClientNote.created_at.desc()",
     )
 
 
@@ -615,6 +627,24 @@ class ProjectAggregates(Base):
     )
 
     project: Mapped["Project"] = relationship("Project")
+
+
+class ClientNote(Base):
+    __tablename__ = "client_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id"), nullable=False, index=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), nullable=False)
+    note_type: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'internal'")
+    )  # 'meeting' | 'call' | 'internal'
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    client: Mapped["Client"] = relationship(back_populates="notes_log")
+    broker: Mapped["Broker"] = relationship()
 
 
 class ClientShareLink(Base):

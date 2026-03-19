@@ -60,9 +60,6 @@ export function WizardSteps({ currentStep, setCurrentStep, totalSteps }: WizardS
                 <span className={clsx("whitespace-nowrap", isCurrent && "font-semibold")}>
                   {label}
                 </span>
-                {isCurrent && (
-                  <span className="pointer-events-none absolute inset-x-2 -bottom-1 h-0.5 rounded-full bg-slate-900" />
-                )}
               </button>
             );
           })}

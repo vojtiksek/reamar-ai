@@ -16,6 +16,7 @@ from sqlalchemy import delete, desc, select, tuple_
 from sqlalchemy.orm import Session
 
 from .db import get_db
+from .overrides import compute_equivalent_price_per_m2
 from .models import (
     Project,
     Unit,
@@ -38,7 +39,7 @@ from .project_location_metrics import (
 from .main import _compute_unit_match_score
 
 # Pole, u kterých při rozdílu API vs. aktuální neukládáme přímo, ale do pending (uživatel zvolí).
-API_CONFLICT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
+API_CONFLICT_FIELDS = frozenset({"price_czk", "availability_status"})  # price_per_m2_czk je počítaná, ne importovaná
 
 # Canonical mapping: API JSON key -> Unit DB attribute. No duplicate columns; renames only.
 # Keys not listed use _key_to_attr(key) if that column exists. Skip: unique_id, id, project, availability.
@@ -494,8 +495,8 @@ def apply_unit_data(
         unit.available = (normalize_str(availability, 50) or "").lower() == "available"
     if not only_if_present or unit_data.get("price") is not None:
         unit.price_czk = normalize_int(unit_data.get("price"))
-    if not only_if_present or unit_data.get("price_per_sm") is not None:
-        unit.price_per_m2_czk = normalize_int(unit_data.get("price_per_sm"))
+    # price_per_m2_czk: ignorujeme API hodnotu, počítáme ekvivalentní cenu z ploch
+    # (přepočet se provede na konci funkce po nastavení všech ploch)
     if not only_if_present or unit_data.get("price_change") is not None:
         unit.price_change = normalize_decimal(unit_data.get("price_change"), 4)
     if not only_if_present or unit_data.get("original_price") is not None:
@@ -604,6 +605,13 @@ def apply_unit_data(
         unit.developer = normalize_str(unit_data.get("developer"), 255)
     if not only_if_present or unit_data.get("url") is not None:
         unit.url = normalize_str(unit_data.get("url"), 1024)
+
+    # Vždy přepočítat ekvivalentní cenu za m² z aktuálních ploch
+    unit.price_per_m2_czk = compute_equivalent_price_per_m2(
+        unit.price_czk,
+        float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+        float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
+    )
 
 
 def should_insert_history(

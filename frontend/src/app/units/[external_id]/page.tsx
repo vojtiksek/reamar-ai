@@ -10,6 +10,7 @@ import {
 } from "@/lib/format";
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
+import { PaymentSchedule } from "@/components/PaymentSchedule";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -494,7 +495,35 @@ export default function UnitDetailPage() {
     }
   };
 
-  if (unitState.loading) return <div className="p-4">Načítání…</div>;
+  if (unitState.loading) {
+    return (
+      <div className="min-h-screen animate-pulse">
+        <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+          {/* title row */}
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-16 rounded-full bg-slate-200" />
+            <div className="h-7 w-56 rounded bg-slate-200" />
+          </div>
+          {/* hero stat cards */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="glass-card p-4 space-y-2">
+                <div className="h-3 w-20 rounded bg-slate-200" />
+                <div className="h-6 w-12 rounded bg-slate-200" />
+              </div>
+            ))}
+          </div>
+          {/* overview card */}
+          <div className="glass-card p-5 space-y-3">
+            <div className="h-4 w-24 rounded bg-slate-200" />
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-3 w-full rounded bg-slate-200" />
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (unitState.error) {
     return (
       <div className="p-4 space-y-3">
@@ -802,7 +831,7 @@ export default function UnitDetailPage() {
           <div className="glass-card px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Dostupnost</p>
             <p className={`mt-1 text-lg font-semibold ${unit.available ? "text-emerald-600" : "text-rose-600"}`}>
-              {unit.availability_status ?? (unit.available ? "Dostupná" : "Nedostupná")}
+              {AVAILABILITY_STATUS_OPTIONS.find((o) => o.value === (unit.availability_status ?? "").toLowerCase())?.label ?? (unit.available ? "Dostupná" : "Nedostupná")}
             </p>
           </div>
         </div>
@@ -1029,6 +1058,19 @@ export default function UnitDetailPage() {
                   {overviewFinanceParking.map(renderProjectField)}
                 </div>
               </div>
+            )}
+            {/* Payment schedule calculator */}
+            {unit.price_czk != null && unit.price_czk > 0 && (
+              <PaymentSchedule
+                priceCzk={unit.price_czk}
+                paymentContract={unit.data?.payment_contract as number | null | undefined}
+                paymentConstruction={unit.data?.payment_construction as number | null | undefined}
+                paymentOccupancy={unit.data?.payment_occupancy as number | null | undefined}
+                parkingPriceCzk={
+                  (unit.data?.min_parking_indoor_price_czk as number | null | undefined) ??
+                  (unit.data?.min_parking_outdoor_price_czk as number | null | undefined)
+                }
+              />
             )}
             {overviewUnitsStats.length > 0 && (
               <div className="rounded-lg border border-slate-200 bg-slate-50/60 px-3 py-2.5">

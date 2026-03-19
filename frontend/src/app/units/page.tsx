@@ -707,6 +707,8 @@ export default function Home() {
   const [recSort, setRecSort] = useState<"score" | "price" | "area" | "floor">("score");
   const [recPinnedOnly, setRecPinnedOnly] = useState(false);
   const [expandedRec, setExpandedRec] = useState<number | null>(null);
+  const [compareIds, setCompareIds] = useState<Set<number>>(new Set());
+  const [showCompare, setShowCompare] = useState(false);
 
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [columnsConfig, setColumnsConfig] = useState<ColumnConfig[] | null>(null);
@@ -1982,9 +1984,22 @@ export default function Home() {
               <span className="text-sm font-semibold text-slate-800">
                 Doporučení pro {activeClient.clientName}
               </span>
-              <span className="text-xs text-slate-500">
-                {recsLoading ? "Načítám…" : `${visibleRecs.length} z ${recs.length}`}
-              </span>
+              <div className="flex items-center gap-3">
+                {compareIds.size > 0 && (
+                  <button
+                    type="button"
+                    className="rounded-full bg-indigo-600 px-3 py-1 text-xs font-medium text-white hover:bg-indigo-700"
+                    onClick={() => setShowCompare(true)}
+                    disabled={compareIds.size < 2}
+                    title={compareIds.size < 2 ? "Vyberte alespoň 2 jednotky" : `Porovnat ${compareIds.size} jednotek`}
+                  >
+                    Porovnat ({compareIds.size})
+                  </button>
+                )}
+                <span className="text-xs text-slate-500">
+                  {recsLoading ? "Načítám…" : `${visibleRecs.length} z ${recs.length}`}
+                </span>
+              </div>
             </div>
 
             {recsLoading && (
@@ -2004,6 +2019,7 @@ export default function Home() {
                   <thead className="bg-slate-50 text-xs text-slate-600">
                     <tr>
                       <th className="w-6 px-1 py-2 text-center"></th>
+                      <th className="w-6 px-1 py-2 text-center" title="Vybrat k porovnání"></th>
                       <th className="w-8 px-2 py-2 text-center"></th>
                       <th className="px-3 py-2 text-left font-semibold">Jednotka</th>
                       <th className="px-3 py-2 text-left font-semibold">Projekt</th>
@@ -2035,6 +2051,23 @@ export default function Home() {
                               >
                                 {isExpanded ? "▾" : "▸"}
                               </button>
+                            </td>
+                            <td className="px-1 py-2 text-center" onClick={(e) => e.stopPropagation()}>
+                              <input
+                                type="checkbox"
+                                checked={compareIds.has(r.rec_id)}
+                                disabled={!compareIds.has(r.rec_id) && compareIds.size >= 5}
+                                onChange={() => {
+                                  setCompareIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(r.rec_id)) next.delete(r.rec_id);
+                                    else if (next.size < 5) next.add(r.rec_id);
+                                    return next;
+                                  });
+                                }}
+                                className="h-3.5 w-3.5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                title="Vybrat k porovnání"
+                              />
                             </td>
                             <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
                               <button
@@ -2086,7 +2119,7 @@ export default function Home() {
                           </tr>
                           {isExpanded && (
                             <tr className="bg-slate-50/60">
-                              <td colSpan={10} className="px-4 pb-4 pt-2">
+                              <td colSpan={11} className="px-4 pb-4 pt-2">
                                 <div className="flex flex-wrap gap-6">
                                   <div className="flex flex-col gap-1.5 min-w-[160px]">
                                     <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Detail</p>
@@ -2774,6 +2807,79 @@ export default function Home() {
           )}
         </DndContext>
       )}
+      {/* ── Comparison Modal ─────────────────────────────────────── */}
+      {showCompare && compareIds.size >= 2 && (() => {
+        const selected = recs.filter((r) => compareIds.has(r.rec_id));
+        const rows: { label: string; values: (string | number | null)[] }[] = [
+          { label: "Projekt", values: selected.map((r) => r.project_name ?? "—") },
+          { label: "Dispozice", values: selected.map((r) => r.layout ?? r.layout_label ?? "—") },
+          { label: "Plocha m²", values: selected.map((r) => r.floor_area_m2 != null ? `${r.floor_area_m2} m²` : "—") },
+          { label: "Venkovní plocha", values: selected.map((r) => r.exterior_area_m2 != null ? `${r.exterior_area_m2} m²` : "—") },
+          { label: "Patro", values: selected.map((r) => r.floor ?? "—") },
+          { label: "Cena", values: selected.map((r) => r.price_czk != null ? new Intl.NumberFormat("cs-CZ", { style: "currency", currency: "CZK", maximumFractionDigits: 0 }).format(r.price_czk) : "—") },
+          { label: "Cena/m²", values: selected.map((r) => r.price_per_m2_czk != null ? new Intl.NumberFormat("cs-CZ", { style: "currency", currency: "CZK", maximumFractionDigits: 0 }).format(r.price_per_m2_czk) : "—") },
+          { label: "Okres", values: selected.map((r) => r.district ?? "—") },
+          { label: "Skóre", values: selected.map((r) => `${Math.round(r.score)} b.`) },
+          { label: "Rozpočet", values: selected.map((r) => `${Math.round(r.budget_fit)} %`) },
+          { label: "Poloha", values: selected.map((r) => `${Math.round(r.location_fit)} %`) },
+          { label: "Walkabilita", values: selected.map((r) => `${Math.round(r.walkability_fit)} %`) },
+          { label: "Dispozice fit", values: selected.map((r) => `${Math.round(r.layout_fit)} %`) },
+          { label: "Plocha fit", values: selected.map((r) => `${Math.round(r.area_fit)} %`) },
+          { label: "MHD tramvaj", values: selected.map((r) => r.distance_to_tram_stop_m != null ? `${Math.round(r.distance_to_tram_stop_m)} m` : "—") },
+          { label: "MHD metro", values: selected.map((r) => r.distance_to_metro_station_m != null ? `${Math.round(r.distance_to_metro_station_m)} m` : "—") },
+        ];
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="relative max-h-[85vh] w-full max-w-4xl overflow-auto rounded-2xl bg-white p-6 shadow-xl">
+              <div className="mb-4 flex items-center justify-between">
+                <h3 className="text-lg font-semibold text-slate-900">
+                  Porovnání jednotek ({selected.length})
+                </h3>
+                <button
+                  type="button"
+                  className="rounded-full p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                  onClick={() => setShowCompare(false)}
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr>
+                      <th className="sticky left-0 bg-slate-50 px-3 py-2 text-left text-xs font-semibold text-slate-600"></th>
+                      {selected.map((r) => (
+                        <th key={r.rec_id} className="min-w-[140px] px-3 py-2 text-center">
+                          <a
+                            href={r.unit_external_id ? `/units/${encodeURIComponent(r.unit_external_id)}` : "#"}
+                            className="text-xs font-mono text-indigo-600 hover:underline"
+                          >
+                            {r.unit_external_id ?? "—"}
+                          </a>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {rows.map((row, i) => (
+                      <tr key={i} className={i % 2 === 0 ? "bg-white" : "bg-slate-50/50"}>
+                        <td className="sticky left-0 bg-inherit px-3 py-1.5 text-xs font-medium text-slate-500 whitespace-nowrap">
+                          {row.label}
+                        </td>
+                        {row.values.map((v, j) => (
+                          <td key={j} className="px-3 py-1.5 text-center text-xs text-slate-800">
+                            {String(v)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

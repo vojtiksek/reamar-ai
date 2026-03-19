@@ -54,6 +54,11 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "walkability_transport_score": "walkability_transport_score",
     "walkability_leisure_score": "walkability_leisure_score",
     "walkability_family_score": "walkability_family_score",
+    # Sprint C: nová pole
+    "completion_date": "completion_date",
+    "image_url": "image_url",
+    "floors_above_ground": "floors_above_ground",
+    "energy_class": "energy_class",
 }
 
 # Computed column keys (kind="computed") in display order.

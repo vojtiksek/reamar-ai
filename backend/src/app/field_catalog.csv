@@ -43,8 +43,11 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3010;Dispozice;Projekt;floors;Podlaha;ANO;NE;NE;;;enum;
 3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
+3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;ANO;ANO;;0;integer;
 
 4001;Stav;Jednotka;availability;Stav;ANO;ANO;NE;;;enum;
+4007;Stav;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
+4008;Stav;Projekt;energy_class;Energetická třída;ANO;ANO;ANO;;;enum;
 4002;Stav;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
 4003;Stav;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;
 4004;Stav;Projekt;project_last_seen;Poslední výskyt;ANO;NE;NE;;;date;
@@ -74,6 +77,8 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 6001;Projekt;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
 6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
 6003;Projekt;Projekt;project_url;Odkaz na projekt;ANO;NE;ANO;;;url;
+6004;Projekt;Projekt;image_url;Foto projektu;ANO;NE;ANO;;;url;
+6005;Jednotka;Jednotka;floorplan_url;Půdorys;ANO;NE;ANO;;;url;
 
 7001;Financování;Projekt;payment_contract;Platba po SOSBK;ANO;ANO;ANO;%;0;percent;fraction
 7002;Financování;Projekt;payment_construction;Platba při výstavbě;ANO;ANO;ANO;%;0;percent;fraction

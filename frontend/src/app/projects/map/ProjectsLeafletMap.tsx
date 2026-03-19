@@ -192,6 +192,19 @@ function ProjectsLeafletMap({
           pathOptions={{ color: "#2563eb", weight: 2, fillColor: "#3b82f6", fillOpacity: 0.15 }}
         />
       )}
+      {/* Markers on each polygon vertex during drawing */}
+      {drawing && draftPolygon.map((p, i) => (
+        <Marker
+          key={`draft-${i}`}
+          position={[p.lat, p.lng]}
+          icon={L.divIcon({
+            className: "",
+            html: `<div style="width:10px;height:10px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 0 3px rgba(0,0,0,0.4);"></div>`,
+            iconSize: [10, 10],
+            iconAnchor: [5, 5],
+          })}
+        />
+      ))}
       {projects
         .filter((p) => p.gps_latitude != null && p.gps_longitude != null)
         .map((p) => (

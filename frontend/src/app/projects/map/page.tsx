@@ -371,7 +371,7 @@ export default function ProjectsMapPage() {
   };
 
   return (
-    <div className="flex min-h-screen flex-col gap-3 pb-4 pt-3">
+    <div className="flex h-[calc(100vh-60px)] flex-col gap-3 overflow-hidden pb-2 pt-3">
       {/* Toolbar — no duplicate nav, GlobalNav from layout handles navigation */}
       <div className="glass-header shrink-0 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3">
         <div className="flex items-center gap-2">
@@ -475,7 +475,7 @@ export default function ProjectsMapPage() {
         </div>
       )}
 
-      <div className="flex flex-1 overflow-hidden rounded-2xl border border-slate-200/70 shadow-sm">
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/70 shadow-sm">
         <aside className="hidden w-80 flex-shrink-0 flex-col border-r border-slate-200/70 bg-white/80 backdrop-blur-sm md:flex">
           <div className="border-b border-slate-200/70 px-4 py-3">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Projekty</p>

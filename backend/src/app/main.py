@@ -33,6 +33,7 @@ from .models import (
     ClientRecommendation,
     ClientUnitMatch,
     ClientShareLink,
+    ClientNote,
     UnitEvent,
 )
 from .overrides import (
@@ -42,6 +43,7 @@ from .overrides import (
     build_project_override_map,
     unit_to_response_dict,
     apply_project_overrides_to_item,
+    compute_equivalent_price_per_m2,
 )
 from .aggregates import recompute_project_aggregates, _haversine_m, _layout_group, SOLD_DATE_MAX_DAYS_FOR_COMPARABLE
 from .project_catalog import (
@@ -608,6 +610,132 @@ def list_clients(
     return out
 
 
+class ClientDashboardItem(BaseModel):
+    id: int
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    status: str
+    created_at: datetime
+    updated_at: datetime
+    recommendations_count: int = 0
+    unseen_matches: int = 0
+    last_note_at: datetime | None = None
+    days_since_last_note: int | None = None
+    share_link_expires_at: datetime | None = None
+    share_link_expired: bool = False
+    has_profile: bool = False
+    priority: str = "normal"  # 'high' | 'medium' | 'normal'
+
+
+@app.get("/clients/dashboard", response_model=list[ClientDashboardItem])
+def client_dashboard(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[ClientDashboardItem]:
+    """Enriched client list with priority signals for the broker dashboard."""
+    from datetime import timezone
+    now = datetime.now(timezone.utc)
+
+    clients = db.execute(
+        select(Client).where(Client.broker_id == broker.id)
+    ).scalars().all()
+
+    if not clients:
+        return []
+
+    client_ids = [c.id for c in clients]
+
+    # Recommendation counts
+    rec_counts = dict(
+        db.execute(
+            select(ClientRecommendation.client_id, func.count(ClientRecommendation.id))
+            .where(ClientRecommendation.client_id.in_(client_ids))
+            .group_by(ClientRecommendation.client_id)
+        ).all()
+    )
+
+    # Unseen match counts
+    unseen_counts = dict(
+        db.execute(
+            select(ClientUnitMatch.client_id, func.count(ClientUnitMatch.id))
+            .where(
+                ClientUnitMatch.client_id.in_(client_ids),
+                ClientUnitMatch.seen == False,  # noqa: E712
+            )
+            .group_by(ClientUnitMatch.client_id)
+        ).all()
+    )
+
+    # Last note per client
+    last_notes = dict(
+        db.execute(
+            select(ClientNote.client_id, func.max(ClientNote.created_at))
+            .where(ClientNote.client_id.in_(client_ids))
+            .group_by(ClientNote.client_id)
+        ).all()
+    )
+
+    # Active share links
+    share_links = dict(
+        db.execute(
+            select(ClientShareLink.client_id, ClientShareLink.expires_at)
+            .where(ClientShareLink.client_id.in_(client_ids))
+        ).all()
+    )
+
+    # Profile existence
+    profile_ids = set(
+        r[0]
+        for r in db.execute(
+            select(ClientProfile.client_id).where(ClientProfile.client_id.in_(client_ids))
+        ).all()
+    )
+
+    out: list[ClientDashboardItem] = []
+    for c in clients:
+        unseen = unseen_counts.get(c.id, 0)
+        last_note_at = last_notes.get(c.id)
+        days_since = (now - last_note_at).days if last_note_at else None
+        share_exp = share_links.get(c.id)
+        share_expired = bool(share_exp and share_exp < now)
+        has_profile = c.id in profile_ids
+
+        # Priority calculation
+        priority = "normal"
+        if unseen > 0:
+            priority = "high"
+        elif days_since is not None and days_since > 14:
+            priority = "medium"
+        elif share_expired:
+            priority = "medium"
+        elif c.status == "new" and not has_profile:
+            priority = "medium"
+
+        out.append(ClientDashboardItem(
+            id=c.id,
+            name=c.name,
+            email=c.email,
+            phone=c.phone,
+            status=c.status,
+            created_at=c.created_at,
+            updated_at=c.updated_at,
+            recommendations_count=rec_counts.get(c.id, 0),
+            unseen_matches=unseen,
+            last_note_at=last_note_at,
+            days_since_last_note=days_since,
+            share_link_expires_at=share_exp,
+            share_link_expired=share_expired,
+            has_profile=has_profile,
+            priority=priority,
+        ))
+
+    # Sort: high first, then medium, then normal; within same priority by updated_at desc
+    priority_order = {"high": 0, "medium": 1, "normal": 2}
+    out.sort(key=lambda x: (priority_order.get(x.priority, 2), -x.updated_at.timestamp()))
+    return out
+
+
 @app.post("/clients", response_model=ClientSummary)
 def create_client(
     body: ClientCreateBody,
@@ -713,6 +841,82 @@ def delete_client(
 ) -> None:
     client = _get_client_for_broker(db, client_id, broker)
     db.delete(client)
+    db.commit()
+
+
+# ── Client Notes ────────────────────────────────────────────────────────────
+
+
+class ClientNoteCreate(BaseModel):
+    note_type: str = "internal"  # 'meeting' | 'call' | 'internal'
+    body: str
+
+
+class ClientNoteItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    client_id: int
+    broker_id: int
+    note_type: str
+    body: str
+    created_at: datetime
+
+
+@app.get("/clients/{client_id}/notes", response_model=list[ClientNoteItem])
+def list_client_notes(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[ClientNoteItem]:
+    _get_client_for_broker(db, client_id, broker)
+    notes = (
+        db.execute(
+            select(ClientNote)
+            .where(ClientNote.client_id == client_id)
+            .order_by(ClientNote.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+    return [ClientNoteItem.model_validate(n) for n in notes]
+
+
+@app.post("/clients/{client_id}/notes", response_model=ClientNoteItem, status_code=201)
+def create_client_note(
+    client_id: int,
+    payload: ClientNoteCreate,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientNoteItem:
+    _get_client_for_broker(db, client_id, broker)
+    if payload.note_type not in ("meeting", "call", "internal"):
+        raise HTTPException(status_code=422, detail="note_type must be meeting, call, or internal")
+    note = ClientNote(
+        client_id=client_id,
+        broker_id=broker.id,
+        note_type=payload.note_type,
+        body=payload.body,
+    )
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return ClientNoteItem.model_validate(note)
+
+
+@app.delete("/clients/{client_id}/notes/{note_id}", status_code=204)
+def delete_client_note(
+    client_id: int,
+    note_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    note = db.execute(
+        select(ClientNote).where(ClientNote.id == note_id, ClientNote.client_id == client_id)
+    ).scalars().first()
+    if note is None:
+        raise HTTPException(status_code=404, detail="Note not found")
+    db.delete(note)
     db.commit()
 
 
@@ -935,6 +1139,82 @@ def _compute_unit_match_score(
     db: Session | None = None,
 ) -> tuple[float, dict[str, float]]:
     """MVP matching: combine budget, walkability, location, layout, area, commute."""
+
+    # ── Hard filters for "musí být" / "must" constraints ──────────────────
+    # If a constraint is set to "must" and the unit/project doesn't satisfy it,
+    # return score 0 immediately (hard exclusion).
+    if profile and profile.filter_json:
+        wizard = (profile.filter_json or {}).get("wizard") or {}
+
+        # Standards: rekuperace, air_conditioning, floor_heating, external_blinds
+        standards = wizard.get("standards") or {}
+        if standards.get("rekuperace") == "must" and not getattr(project, "recuperation", None):
+            return 0.0, {"hard_filter": "rekuperace"}
+        if standards.get("air_conditioning") == "must" and not getattr(unit, "air_conditioning", None):
+            return 0.0, {"hard_filter": "air_conditioning"}
+        if standards.get("floor_heating") == "must":
+            h = getattr(unit, "heating", None) or getattr(project, "heating", None) or ""
+            if "podlah" not in str(h).lower():
+                return 0.0, {"hard_filter": "floor_heating"}
+        if standards.get("external_blinds") == "must":
+            eb = getattr(unit, "exterior_blinds", None)
+            if eb is None or str(eb).lower() in ("false", "0", ""):
+                return 0.0, {"hard_filter": "external_blinds"}
+
+        # Building amenities: parking, cellar, bike_room, stroller_room, fitness, courtyard_garden, reception
+        amenities = wizard.get("house_amenities") or {}
+        amenity_map = {
+            "parking": None,  # parking checked via parking price fields
+            "bike_room": "bike_room",
+            "stroller_room": "stroller_room",
+            "fitness": "fitness",
+            "courtyard_garden": "courtyard_garden",
+            "reception": "reception",
+            "concierge": "concierge",
+        }
+        for pref_key, project_attr in amenity_map.items():
+            if amenities.get(pref_key) == "must" and project_attr:
+                if not getattr(project, project_attr, None):
+                    return 0.0, {"hard_filter": pref_key}
+
+        # Noise: "must" = must avoid (distance too close → exclude)
+        noise = wizard.get("noise") or {}
+        if noise.get("quiet_area") == "must":
+            nl = getattr(project, "noise_label", None)
+            if nl and ("vyšší" in nl.lower() or "vysoký" in nl.lower() or "vysoká" in nl.lower()):
+                return 0.0, {"hard_filter": "quiet_area"}
+        if noise.get("main_road") == "must":
+            d = getattr(project, "distance_to_primary_road_m", None)
+            if d is not None and d < 150:
+                return 0.0, {"hard_filter": "main_road"}
+        if noise.get("tram") == "must":
+            d = getattr(project, "distance_to_tram_tracks_m", None)
+            if d is not None and d < 100:
+                return 0.0, {"hard_filter": "tram_noise"}
+        if noise.get("railway") == "must":
+            d = getattr(project, "distance_to_railway_m", None)
+            if d is not None and d < 300:
+                return 0.0, {"hard_filter": "railway_noise"}
+        if noise.get("airport") == "must":
+            d = getattr(project, "distance_to_airport_m", None)
+            if d is not None and d < 5000:
+                return 0.0, {"hard_filter": "airport_noise"}
+
+        # Outdoor: if any outdoor type is "must", unit must have some exterior
+        outdoor = wizard.get("outdoor") or {}
+        for outdoor_key in ("balcony", "terrace", "garden"):
+            if outdoor.get(outdoor_key) == "must":
+                val = getattr(unit, f"{outdoor_key}_area_m2", None)
+                if val is None or float(val) <= 0:
+                    return 0.0, {"hard_filter": outdoor_key}
+
+        # Renovation preference: "only_new" / "only_renovation" as hard filter
+        reno_pref = wizard.get("renovation_preference")
+        if reno_pref == "only_new" and unit.renovation is True:
+            return 0.0, {"hard_filter": "only_new"}
+        if reno_pref == "only_renovation" and unit.renovation is False:
+            return 0.0, {"hard_filter": "only_renovation"}
+
     price = unit.price_czk
     area = float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None
     budget_fit = 0.0
@@ -952,16 +1232,22 @@ def _compute_unit_match_score(
                 diff_ratio = abs(price - center) / max(center, 1)
                 budget_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
 
-    # Walkability: use personalized scoring if preferences present
+    # Walkability: use personalized scoring if preferences present,
+    # otherwise fallback to project's general walkability_score.
     walk_fit = 0.0
     try:
-        raw = project_to_raw_metrics(project)
         prefs = (profile.walkability_preferences_json if profile else None) or {}
-        result = compute_personalized_walkability_score(raw, prefs)
-        if result.get("score") is not None:
-            walk_fit = float(result["score"])
+        if prefs and any(v != "normal" for v in prefs.values()):
+            raw = project_to_raw_metrics(project)
+            result = compute_personalized_walkability_score(raw, prefs)
+            if result.get("score") is not None:
+                walk_fit = float(result["score"])
+        elif project.walkability_score is not None:
+            walk_fit = float(project.walkability_score)
+        else:
+            walk_fit = 50.0  # neutral fallback instead of 0
     except Exception:
-        walk_fit = 0.0
+        walk_fit = 50.0
 
     # Location fit: inside polygon bonus
     loc_fit = 0.0
@@ -1183,6 +1469,12 @@ def recompute_client_recommendations(
             q = q.where(Unit.floor_area_m2 >= profile.area_min)
         if profile.area_max is not None:
             q = q.where(Unit.floor_area_m2 <= profile.area_max)
+        # Property type hard filter
+        prop_type = profile.property_type
+        if prop_type == "flat":
+            q = q.where(func.lower(Unit.category).notin_(["house", "dům", "rodinný dům", "řadový dům"]))
+        elif prop_type == "house":
+            q = q.where(func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"]))
 
     rows = db.execute(q.order_by(Unit.id).limit(500)).all()
 
@@ -1991,6 +2283,129 @@ def mark_match_seen(
     match.seen = True
     db.add(match)
     db.commit()
+
+
+# ── Broker Notifications ────────────────────────────────────────────────────
+
+
+class BrokerNotification(BaseModel):
+    id: int
+    type: str  # 'price_change' | 'availability_change' | 'new_project'
+    unit_external_id: str | None = None
+    project_id: int | None = None
+    project_name: str | None = None
+    old_value: str | None = None
+    new_value: str | None = None
+    affected_clients: list[str] = []  # client names
+    created_at: datetime
+
+
+@app.get("/brokers/notifications", response_model=list[BrokerNotification])
+def broker_notifications(
+    db: DbSession,
+    days: int = Query(default=7, ge=1, le=30),
+    broker: Broker = Depends(get_current_broker),
+) -> list[BrokerNotification]:
+    """Recent events relevant to the broker's clients' recommended units."""
+    since = datetime.utcnow() - timedelta(days=days)
+
+    # Get all client IDs for this broker
+    client_rows = db.execute(
+        select(Client.id, Client.name).where(Client.broker_id == broker.id)
+    ).all()
+    if not client_rows:
+        return []
+    client_map = {r[0]: r[1] for r in client_rows}
+    client_ids = list(client_map.keys())
+
+    # Get recommended unit IDs per client
+    rec_rows = db.execute(
+        select(ClientRecommendation.client_id, ClientRecommendation.unit_id)
+        .where(ClientRecommendation.client_id.in_(client_ids))
+    ).all()
+    # unit_id -> list of client names
+    unit_to_clients: dict[int, list[str]] = {}
+    for cid, uid in rec_rows:
+        unit_to_clients.setdefault(uid, []).append(client_map[cid])
+
+    notifications: list[BrokerNotification] = []
+
+    if unit_to_clients:
+        # Get recent events for recommended units
+        events = db.execute(
+            select(UnitEvent)
+            .where(
+                UnitEvent.unit_id.in_(list(unit_to_clients.keys())),
+                UnitEvent.created_at >= since,
+                UnitEvent.event_type.in_(["price_change", "availability_change"]),
+            )
+            .order_by(UnitEvent.created_at.desc())
+            .limit(100)
+        ).scalars().all()
+
+        # Batch-fetch units for names
+        event_unit_ids = list({e.unit_id for e in events})
+        units_map: dict[int, Unit] = {}
+        if event_unit_ids:
+            units_map = {
+                u.id: u
+                for u in db.execute(
+                    select(Unit).where(Unit.id.in_(event_unit_ids))
+                ).scalars().all()
+            }
+
+        for ev in events:
+            unit = units_map.get(ev.unit_id)
+            notifications.append(BrokerNotification(
+                id=ev.id,
+                type=ev.event_type,
+                unit_external_id=unit.external_id if unit else None,
+                project_id=unit.project_id if unit else None,
+                project_name=None,  # filled below
+                old_value=ev.old_value,
+                new_value=ev.new_value,
+                affected_clients=unit_to_clients.get(ev.unit_id, []),
+                created_at=ev.created_at,
+            ))
+
+    # New projects (added recently)
+    new_projects = db.execute(
+        select(Project)
+        .where(Project.id.in_(
+            select(Unit.project_id).where(
+                Unit.first_seen >= since.date(),
+            ).group_by(Unit.project_id)
+            .having(func.min(Unit.first_seen) >= since.date())
+        ))
+        .limit(20)
+    ).scalars().all()
+
+    for p in new_projects:
+        notifications.append(BrokerNotification(
+            id=-p.id,  # negative to distinguish
+            type="new_project",
+            project_id=p.id,
+            project_name=p.name,
+            new_value=p.name,
+            affected_clients=[],
+            created_at=datetime.utcnow(),
+        ))
+
+    # Fill project names
+    proj_ids = [n.project_id for n in notifications if n.project_id and not n.project_name]
+    if proj_ids:
+        proj_map = {
+            p.id: p.name
+            for p in db.execute(
+                select(Project).where(Project.id.in_(set(proj_ids)))
+            ).scalars().all()
+        }
+        for n in notifications:
+            if n.project_id and not n.project_name:
+                n.project_name = proj_map.get(n.project_id)
+
+    notifications.sort(key=lambda x: x.created_at, reverse=True)
+    return notifications
 
 
 @app.get("/analytics/clients-without-units", response_model=list[ClientWithoutInventoryItem])
@@ -3970,6 +4385,22 @@ def get_projects_overview(
 )
 def get_projects_filters(db: DbSession):
     return get_filter_groups(db)
+
+
+def _equiv_price_per_m2_sql():
+    """SQL expression for equivalent price per m² with degressive exterior weighting.
+
+    Bands: 0-10m² × 0.50, 10-50m² × 0.33, 50-100m² × 0.20, 100+m² × 0.10
+    """
+    ext = func.coalesce(Unit.exterior_area_m2, 0)
+    weighted_ext = (
+        func.least(ext, 10) * 0.50
+        + func.greatest(func.least(ext, 50) - 10, 0) * 0.33
+        + func.greatest(func.least(ext, 100) - 50, 0) * 0.20
+        + func.greatest(ext - 100, 0) * 0.10
+    )
+    equiv_area = Unit.floor_area_m2 + weighted_ext
+    return (Unit.price_czk / func.nullif(equiv_area, 0)).cast(sa.Integer)
 
 
 def _project_agg_subquery():

@@ -140,6 +140,10 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "local_price_diff_500m": ("Unit", "local_price_diff_500m"),
     "local_price_diff_1000m": ("Unit", "local_price_diff_1000m"),
     "local_price_diff_2000m": ("Unit", "local_price_diff_2000m"),
+    # Nová pole (Sprint C)
+    "completion_date": ("Project", "completion_date"),
+    "floors_above_ground": ("Project", "floors_above_ground"),
+    "energy_class": ("Project", "energy_class"),
 }
 
 

@@ -12,6 +12,43 @@ from .project_catalog import get_project_columns, get_project_overrideable_field
 
 logger = logging.getLogger(__name__)
 
+
+def weighted_exterior_m2(exterior_area: float | None) -> float:
+    """Degressive weighting of exterior area for equivalent m² calculation.
+
+    Bands:
+        0–10 m²   → × 0.50
+        10–50 m²  → × 0.33
+        50–100 m² → × 0.20
+        100+ m²   → × 0.10
+    """
+    if exterior_area is None or exterior_area <= 0:
+        return 0.0
+    remaining = float(exterior_area)
+    result = 0.0
+    bands = [(10, 0.50), (40, 0.33), (50, 0.20), (float("inf"), 0.10)]
+    for width, weight in bands:
+        chunk = min(remaining, width)
+        result += chunk * weight
+        remaining -= chunk
+        if remaining <= 0:
+            break
+    return round(result, 2)
+
+
+def compute_equivalent_price_per_m2(
+    price_czk: int | float | None,
+    floor_area_m2: float | None,
+    exterior_area_m2: float | None,
+) -> int | None:
+    """Compute price per equivalent m² using degressive exterior weighting."""
+    if price_czk is None or floor_area_m2 is None or floor_area_m2 <= 0:
+        return None
+    equiv = float(floor_area_m2) + weighted_exterior_m2(exterior_area_m2)
+    if equiv <= 0:
+        return None
+    return round(price_czk / equiv)
+
 OVERRIDEABLE_FIELDS = frozenset(
     {
         "price_czk",
@@ -313,7 +350,11 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "availability_status": _get("availability_status", base.availability_status),
         "available": _get("available", base.available),
         "price_czk": _get("price_czk", base.price_czk),
-        "price_per_m2_czk": _get("price_per_m2_czk", base.price_per_m2_czk),
+        "price_per_m2_czk": compute_equivalent_price_per_m2(
+            _get("price_czk", base.price_czk),
+            _dec(_get("floor_area_m2", base.floor_area_m2)),
+            _dec(_get("exterior_area_m2", base.exterior_area_m2)),
+        ) or base.price_per_m2_czk,
         "floor_area_m2": _dec(_get("floor_area_m2", base.floor_area_m2)),
         "equivalent_area_m2": _dec(_get("equivalent_area_m2", base.equivalent_area_m2)),
         "exterior_area_m2": _dec(_get("exterior_area_m2", base.exterior_area_m2)),
