@@ -136,22 +136,27 @@ function FitDot({ value, title }: { value: number; title: string }) {
   );
 }
 
-/** Segmented 3-way toggle for Neřeším / Preferuji / Musí být preference fields. */
+/** Segmented 3-way toggle for Neřeším / Preferuji / Musí být preference fields.
+ *  When `hard` is true, "Musí být" acts as a hard filter (excludes units) and is styled red. */
 function PrefToggle({
   value,
   onChange,
   preferLabel = "Preferuji",
-  mustLabel = "Musí být",
+  mustLabel,
+  hard = false,
 }: {
   value: string;
   onChange: (v: string) => void;
   preferLabel?: string;
   mustLabel?: string;
+  hard?: boolean;
 }) {
+  const defaultMustLabel = hard ? "Vyžaduji" : "Musí být";
+  const ml = mustLabel ?? defaultMustLabel;
   const opts = [
     { v: "ignore", label: "Neřeším",   activeClass: "bg-white text-slate-700 shadow-sm" },
     { v: "prefer", label: preferLabel, activeClass: "bg-violet-100 text-violet-900 shadow-sm" },
-    { v: "must",   label: mustLabel,   activeClass: "bg-slate-900 text-white shadow-sm" },
+    { v: "must",   label: ml, activeClass: hard ? "bg-rose-600 text-white shadow-sm" : "bg-slate-900 text-white shadow-sm" },
   ];
   return (
     <div className="inline-flex shrink-0 rounded-lg border border-slate-200 bg-slate-100/60 p-0.5">
@@ -1666,6 +1671,7 @@ export default function ClientDetailPage() {
                             <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
                               <span className="text-sm text-slate-700">{label}</span>
                               <PrefToggle
+                                hard
                                 value={(wizardExtras.outdoor as any)?.[key] ?? "ignore"}
                                 onChange={(v) =>
                                   setWizardExtras((prev) => ({
@@ -1784,6 +1790,7 @@ export default function ClientDetailPage() {
                                 <p className="mt-0.5 text-[11px] text-slate-500">{desc}</p>
                               </div>
                               <PrefToggle
+                                hard
                                 value={(wizardExtras.standards as any)?.[key] ?? "ignore"}
                                 onChange={(v) =>
                                   setWizardExtras((prev) => ({
@@ -1874,6 +1881,7 @@ export default function ClientDetailPage() {
                             <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
                               <span className="text-sm text-slate-700">{label}</span>
                               <PrefToggle
+                                hard
                                 value={(wizardExtras.noise as any)?.[key] ?? "ignore"}
                                 onChange={(v) =>
                                   setWizardExtras((prev) => ({
@@ -1882,7 +1890,7 @@ export default function ClientDetailPage() {
                                   }))
                                 }
                                 preferLabel="Citlivý/á"
-                                mustLabel="Musí se vyhnout"
+                                mustLabel="Vyloučit"
                               />
                             </div>
                           ))}
@@ -1905,6 +1913,7 @@ export default function ClientDetailPage() {
                             <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
                               <span className="text-sm text-slate-700">{label}</span>
                               <PrefToggle
+                                hard
                                 value={(wizardExtras.house_amenities as any)?.[key] ?? "ignore"}
                                 onChange={(v) =>
                                   setWizardExtras((prev) => ({

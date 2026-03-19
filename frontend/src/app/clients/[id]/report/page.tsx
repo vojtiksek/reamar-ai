@@ -28,6 +28,7 @@ type RecItem = {
   distance_to_tram_stop_m?: number | null;
   distance_to_metro_station_m?: number | null;
   distance_to_bus_stop_m?: number | null;
+  broker_note?: string | null;
 };
 
 type ClientInfo = { id: number; name: string };
@@ -108,6 +109,7 @@ function buildReportHtml(
           ${details.map((d) => `<div><p class="label">${d.label}</p><p class="value">${d.value}</p></div>`).join("")}
         </div>
         ${transport.length > 0 ? `<p class="transport">${transport.join(" · ")}</p>` : ""}
+        ${r.broker_note ? `<div class="broker-note"><p class="label">Komentář poradce</p><p class="note-text">${r.broker_note}</p></div>` : ""}
         <div class="score-bar">
           <span class="score-label">Shoda:</span>
           <div class="bar-track"><div class="bar-fill" style="width:${Math.min(100, Math.round(r.score))}%"></div></div>
@@ -146,6 +148,8 @@ function buildReportHtml(
   .bar-track { flex: 1; height: 10px; background: #e2e8f0; border-radius: 999px; overflow: hidden; }
   .bar-fill { height: 100%; background: #6366f1; border-radius: 999px; }
   .score-value { font-size: 13px; font-weight: 700; }
+  .broker-note { margin-top: 12px; padding: 10px; background: #eef2ff; border-radius: 8px; }
+  .note-text { font-size: 13px; color: #334155; margin-top: 4px; white-space: pre-wrap; }
   .footer { margin-top: 32px; border-top: 1px solid #e2e8f0; padding-top: 12px; text-align: center; font-size: 11px; color: #94a3b8; }
   @media print {
     body { padding: 0; }
@@ -155,12 +159,22 @@ function buildReportHtml(
 </head>
 <body>
   <div class="header">
-    <h1>Doporučené nemovitosti</h1>
-    <p class="meta">Připraveno pro: <strong>${client.name}</strong></p>
-    <p class="date">${date}</p>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+      <div>
+        <h1>Doporučené nemovitosti</h1>
+        <p class="meta">Připraveno pro: <strong>${client.name}</strong></p>
+        <p class="date">${date}</p>
+      </div>
+      <div style="text-align:right;font-size:12px;color:#64748b;">
+        <p style="font-weight:600;color:#1e293b;">Vojtěch Sommer</p>
+        <p>vojtech.sommer@me.com</p>
+        <p>+420 725 849 820</p>
+        <p style="margin-top:4px;"><a href="https://www.reamar.cz" style="color:#6366f1;">www.reamar.cz</a></p>
+      </div>
+    </div>
   </div>
   ${cards}
-  <div class="footer">Generováno aplikací Reamar · ${date}</div>
+  <div class="footer">Generováno aplikací Reamar · ${date} · www.reamar.cz</div>
   <script>window.onload = function() { window.print(); }</script>
 </body>
 </html>`;

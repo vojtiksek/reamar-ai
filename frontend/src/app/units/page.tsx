@@ -74,6 +74,7 @@ type ClientRecommendationItem = {
   distance_to_tram_stop_m?: number | null;
   distance_to_metro_station_m?: number | null;
   distance_to_bus_stop_m?: number | null;
+  broker_note?: string | null;
 };
 
 type UnitsListResponse = {
@@ -1996,6 +1997,26 @@ export default function Home() {
                     Porovnat ({compareIds.size})
                   </button>
                 )}
+                <button
+                  type="button"
+                  className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                  onClick={async () => {
+                    const top = visibleRecs.filter((r) => !r.pinned_by_broker).slice(0, 10);
+                    if (!top.length || !activeClient) return;
+                    const t = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+                    if (!t) return;
+                    for (const r of top) {
+                      await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/${r.rec_id}/pin`, {
+                        method: "PATCH",
+                        headers: { Authorization: `Bearer ${t}` },
+                      });
+                    }
+                    setRecs((prev) => prev.map((r) => top.some((x) => x.rec_id === r.rec_id) ? { ...r, pinned_by_broker: true } : r));
+                  }}
+                  title="Připnout prvních 10 nepřipnutých doporučení"
+                >
+                  Pinni top 10
+                </button>
                 <span className="text-xs text-slate-500">
                   {recsLoading ? "Načítám…" : `${visibleRecs.length} z ${recs.length}`}
                 </span>
@@ -2192,6 +2213,29 @@ export default function Home() {
                                     <FitBar label="Dispozice" value={r.layout_fit} />
                                     <FitBar label="Plocha" value={r.area_fit} />
                                     <FitBar label="Venkovní plocha" value={r.outdoor_fit} />
+                                  </div>
+                                  {/* Broker note */}
+                                  <div className="flex flex-col gap-1 min-w-[200px] max-w-[300px]">
+                                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-0.5">Poznámka brokera</p>
+                                    <textarea
+                                      className="w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-700 placeholder:text-slate-300 focus:border-slate-400 focus:outline-none resize-none"
+                                      rows={2}
+                                      placeholder="Proč tuto jednotku doporučuji…"
+                                      defaultValue={r.broker_note ?? ""}
+                                      onClick={(e) => e.stopPropagation()}
+                                      onBlur={async (e) => {
+                                        const val = e.target.value.trim();
+                                        if (val === (r.broker_note ?? "")) return;
+                                        const t = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+                                        if (!t || !activeClient) return;
+                                        await fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/${r.rec_id}/note`, {
+                                          method: "PATCH",
+                                          headers: { Authorization: `Bearer ${t}`, "Content-Type": "application/json" },
+                                          body: JSON.stringify({ broker_note: val || null }),
+                                        });
+                                        setRecs((prev) => prev.map((x) => x.rec_id === r.rec_id ? { ...x, broker_note: val || null } : x));
+                                      }}
+                                    />
                                   </div>
                                 </div>
                               </td>

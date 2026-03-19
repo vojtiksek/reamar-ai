@@ -29,10 +29,14 @@ type ShareUnit = {
   gps_latitude: number | null;
   gps_longitude: number | null;
   url: string | null;
+  broker_note: string | null;
 };
 
 type SharePayload = {
   client_name: string;
+  broker_name: string | null;
+  broker_phone: string | null;
+  broker_email: string | null;
   units: ShareUnit[];
   expires_at: string;
 };
@@ -145,8 +149,20 @@ export default function SharePage() {
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <span className="text-base font-semibold text-slate-900">Váš výběr nemovitostí</span>
+          <span className="text-xs text-slate-400">{unitCountLabel} ve výběru</span>
         </div>
-        <span className="text-xs text-slate-400">{unitCountLabel} ve výběru</span>
+        <div className="flex items-center gap-4">
+          {payload.broker_name && (
+            <div className="text-right text-[11px] text-slate-500">
+              <p className="font-medium text-slate-700">{payload.broker_name}</p>
+              {payload.broker_email && <p>{payload.broker_email}</p>}
+              {payload.broker_phone && <p>{payload.broker_phone}</p>}
+            </div>
+          )}
+          <span className="text-[10px] text-slate-400">
+            Platný do {new Date(payload.expires_at).toLocaleDateString("cs-CZ")}
+          </span>
+        </div>
       </header>
 
       {units.length === 0 ? (
@@ -277,6 +293,14 @@ export default function SharePage() {
                     )}
                   </div>
                 </div>
+
+                {/* Broker note */}
+                {unit.broker_note && (
+                  <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-5">
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-indigo-400">Komentář poradce</p>
+                    <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{unit.broker_note}</p>
+                  </div>
+                )}
 
                 {/* Map */}
                 {hasGps && (

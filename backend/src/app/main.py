@@ -336,6 +336,7 @@ class ClientRecommendationItem(BaseModel):
     distance_to_metro_station_m: float | None = None
     distance_to_bus_stop_m: float | None = None
     reason: dict[str, Any] | None = None
+    broker_note: str | None = None
 
 
 class BrokerMatchItem(BaseModel):
@@ -2041,6 +2042,7 @@ def list_client_recommendations(
                 distance_to_metro_station_m=project.distance_to_metro_station_m,
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
                 reason=reason,
+                broker_note=rec.broker_note,
             )
         )
     return items
@@ -2182,6 +2184,28 @@ def unhide_recommendation(
     rec.hidden_by_broker = False
     db.add(rec)
     db.commit()
+
+
+class RecNoteBody(BaseModel):
+    broker_note: str | None = None
+
+
+@app.patch("/clients/{client_id}/recommendations/{rec_id}/note", status_code=200)
+def update_recommendation_note(
+    client_id: int,
+    rec_id: int,
+    body: RecNoteBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, str | None]:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    rec.broker_note = body.broker_note
+    db.add(rec)
+    db.commit()
+    return {"broker_note": rec.broker_note}
 
 
 @app.delete("/clients/{client_id}/recommendations/{rec_id}", status_code=204)
@@ -5727,12 +5751,16 @@ class ShareUnitItem(BaseModel):
     gps_latitude: float | None
     gps_longitude: float | None
     url: str | None
+    broker_note: str | None = None
 
 
 class SharePayload(BaseModel):
     """Public payload returned by GET /share/{token}."""
     model_config = ConfigDict(from_attributes=True)
     client_name: str
+    broker_name: str | None = None
+    broker_phone: str | None = None
+    broker_email: str | None = None
     units: list[ShareUnitItem]
     expires_at: datetime
 
@@ -5807,6 +5835,9 @@ def get_share_payload(token: str, db: DbSession) -> SharePayload:
         .order_by(ClientRecommendation.id)
     ).all()
 
+    # Get broker info for contact details
+    broker = db.get(Broker, link.broker_id)
+
     units: list[ShareUnitItem] = []
     for _rec, unit, project in recs:
         developer = unit.developer or project.developer
@@ -5839,7 +5870,15 @@ def get_share_payload(token: str, db: DbSession) -> SharePayload:
             gps_latitude=lat,
             gps_longitude=lng,
             url=unit.url,
+            broker_note=_rec.broker_note,
         ))
 
-    return SharePayload(client_name=client.name, units=units, expires_at=link.expires_at)
+    return SharePayload(
+        client_name=client.name,
+        broker_name=broker.name if broker else None,
+        broker_phone=None,  # TODO: add phone to Broker model
+        broker_email=broker.email if broker else None,
+        units=units,
+        expires_at=link.expires_at,
+    )
 

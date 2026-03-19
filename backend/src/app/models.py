@@ -427,6 +427,7 @@ class ClientRecommendation(Base):
     reason_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     pinned_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     hidden_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    broker_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'suggested'"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
