@@ -268,7 +268,7 @@ export default function PresentPage() {
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {pinnedRecs.map((rec) => {
+              {pinnedRecs.map((rec, recIdx) => {
                 const isSelected = rec.unit_external_id === selectedId;
                 return (
                   <li key={rec.rec_id}>
@@ -277,10 +277,34 @@ export default function PresentPage() {
                           ? "border-violet-500 bg-violet-50"
                           : "border-transparent hover:bg-slate-50"
                       }`}>
+                      <div className="flex shrink-0 flex-col px-1">
+                        <button
+                          type="button"
+                          disabled={recIdx === 0}
+                          className="text-[10px] text-slate-300 hover:text-slate-600 disabled:opacity-20"
+                          onClick={() => setPinnedRecs((prev) => {
+                            if (recIdx <= 0) return prev;
+                            const next = [...prev];
+                            [next[recIdx - 1], next[recIdx]] = [next[recIdx], next[recIdx - 1]];
+                            return next;
+                          })}
+                        >▲</button>
+                        <button
+                          type="button"
+                          disabled={recIdx === pinnedRecs.length - 1}
+                          className="text-[10px] text-slate-300 hover:text-slate-600 disabled:opacity-20"
+                          onClick={() => setPinnedRecs((prev) => {
+                            if (recIdx >= prev.length - 1) return prev;
+                            const next = [...prev];
+                            [next[recIdx], next[recIdx + 1]] = [next[recIdx + 1], next[recIdx]];
+                            return next;
+                          })}
+                        >▼</button>
+                      </div>
                       <button
                         type="button"
                         onClick={() => rec.unit_external_id && setSelectedId(rec.unit_external_id)}
-                        className="min-w-0 flex-1 px-4 py-3 text-left"
+                        className="min-w-0 flex-1 px-3 py-3 text-left"
                       >
                         <p className={`truncate text-sm font-semibold ${isSelected ? "text-violet-900" : "text-slate-800"}`}>
                           {rec.project_name ?? "—"}

@@ -1831,6 +1831,61 @@ def market_fit_analysis(
     )
 
 
+@app.get("/clients/{client_id}/market-simulate")
+def market_simulate(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+    budget_max: int | None = Query(default=None),
+    area_min: float | None = Query(default=None),
+    area_max: float | None = Query(default=None),
+) -> dict[str, int]:
+    """Quick simulation: how many units match with modified budget/area?"""
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        return {"matching_units": 0}
+
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+    )
+    rows = db.execute(q.limit(1000)).all()
+
+    eff_budget_max = budget_max if budget_max is not None else profile.budget_max
+    eff_area_min = area_min if area_min is not None else profile.area_min
+    eff_area_max = area_max if area_max is not None else profile.area_max
+
+    pref_layout_buckets: list[str] = []
+    if profile.layouts and "values" in profile.layouts:
+        pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
+
+    poly = _parse_polygon_geojson(profile.polygon_geojson)
+    count = 0
+    for unit, project in rows:
+        price = unit.price_czk
+        area = float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None
+        if price is not None and eff_budget_max is not None and price > eff_budget_max:
+            continue
+        if area is not None and eff_area_min is not None and area < eff_area_min:
+            continue
+        if area is not None and eff_area_max is not None and area > eff_area_max:
+            continue
+        if pref_layout_buckets and unit.layout:
+            bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
+            if bucket not in pref_layout_buckets:
+                continue
+        if poly and project.gps_latitude is not None and project.gps_longitude is not None:
+            if not _point_in_polygon(float(project.gps_latitude), float(project.gps_longitude), poly):
+                continue
+        count += 1
+
+    return {"matching_units": count}
+
+
 @app.get(
     "/clients/{client_id}/area-market-analysis",
     response_model=AreaMarketAnalysisResponse,
@@ -5881,4 +5936,39 @@ def get_share_payload(token: str, db: DbSession) -> SharePayload:
         units=units,
         expires_at=link.expires_at,
     )
+
+
+class ShareFeedbackBody(BaseModel):
+    unit_index: int
+    feedback: str  # 'interested' | 'not_interested'
+
+
+@app.post("/share/{token}/feedback", status_code=204)
+def share_feedback(token: str, body: ShareFeedbackBody, db: DbSession) -> None:
+    """Public endpoint — client submits feedback on a shared unit."""
+    link = db.execute(
+        select(ClientShareLink).where(ClientShareLink.token == token)
+    ).scalar_one_or_none()
+    if link is None:
+        raise HTTPException(status_code=404, detail="Link not found")
+
+    # Find the rec by index
+    recs = db.execute(
+        select(ClientRecommendation)
+        .where(
+            ClientRecommendation.client_id == link.client_id,
+            ClientRecommendation.pinned_by_broker.is_(True),
+            ClientRecommendation.hidden_by_broker.is_(False),
+        )
+        .order_by(ClientRecommendation.id)
+    ).scalars().all()
+
+    if body.unit_index < 0 or body.unit_index >= len(recs):
+        raise HTTPException(status_code=422, detail="Invalid unit index")
+
+    rec = recs[body.unit_index]
+    # Store feedback in status field
+    rec.status = body.feedback  # 'interested' | 'not_interested'
+    db.add(rec)
+    db.commit()
 

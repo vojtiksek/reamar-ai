@@ -335,6 +335,38 @@ export default function SharePage() {
                   </div>
                 )}
 
+                {/* Client feedback */}
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    className="flex-1 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-800 hover:bg-emerald-100"
+                    onClick={async () => {
+                      await fetch(`${API_BASE}/share/${token}/feedback`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ unit_index: selectedIdx, feedback: "interested" }),
+                      });
+                      alert("Děkujeme za zpětnou vazbu!");
+                    }}
+                  >
+                    Mám zájem
+                  </button>
+                  <button
+                    type="button"
+                    className="flex-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-medium text-slate-600 hover:bg-slate-100"
+                    onClick={async () => {
+                      await fetch(`${API_BASE}/share/${token}/feedback`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ unit_index: selectedIdx, feedback: "not_interested" }),
+                      });
+                      alert("Děkujeme za zpětnou vazbu!");
+                    }}
+                  >
+                    Nemám zájem
+                  </button>
+                </div>
+
                 {/* Developer link */}
                 {unit.url && (
                   <div className="pb-2">

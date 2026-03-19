@@ -14,6 +14,7 @@ import type { WalkabilityPreferences } from "@/lib/walkabilityPreferences";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
 import { ClientLocationMap, type LocationProjectPoint } from "@/components/ClientLocationMap";
+import { AddressSearch } from "@/components/AddressSearch";
 import {
   InfoBox,
   ReamarButton,
@@ -1122,6 +1123,30 @@ export default function ClientDetailPage() {
                             }}
                             onActiveAreaChange={setActiveAreaIndex}
                           />
+                          {/* Address search → circle polygon */}
+                          <div className="flex items-center gap-2">
+                            <AddressSearch
+                              className="flex-1"
+                              placeholder="Nakreslit okruh z adresy…"
+                              onSelect={(result) => {
+                                // Create a circular polygon (~1 km radius, 24 points)
+                                const R = 0.009; // ~1 km in degrees
+                                const pts = Array.from({ length: 24 }, (_, i) => {
+                                  const angle = (i / 24) * 2 * Math.PI;
+                                  return {
+                                    lat: result.lat + R * Math.sin(angle),
+                                    lng: result.lng + (R / Math.cos((result.lat * Math.PI) / 180)) * Math.cos(angle),
+                                  };
+                                });
+                                setLocationPolygons((prev) => {
+                                  const next = [...prev, pts];
+                                  setActiveAreaIndex(next.length - 1);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </div>
+
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
                               <ReamarButton
@@ -1960,6 +1985,43 @@ export default function ClientDetailPage() {
                           </div>
                         )}
                       </div>
+
+                      {/* ── Market simulation ── */}
+                      {profile?.budget_max != null && (
+                        <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
+                          <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">
+                            Simulace trhu — co kdyby?
+                          </p>
+                          <div className="space-y-3">
+                            {[5, 10, 20].map((pct) => {
+                              const simBudget = Math.round((profile.budget_max ?? 0) * (1 + pct / 100));
+                              return (
+                                <button
+                                  key={pct}
+                                  type="button"
+                                  className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-left hover:bg-slate-50"
+                                  onClick={async () => {
+                                    if (!token || !clientId) return;
+                                    const r = await fetch(
+                                      `${API_BASE}/clients/${clientId}/market-simulate?budget_max=${simBudget}`,
+                                      { headers: { Authorization: `Bearer ${token}` } }
+                                    );
+                                    if (r.ok) {
+                                      const d = await r.json();
+                                      alert(`S rozpočtem ${formatCurrencyCzk(simBudget)} (+${pct}%) by matchovalo ${d.matching_units} jednotek.`);
+                                    }
+                                  }}
+                                >
+                                  <span className="text-xs text-slate-600">
+                                    Rozpočet +{pct}% → {formatCurrencyCzk(simBudget)}
+                                  </span>
+                                  <span className="text-xs text-indigo-600">Spočítat →</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
 
                       {/* ── Must-have ── */}
                       <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
