@@ -370,6 +370,22 @@ export default function ProjectsMapPage() {
     setDraftPolygon((prev) => [...prev, { lat, lng }]);
   };
 
+  // Escape cancels drawing, Ctrl+Z undoes last point
+  useEffect(() => {
+    if (!drawing) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDrawing(false);
+        setDraftPolygon([]);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        setDraftPolygon((prev) => prev.slice(0, -1));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [drawing]);
+
   return (
     <div className="flex h-[calc(100vh-60px)] flex-col gap-3 overflow-hidden pb-2 pt-3">
       {/* Toolbar — no duplicate nav, GlobalNav from layout handles navigation */}
@@ -406,6 +422,16 @@ export default function ProjectsMapPage() {
               className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
             >
               Zrušit oblast
+            </button>
+          )}
+          {drawing && draftPolygon.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setDraftPolygon((prev) => prev.slice(0, -1))}
+              className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+              title="Ctrl+Z"
+            >
+              Zpět bod
             </button>
           )}
           {drawing && draftPolygon.length >= 3 && (

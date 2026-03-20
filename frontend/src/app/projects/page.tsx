@@ -1,6 +1,6 @@
 "use client";
 
-import type React from "react";
+import React from "react";
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { FilterChips } from "@/components/FilterChips";
@@ -424,6 +424,7 @@ export default function ProjectsPage() {
     Map<number, { score: number | null; label: string | null }>
   >(new Map());
 
+  const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
   const rowClickTimeoutRef = useRef<number | null>(null);
 
   const syncToUrl = useCallback(
@@ -663,8 +664,10 @@ export default function ProjectsPage() {
           }
         );
         if (!res.ok) {
+          const errText = await res.text();
           // eslint-disable-next-line no-console
-          console.error("Failed to save project override", await res.text());
+          console.error("Failed to save project override", errText);
+          setError(`Nepodařilo se uložit změnu: ${errText.slice(0, 100)}`);
           return;
         }
         const updated = (await res.json()) as Record<string, unknown>;
@@ -676,6 +679,7 @@ export default function ProjectsPage() {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("Failed to save project override", e);
+        setError(`Nepodařilo se uložit změnu: ${e instanceof Error ? e.message : "Neznámá chyba"}`);
       } finally {
         setSavingOverride(false);
         setEditingCell(null);
@@ -836,22 +840,23 @@ export default function ProjectsPage() {
       // Ignore modified or non-left clicks
       if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
 
-      // Double-click: cancel any pending navigation so inline editing can proceed
+      // Double-click: navigate to detail page
       if (e.detail > 1) {
         if (rowClickTimeoutRef.current !== null) {
           window.clearTimeout(rowClickTimeoutRef.current);
           rowClickTimeoutRef.current = null;
         }
+        router.push(`/projects/${projectId}`);
         return;
       }
 
-      // Schedule navigation; if this turns into a double-click, the second click will cancel it
+      // Single click: toggle expanded row
       if (rowClickTimeoutRef.current !== null) {
         window.clearTimeout(rowClickTimeoutRef.current);
       }
       rowClickTimeoutRef.current = window.setTimeout(() => {
         rowClickTimeoutRef.current = null;
-        router.push(`/projects/${projectId}`);
+        setExpandedRowId((prev) => (prev === projectId ? null : projectId));
       }, 180);
     },
     [router, editingCell]
@@ -1390,10 +1395,12 @@ export default function ProjectsPage() {
                     </td>
                   </tr>
                 ) : (
-                  sortedProjects.map((p) => (
+                  sortedProjects.map((p) => {
+                    const isExpanded = expandedRowId === (p.id as number);
+                    return (
+                    <React.Fragment key={p.id as number}>
                     <tr
-                      key={p.id as number}
-                      className="cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-slate-50"
+                      className={`cursor-pointer transition-colors odd:bg-white even:bg-gray-50/60 hover:bg-slate-50 ${isExpanded ? "!bg-slate-100" : ""}`}
                       onClick={(e) => handleRowClick(e, p.id as number)}
                     >
                       {visibleColumns.map((col, columnIndex) => {
@@ -1521,7 +1528,76 @@ export default function ProjectsPage() {
                         );
                       })}
                     </tr>
-                  ))
+                    {isExpanded && (
+                      <tr className="bg-slate-50/80">
+                        <td colSpan={visibleColumns.length} className="px-4 py-3">
+                          <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3 lg:grid-cols-5 text-sm">
+                            {(() => {
+                              const fields: Array<{ label: string; value: unknown }> = [
+                                { label: "Adresa", value: p["address"] },
+                                { label: "Obec", value: p["municipality"] },
+                                { label: "Okres", value: p["district"] },
+                                { label: "Kvalita", value: p["overall_quality"] },
+                                { label: "Topení", value: p["heating"] },
+                                { label: "Okna", value: p["windows"] },
+                                { label: "Podlaha", value: p["floors"] },
+                                { label: "Klimatizace", value: p["air_conditioning"] },
+                                { label: "Rekuperace", value: p["recuperation"] },
+                                { label: "Žaluzie", value: p["exterior_blinds"] },
+                                { label: "Smart home", value: p["smart_home"] },
+                                { label: "Walkability", value: p["walkability_score"] != null ? `${Math.round(Number(p["walkability_score"]))} (${p["walkability_label"] ?? ""})` : null },
+                                { label: "Hluk", value: p["noise_label"] },
+                                { label: "Mikro-lokalita", value: p["micro_location_label"] },
+                                { label: "Dní na trhu", value: p["max_days_on_market"] },
+                                { label: "Od", value: p["project_first_seen"] },
+                              ];
+                              const formatBool = (v: unknown) => {
+                                if (v === true || v === "true" || v === "1") return "Ano";
+                                if (v === false || v === "false" || v === "0") return "Ne";
+                                return null;
+                              };
+                              return fields
+                                .filter((f) => f.value != null && f.value !== "" && f.value !== undefined)
+                                .map((f) => (
+                                  <div key={f.label}>
+                                    <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">{f.label}</p>
+                                    <p className="font-medium text-slate-900">
+                                      {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false"].includes(f.value.toLowerCase()))
+                                        ? formatBool(f.value) ?? String(f.value)
+                                        : String(f.value)}
+                                    </p>
+                                  </div>
+                                ));
+                            })()}
+                          </div>
+                          <div className="mt-3 flex gap-2">
+                            <a
+                              href={`/projects/${p.id}`}
+                              className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
+                              data-no-row-nav
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              Detail projektu
+                            </a>
+                            {p["project_url"] && (
+                              <a
+                                href={p["project_url"] as string}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                data-no-row-nav
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                ↗ Web projektu
+                              </a>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                    );
+                  })
                 )}
               </tbody>
             </table>

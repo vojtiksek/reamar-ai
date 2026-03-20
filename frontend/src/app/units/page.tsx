@@ -20,7 +20,7 @@ import { decodePolygon, getPolygonBounds } from "@/lib/geo";
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import React from "react";
 import {
   type WalkabilityPreferences,
@@ -741,6 +741,7 @@ export default function Home() {
   const [showOnlyPendingApi, setShowOnlyPendingApi] = useState(() => searchParams?.get("pending_api") === "1");
   const [actionsOpen, setActionsOpen] = useState(false);
 
+  const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const rowClickTimeoutRef = useRef<number | null>(null);
   /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL” přepsat state starou URL (router.replace je async). */
   const skipSyncSortPaginationRef = useRef(false);
@@ -1440,8 +1441,10 @@ export default function Home() {
           }
         );
         if (!res.ok) {
+          const errText = await res.text();
           // eslint-disable-next-line no-console
-          console.error("Failed to save unit override", await res.text());
+          console.error("Failed to save unit override", errText);
+          setError(`Nepodařilo se uložit změnu: ${errText.slice(0, 100)}`);
           return;
         }
         const updated = (await res.json()) as any;
@@ -1463,6 +1466,7 @@ export default function Home() {
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error("Failed to save unit override", e);
+        setError(`Nepodařilo se uložit změnu: ${e instanceof Error ? e.message : "Neznámá chyba"}`);
       } finally {
         setSavingOverride(false);
         setEditingCell(null);
@@ -1503,22 +1507,23 @@ export default function Home() {
         return;
       }
 
-      // Double-click: cancel any pending navigation so inline editing can proceed
+      // Double-click: navigate to detail page
       if (e.detail > 1) {
         if (rowClickTimeoutRef.current !== null) {
           window.clearTimeout(rowClickTimeoutRef.current);
           rowClickTimeoutRef.current = null;
         }
+        router.push(`/units/${encodeURIComponent(externalId)}`);
         return;
       }
 
-      // Schedule navigation; if this turns into a double-click, the second click will cancel it
+      // Single click: toggle expanded row (instead of navigating)
       if (rowClickTimeoutRef.current !== null) {
         window.clearTimeout(rowClickTimeoutRef.current);
       }
       rowClickTimeoutRef.current = window.setTimeout(() => {
         rowClickTimeoutRef.current = null;
-        router.push(`/units/${encodeURIComponent(externalId)}`);
+        setExpandedRowId((prev) => (prev === externalId ? null : externalId));
       }, 180);
     },
     [router, editingCell, getExternalIdForRow]
@@ -2294,19 +2299,25 @@ export default function Home() {
                 >
                   Další
                 </button>
-                <button
-                  type="button"
-                  onClick={() => downloadUnitsCsv(units, visibleColumns)}
-                  disabled={units.length === 0 || loading}
-                  title="Export aktuální stránky do CSV (UTF-8)"
-                  className="ml-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs sm:text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  Export CSV
-                </button>
               </div>
             </div>
             {/* Mobilní karty – zobrazí se jen na malých obrazovkách */}
             <div className="block space-y-2 md:hidden">
+              {loading && units.length === 0 && Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="animate-pulse rounded-xl border border-slate-200 bg-white p-3 shadow-sm space-y-2">
+                  <div className="h-4 w-24 rounded bg-slate-200" />
+                  <div className="h-3 w-32 rounded bg-slate-200" />
+                  <div className="flex justify-between">
+                    <div className="h-4 w-16 rounded bg-slate-200" />
+                    <div className="h-4 w-20 rounded bg-slate-200" />
+                  </div>
+                </div>
+              ))}
+              {!loading && units.length === 0 && (
+                <p className="px-3 py-8 text-center text-sm text-slate-600">
+                  Žádné jednotky nevyhovují zadaným filtrům.
+                </p>
+              )}
               {!loading && units.length > 0 &&
                 units.map((u: Unit) => {
                   const extId = getExternalIdForRow(u) ?? u.external_id;
@@ -2433,10 +2444,11 @@ export default function Home() {
                               backgroundColor: isSold ? "#fecaca" : "#fef3c7", // tailwind-ish: red-200 / amber-100
                             }
                           : undefined;
+                      const isExpanded = expandedRowId === u.external_id;
                       return (
+                        <React.Fragment key={u.external_id}>
                         <tr
-                          key={u.external_id}
-                          className={`${baseRowClass} ${stripeClass} ${statusClass}`}
+                          className={`${baseRowClass} ${stripeClass} ${statusClass} ${isExpanded ? "!bg-slate-100" : ""}`}
                           style={rowStyle}
                           onClick={(e) => handleRowClick(e, u)}
                         >
@@ -2690,6 +2702,70 @@ export default function Home() {
                           </td>
                         )}
                       </tr>
+                      {isExpanded && (
+                        <tr className="bg-slate-50/80">
+                          <td colSpan={visibleColumns.length + (activeClient ? 1 : 0)} className="px-4 py-3">
+                            <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3 lg:grid-cols-5 text-sm">
+                              {/* Key unit data */}
+                              {(() => {
+                                const fields: Array<{ label: string; value: unknown }> = [
+                                  { label: "Patro", value: getValue(u, "floor", "floor") },
+                                  { label: "Orientace", value: getValue(u, "orientation", "orientation") },
+                                  { label: "Venkovní plocha", value: (() => { const v = getValue(u, "exterior_area_m2", "exterior_area_m2"); return v != null ? `${Number(v).toFixed(1)} m\u00b2` : null; })() },
+                                  { label: "Původní cena", value: (() => { const v = getValue(u, "original_price_czk", "original_price_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_czk" }) : null; })() },
+                                  { label: "Topení", value: getValue(u, "heating", "heating") },
+                                  { label: "Klimatizace", value: getValue(u, "air_conditioning", "air_conditioning") },
+                                  { label: "Žaluzie", value: getValue(u, "exterior_blinds", "exterior_blinds") },
+                                  { label: "Smart home", value: getValue(u, "smart_home", "smart_home") },
+                                  { label: "Kvalita", value: getValue(u, "overall_quality", "overall_quality") },
+                                  { label: "Okna", value: getValue(u, "windows", "windows") },
+                                  { label: "Podlaha", value: getValue(u, "floors", "floors") ?? getValue(u, "project.floors", "floors") },
+                                  { label: "Walkability", value: (() => { const v = getValue(u, "walkability_score", "walkability_score") ?? getValue(u, "project.walkability_score", "walkability_score"); return v != null ? String(Math.round(Number(v))) : null; })() },
+                                  { label: "Mikro-lokalita", value: getValue(u, "micro_location_label", "micro_location_label") ?? getValue(u, "project.micro_location_label", "micro_location_label") },
+                                ];
+                                const formatBool = (v: unknown) => {
+                                  if (v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano") return "Ano";
+                                  if (v === false || v === "false" || v === "0" || String(v).toLowerCase() === "ne") return "Ne";
+                                  return null;
+                                };
+                                return fields
+                                  .filter((f) => f.value != null && f.value !== "" && f.value !== undefined)
+                                  .map((f) => (
+                                    <div key={f.label}>
+                                      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">{f.label}</p>
+                                      <p className="font-medium text-slate-900">
+                                        {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false","ano","ne","1","0"].includes(f.value.toLowerCase()))
+                                          ? formatBool(f.value) ?? String(f.value)
+                                          : String(f.value)}
+                                      </p>
+                                    </div>
+                                  ));
+                              })()}
+                            </div>
+                            <div className="mt-3 flex gap-2">
+                              <a
+                                href={`/units/${encodeURIComponent(u.external_id)}`}
+                                className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
+                                data-no-row-nav
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                Detail jednotky
+                              </a>
+                              {u.project && (u.project as Record<string, unknown>).id && (
+                                <a
+                                  href={`/projects/${(u.project as Record<string, unknown>).id}`}
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                  data-no-row-nav
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  Detail projektu
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                      </React.Fragment>
                     );
                   })
                   )}
@@ -2722,21 +2798,6 @@ export default function Home() {
           setPersonalizedModeEnabled(true);
           setWalkPrefsOpen(false);
           // fetching handled by useEffect
-        }}
-      />
-      <WalkabilityPreferencesDrawer
-        open={walkPrefsOpen}
-        value={walkPrefs}
-        onChange={setWalkPrefs}
-        onClose={() => setWalkPrefsOpen(false)}
-        onReset={() => {
-          const def = resetWalkPrefs();
-          setWalkPrefs(def);
-        }}
-        onApply={() => {
-          saveWalkPrefs(walkPrefs);
-          setWalkPrefsOpen(false);
-          // scores refresh via effect
         }}
       />
       {columnsConfig && (
