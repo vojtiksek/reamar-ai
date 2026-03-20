@@ -45,14 +45,14 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
 3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;NE;ANO;;0;integer;
 
-4001;Stav;Jednotka;availability;Stav;ANO;ANO;NE;;;enum;
-4007;Stav;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
-4008;Stav;Projekt;energy_class;Energetická třída;ANO;ANO;ANO;;;enum;
-4002;Stav;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
-4003;Stav;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;
-4004;Stav;Projekt;project_last_seen;Poslední výskyt;ANO;NE;NE;;;date;
-4005;Stav;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
-4006;Stav;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
+4001;Obecné;Jednotka;availability;Obecné;ANO;ANO;NE;;;enum;
+4007;Obecné;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
+4008;Obecné;Projekt;energy_class;Energetická třída;ANO;ANO;ANO;;;enum;
+4002;Obecné;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
+4003;Obecné;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;
+4004;Obecné;Projekt;project_last_seen;Poslední výskyt;ANO;NE;NE;;;date;
+4005;Obecné;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
+4006;Obecné;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
 
 5001;Standardy;Projekt;overall_quality;Kvalita;ANO;NE;ANO;;;enum;
 5002;Standardy;Jednotka;heating;Topení;ANO;ANO;ANO;;;enum;
@@ -74,8 +74,8 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 5104;Amenities;Projekt;fitness;Fitness (beta);ANO;NE;ANO;;;boolean;
 5105;Amenities;Projekt;courtyard_garden;Vnitroblok / zahrada (beta);ANO;NE;ANO;;;boolean;
 
-6001;Projekt;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
-6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
+100;Obecné;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
+101;Obecné;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
 6003;Projekt;Projekt;project_url;Odkaz na projekt;ANO;NE;ANO;;;url;
 6004;Projekt;Projekt;image_url;Foto projektu;ANO;NE;ANO;;;url;
 6005;Jednotka;Jednotka;floorplan_url;Půdorys;ANO;NE;ANO;;;url;

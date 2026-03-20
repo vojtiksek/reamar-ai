@@ -292,8 +292,8 @@ def get_filter_groups(db: Session) -> dict:
 
     def _group_sort_key(item: tuple[str, list[dict]]) -> tuple[int, str]:
         name, _ = item
-        # „Stav“ chceme vždy jako první box ve filtrech (nad Cenou atd.).
-        if name == "Stav":
+        # „Obecné” chceme vždy jako první box ve filtrech (nad Cenou atd.).
+        if name == “Obecné”:
             return (0, name)
         return (1, name)
 
