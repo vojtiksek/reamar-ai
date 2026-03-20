@@ -2,7 +2,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 
 1001;Cena;Jednotka;price;Cena;ANO;ANO;NE;Kč;0;currency;
 1002;Cena;Jednotka;price_per_sm;Cena m²;ANO;ANO;NE;Kč/m²;0;currency_per_m2;
-1003;Cena;Jednotka;price_change;Změna ceny;ANO;ANO;NE;%;0;percent;fraction
+1003;Cena;Jednotka;price_change;Změna ceny;ANO;NE;NE;%;0;percent;fraction
 1004;Cena;Jednotka;original_price;Původní cena;ANO;NE;NE;Kč;0;currency;
 1005;Cena;Jednotka;original_price_per_sm;Původní cena m²;ANO;NE;NE;Kč/m²;0;currency_per_m2;
 1018;Cena vs trhem;Jednotka;local_price_diff_500m;Odchylka od trhu (500 m);NE;NE;NE;%;0;percent;
@@ -33,7 +33,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 
 3001;Dispozice;Jednotka;layout;Dispozice;ANO;ANO;NE;;;enum;
 3002;Dispozice;Jednotka;floor_area;Podlahová plocha;ANO;ANO;NE;m²;1;area_m2;
-3003;Dispozice;Jednotka;total_area;Celková plocha;ANO;ANO;NE;m²;1;area_m2;
+3003;Dispozice;Jednotka;total_area;Celková plocha;ANO;NE;NE;m²;1;area_m2;
 3004;Dispozice;Jednotka;equivalent_area;;NE;NE;NE;m²;1;area_m2;
 3005;Dispozice;Jednotka;exterior_area;Venek;ANO;ANO;NE;m²;1;area_m2;
 3006;Dispozice;Jednotka;balcony_area;Balkon;ANO;ANO;ANO;m²;1;area_m2;
@@ -43,7 +43,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3010;Dispozice;Projekt;floors;Podlaha;ANO;NE;NE;;;enum;
 3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
-3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;ANO;ANO;;0;integer;
+3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;NE;ANO;;0;integer;
 
 4001;Stav;Jednotka;availability;Stav;ANO;ANO;NE;;;enum;
 4007;Stav;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
@@ -54,25 +54,25 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 4005;Stav;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
 4006;Stav;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
 
-5001;Standardy;Projekt;overall_quality;Kvalita;ANO;ANO;ANO;;;enum;
+5001;Standardy;Projekt;overall_quality;Kvalita;ANO;NE;ANO;;;enum;
 5002;Standardy;Jednotka;heating;Topení;ANO;ANO;ANO;;;enum;
 5003;Standardy;Jednotka;air_conditioning;Klimatizace;ANO;ANO;ANO;;;boolean;
 5004;Standardy;Jednotka;cooling_ceilings;Chlazení stropem;ANO;ANO;ANO;;;boolean;
 5005;Standardy;Jednotka;exterior_blinds;Žaluzie;ANO;ANO;ANO;;;text;
 5006;Standardy;Jednotka;smart_home;Smart home;ANO;ANO;ANO;;;boolean;
-5007;Standardy;Projekt;windows;Okna;ANO;ANO;ANO;;;enum;
-5008;Standardy;Projekt;partition_walls;Příčky;ANO;ANO;ANO;;;enum;
+5007;Standardy;Projekt;windows;Okna;ANO;NE;ANO;;;enum;
+5008;Standardy;Projekt;partition_walls;Příčky;ANO;NE;ANO;;;enum;
 5009;Standardy;Projekt;amenities;Zajímavosti;ANO;NE;ANO;;;text;
 5010;Standardy;Projekt;ceiling_height;Výška stropů (beta);ANO;ANO;ANO;;;text;
 5011;Standardy;Projekt;recuperation;Rekuperace (beta);ANO;ANO;ANO;;;boolean;
 5012;Standardy;Projekt;cooling;Chlazení (beta);ANO;ANO;ANO;;;boolean;
 
-5100;Amenities;Projekt;concierge;Concierge (beta);ANO;ANO;ANO;;;boolean;
-5101;Amenities;Projekt;reception;Recepce (beta);ANO;ANO;ANO;;;boolean;
-5102;Amenities;Projekt;bike_room;Kolárna (beta);ANO;ANO;ANO;;;boolean;
-5103;Amenities;Projekt;stroller_room;Kočárkárna (beta);ANO;ANO;ANO;;;boolean;
-5104;Amenities;Projekt;fitness;Fitness (beta);ANO;ANO;ANO;;;boolean;
-5105;Amenities;Projekt;courtyard_garden;Vnitroblok / zahrada (beta);ANO;ANO;ANO;;;boolean;
+5100;Amenities;Projekt;concierge;Concierge (beta);ANO;NE;ANO;;;boolean;
+5101;Amenities;Projekt;reception;Recepce (beta);ANO;NE;ANO;;;boolean;
+5102;Amenities;Projekt;bike_room;Kolárna (beta);ANO;NE;ANO;;;boolean;
+5103;Amenities;Projekt;stroller_room;Kočárkárna (beta);ANO;NE;ANO;;;boolean;
+5104;Amenities;Projekt;fitness;Fitness (beta);ANO;NE;ANO;;;boolean;
+5105;Amenities;Projekt;courtyard_garden;Vnitroblok / zahrada (beta);ANO;NE;ANO;;;boolean;
 
 6001;Projekt;Projekt;project;Projekt;ANO;ANO;NE;;;enum_search;
 6002;Projekt;Projekt;developer;Developer;ANO;ANO;NE;;;enum_search;
@@ -97,13 +97,13 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 9002;Technické;Projekt;gps_latitude;;NE;NE;NE;;;geo_number;
 9003;Technické;Projekt;gps_longitude;;NE;NE;NE;;;geo_number;
 9004;Technické;Projekt;postal_code;;NE;NE;NE;;;text;
-9005;Technické;Projekt;noise_day_db;Denní hluk (beta);ANO;ANO;ANO;;0;number;
-9006;Technické;Projekt;noise_night_db;Noční hluk (beta);ANO;ANO;ANO;;0;number;
+9005;Technické;Projekt;noise_day_db;Denní hluk (beta);ANO;NE;ANO;;0;number;
+9006;Technické;Projekt;noise_night_db;Noční hluk (beta);ANO;NE;ANO;;0;number;
 9007;Technické;Projekt;noise_label;Hluk lokality (beta);ANO;ANO;ANO;;;enum;
 9010;Technické;Projekt;distance_to_primary_road_m;Vzdálenost od hlavní silnice (beta);ANO;ANO;NE;;0;integer;
 9011;Technické;Projekt;distance_to_tram_tracks_m;Vzdálenost od tramvajových kolejí (beta);ANO;ANO;NE;;0;integer;
 9012;Technické;Projekt;distance_to_railway_m;Vzdálenost od železnice (beta);ANO;ANO;NE;;0;integer;
-9013;Technické;Projekt;distance_to_airport_m;Vzdálenost od letiště (beta);ANO;ANO;NE;;0;integer;
+9013;Technické;Projekt;distance_to_airport_m;Vzdálenost od letiště (beta);ANO;NE;NE;;0;integer;
 9014;Technické;Projekt;micro_location_score;Mikro-lokalita skóre (beta);ANO;ANO;NE;;0;integer;
 9015;Technické;Projekt;micro_location_label;Mikro-lokalita hodnocení (beta);ANO;ANO;NE;;;enum;
 9020;Walkability;Projekt;walkability_score;Walkability skóre;ANO;ANO;NE;;0;integer;
