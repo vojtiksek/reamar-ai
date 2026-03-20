@@ -368,6 +368,28 @@ const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
   "project.micro_location_score",
   "micro_location_label",
   "project.micro_location_label",
+  // Vzdálenosti od infrastruktury (beta)
+  "distance_to_primary_road_m",
+  "project.distance_to_primary_road_m",
+  "distance_to_tram_tracks_m",
+  "project.distance_to_tram_tracks_m",
+  "distance_to_railway_m",
+  "project.distance_to_railway_m",
+  "distance_to_airport_m",
+  "project.distance_to_airport_m",
+  // Walkability sub-skóre (hlavní skóre v collapsible)
+  "walkability_score",
+  "project.walkability_score",
+  "walkability_label",
+  "project.walkability_label",
+  "walkability_daily_needs_score",
+  "project.walkability_daily_needs_score",
+  "walkability_transport_score",
+  "project.walkability_transport_score",
+  "walkability_leisure_score",
+  "project.walkability_leisure_score",
+  "walkability_family_score",
+  "project.walkability_family_score",
 ]);
 
 // Sloupce, které mají být pro nového uživatele výchozím způsobem skryté,
