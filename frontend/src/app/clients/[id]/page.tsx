@@ -922,12 +922,11 @@ export default function ClientDetailPage() {
                 {/* Header */}
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
-                    <nav className="text-[11px] text-slate-500 mb-1">
+                    <nav className="text-sm text-slate-500 mb-0.5">
                       <Link href="/clients" className="hover:underline">Klienti</Link>{" / "}
-                      <span className="text-slate-700">{client.name}</span>
+                      <span className="font-semibold text-slate-900">{client.name}</span>
                     </nav>
-                    <h1 className="text-2xl font-bold tracking-tight text-slate-900">{client.name}</h1>
-                    <p className="text-xs text-slate-500 mt-0.5">
+                    <p className="text-xs text-slate-500">
                       {client.status === "active" ? "Aktivní klient" : client.status}
                       {" · "}Vytvořen {new Date(client.created_at).toLocaleDateString("cs-CZ")}
                     </p>
@@ -1143,13 +1142,12 @@ export default function ClientDetailPage() {
                 <ReamarCard className="px-6 py-5 md:px-10 md:py-6">
                   <div className="mb-4 flex items-center justify-between gap-4">
                     <div className="min-w-0">
-                      <nav className="text-[11px] text-slate-500">
+                      <nav className="text-sm text-slate-500">
                         <Link href="/clients" className="hover:underline">
                           Klienti
-                        </Link>{" "}
-                        / <span className="text-slate-700">{client.name}</span>
+                        </Link>{" / "}
+                        <span className="font-semibold text-slate-900">{client.name}</span>
                       </nav>
-                      <h2 className="text-lg font-semibold text-slate-900">{client.name}</h2>
                       {profileSavedMessage && (
                         <p className="text-xs text-emerald-600">{profileSavedMessage}</p>
                       )}
@@ -1199,10 +1197,6 @@ export default function ClientDetailPage() {
                       </ReamarButton>
                     </div>
                   </div>
-                  <h3 className="mb-2 text-base font-semibold text-slate-900">
-                    {currentStepMeta.title}
-                  </h3>
-
                   <div className="space-y-8 text-sm transition-opacity duration-200">
                   {wizardStep === 1 && (
                     <div className="space-y-6">
