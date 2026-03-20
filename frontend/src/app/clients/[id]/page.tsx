@@ -201,6 +201,7 @@ export default function ClientDetailPage() {
 
   const [hydrated, setHydrated] = useState(false);
   const [token, setToken] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<"overview" | "wizard">("overview");
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [marketFit, setMarketFit] = useState<MarketFitAnalysis | null>(null);
   const [areaMarket, setAreaMarket] = useState<AreaMarketAnalysis | null>(null);
@@ -908,8 +909,229 @@ export default function ClientDetailPage() {
           <p className="text-sm text-rose-600">{error}</p>
         ) : !client ? (
           <p className="text-sm text-slate-600">Klient nenalezen.</p>
+        ) : currentView === "overview" ? (
+          /* =============== CLIENT OVERVIEW =============== */
+          (() => {
+            const hasWizardData = profile && (profile.budget_min != null || profile.budget_max != null || (profile.layouts?.values && profile.layouts.values.length > 0));
+            const formatLayout = (v: string) => {
+              const m = /^layout_(\d+)$/i.exec(v);
+              return m ? `${m[1]}+kk` : v;
+            };
+            return (
+              <div className="space-y-6">
+                {/* Header */}
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <nav className="text-[11px] text-slate-500 mb-1">
+                      <Link href="/clients" className="hover:underline">Klienti</Link>{" / "}
+                      <span className="text-slate-700">{client.name}</span>
+                    </nav>
+                    <h1 className="text-2xl font-bold tracking-tight text-slate-900">{client.name}</h1>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {client.status === "active" ? "Aktivní klient" : client.status}
+                      {" · "}Vytvořen {new Date(client.created_at).toLocaleDateString("cs-CZ")}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <ReamarButton
+                      variant={hasWizardData ? "subtle" : "primary"}
+                      size="sm"
+                      onClick={() => { setCurrentView("wizard"); setWizardStep(1); }}
+                    >
+                      {hasWizardData ? "Upravit wizard" : "Spustit wizard"}
+                    </ReamarButton>
+                    {hasWizardData && (
+                      <ReamarButton variant="primary" size="sm" onClick={() => {
+                        const filters = profileToFilters(profile);
+                        const params = filtersToSearchParams(filters);
+                        setActiveClient({ id: client.id, name: client.name, derivedFilters: filters });
+                        router.push(`/units?${params.toString()}`);
+                      }}>
+                        Hledat jednotky
+                      </ReamarButton>
+                    )}
+                  </div>
+                </div>
+
+                {/* Contact + Notes row */}
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  {/* Contact info */}
+                  <ReamarCard className="p-5">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 mb-3">Kontaktní údaje</h3>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      {client.email && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Email</p>
+                          <a href={`mailto:${client.email}`} className="font-medium text-slate-900 hover:underline">{client.email}</a>
+                        </div>
+                      )}
+                      {client.phone && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Telefon</p>
+                          <a href={`tel:${client.phone}`} className="font-medium text-slate-900 hover:underline">{client.phone}</a>
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-500">Doporučení</p>
+                        <p className="font-medium text-slate-900">{client.recommendations_count} jednotek</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-500">Stav</p>
+                        <p className="font-medium text-slate-900">{client.status === "active" ? "Aktivní" : client.status}</p>
+                      </div>
+                    </div>
+                  </ReamarCard>
+
+                  {/* Notes */}
+                  <ReamarCard className="p-5">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 mb-3">
+                      Poznámky {notes.length > 0 && `(${notes.length})`}
+                    </h3>
+                    {notes.length === 0 ? (
+                      <p className="text-sm text-slate-500 italic">Žádné poznámky.</p>
+                    ) : (
+                      <div className="space-y-2 max-h-48 overflow-y-auto">
+                        {notes.slice(0, 5).map((n) => (
+                          <div key={n.id} className="rounded-lg border border-slate-100 bg-slate-50/50 px-3 py-2 text-sm">
+                            <p className="text-slate-900">{n.body}</p>
+                            <p className="text-[11px] text-slate-400 mt-1">
+                              {n.note_type === "meeting" ? "Schůzka" : n.note_type === "call" ? "Hovor" : "Poznámka"}
+                              {" · "}{new Date(n.created_at).toLocaleDateString("cs-CZ")}
+                            </p>
+                          </div>
+                        ))}
+                        {notes.length > 5 && (
+                          <p className="text-xs text-slate-500">+{notes.length - 5} dalších</p>
+                        )}
+                      </div>
+                    )}
+                  </ReamarCard>
+                </div>
+
+                {/* Wizard data summary (if completed) */}
+                {hasWizardData ? (
+                  <ReamarCard className="p-5">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 mb-4">Profil klienta (z wizardu)</h3>
+                    <div className="grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 text-sm">
+                      {profile.budget_min != null && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Min. rozpočet</p>
+                          <p className="font-medium text-slate-900">{formatCurrencyCzk(profile.budget_min)}</p>
+                        </div>
+                      )}
+                      {profile.budget_max != null && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Max. rozpočet</p>
+                          <p className="font-medium text-slate-900">{formatCurrencyCzk(profile.budget_max)}</p>
+                        </div>
+                      )}
+                      {profile.area_min != null && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Min. plocha</p>
+                          <p className="font-medium text-slate-900">{formatAreaM2(profile.area_min)}</p>
+                        </div>
+                      )}
+                      {profile.area_max != null && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Max. plocha</p>
+                          <p className="font-medium text-slate-900">{formatAreaM2(profile.area_max)}</p>
+                        </div>
+                      )}
+                      {profile.layouts?.values && profile.layouts.values.length > 0 && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Dispozice</p>
+                          <p className="font-medium text-slate-900">{profile.layouts.values.map(formatLayout).join(", ")}</p>
+                        </div>
+                      )}
+                      {profile.property_type && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Typ nemovitosti</p>
+                          <p className="font-medium text-slate-900">{profile.property_type === "flat" ? "Byt" : profile.property_type === "house" ? "Dům" : profile.property_type}</p>
+                        </div>
+                      )}
+                      {profile.purchase_purpose && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Účel</p>
+                          <p className="font-medium text-slate-900">{profile.purchase_purpose === "own_living" ? "Vlastní bydlení" : profile.purchase_purpose === "investment" ? "Investice" : profile.purchase_purpose}</p>
+                        </div>
+                      )}
+                    </div>
+                    {/* Wizard extras summary */}
+                    {wizardExtras.budget && (wizardExtras.budget.ideal_price || wizardExtras.budget.ideal_area) && (
+                      <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 text-sm">
+                        {wizardExtras.budget.ideal_price != null && (
+                          <div>
+                            <p className="text-[11px] font-medium text-slate-500">Ideální cena</p>
+                            <p className="font-medium text-slate-900">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>
+                          </div>
+                        )}
+                        {wizardExtras.budget.ideal_area != null && (
+                          <div>
+                            <p className="text-[11px] font-medium text-slate-500">Ideální plocha</p>
+                            <p className="font-medium text-slate-900">{formatAreaM2(wizardExtras.budget.ideal_area)}</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {/* Location info */}
+                    {profile.polygon_geojson && (
+                      <div className="mt-3">
+                        <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-medium text-sky-700">
+                          Oblast definována na mapě
+                        </span>
+                      </div>
+                    )}
+                  </ReamarCard>
+                ) : (
+                  /* No wizard data — show CTA */
+                  <ReamarCard className="p-8 text-center">
+                    <div className="mx-auto max-w-md space-y-3">
+                      <h3 className="text-lg font-semibold text-slate-900">Profil klienta</h3>
+                      <p className="text-sm text-slate-600">
+                        Spusťte wizard pro nastavení preferencí klienta — rozpočet, dispozice, lokalita a standardy.
+                        Na základě profilu vám systém doporučí nejvhodnější jednotky.
+                      </p>
+                      <ReamarButton variant="primary" onClick={() => { setCurrentView("wizard"); setWizardStep(1); }}>
+                        Spustit wizard
+                      </ReamarButton>
+                    </div>
+                  </ReamarCard>
+                )}
+
+                {/* Market fit summary (if available) */}
+                {marketFit && marketFit.available_units_count != null && (
+                  <ReamarCard className="p-5">
+                    <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 mb-3">Shoda s trhem</h3>
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 text-sm">
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-500">Dostupných na trhu</p>
+                        <p className="text-lg font-bold text-slate-900">{marketFit.available_units_count}</p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] font-medium text-slate-500">Vyhovujících</p>
+                        <p className="text-lg font-bold text-emerald-600">{marketFit.matching_units_count}</p>
+                      </div>
+                      {marketFit.available_units_count > 0 && (
+                        <div>
+                          <p className="text-[11px] font-medium text-slate-500">Shoda</p>
+                          <p className="text-lg font-bold text-slate-900">{Math.round((marketFit.matching_units_count / marketFit.available_units_count) * 100)} %</p>
+                        </div>
+                      )}
+                    </div>
+                  </ReamarCard>
+                )}
+              </div>
+            );
+          })()
         ) : (
           <>
+            {/* =============== WIZARD VIEW =============== */}
+            <div className="mb-4">
+              <button type="button" onClick={() => setCurrentView("overview")}
+                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                &larr; Zpět na přehled
+              </button>
+            </div>
             <WizardSteps
               currentStep={wizardStep}
               setCurrentStep={setWizardStep}
@@ -1097,7 +1319,7 @@ export default function ClientDetailPage() {
                         <div className="space-y-1">
                           <p className="font-semibold text-slate-900">Jak mapu používat na schůzce</p>
                           <p>
-                            Ptejte se, které oblasti jsou „určitě ano“, které „spíše ne“ a kam se klient rozhodně nechce
+                            Ptejte se, které oblasti jsou „určitě ano", které „spíše ne" a kam se klient rozhodně nechce
                             stěhovat. Polygon vždy odpovídá zóně, kde by se makléř měl aktivně dívat po projektech.
                           </p>
                         </div>
