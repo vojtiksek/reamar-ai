@@ -1110,6 +1110,61 @@ def _wizard_preferences_adjustment(
             else:
                 adj += -8.0 if pref == "must" else -3.0
 
+    # ── Outdoor space (unified) ─────────────────────────────────────────────
+    outdoor_pref = wizard_outdoor.get("outdoor_space")
+    if outdoor_pref in ("prefer", "must"):
+        ext = unit.exterior_area_m2
+        min_out = wizard_outdoor.get("min_outdoor_area_m2")
+        if ext is not None and float(ext) > 0:
+            adj += 5.0 if outdoor_pref == "must" else 3.0
+            if min_out is not None and float(ext) >= float(min_out):
+                adj += 3.0  # meets minimum
+            elif min_out is not None:
+                adj += -2.0  # has outdoor but below minimum
+        else:
+            adj += -10.0 if outdoor_pref == "must" else -4.0
+
+    # ── Energy class ─────────────────────────────────────────────────────────
+    energy_pref = wizard.get("energy_class")
+    if energy_pref and energy_pref != "ignore":
+        unit_ec = getattr(project, "energy_class", None)
+        if unit_ec:
+            ec_order = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6}
+            req_rank = ec_order.get(str(energy_pref).upper()[:1], 99)
+            unit_rank = ec_order.get(str(unit_ec).strip().upper()[:1], 99)
+            if unit_rank <= req_rank:
+                adj += 5.0  # meets or exceeds requirement
+            elif unit_rank == req_rank + 1:
+                adj += -3.0  # one grade below
+            # worse → handled by hard filter
+
+    # ── Developer preference ─────────────────────────────────────────────────
+    dev_pref = wizard.get("preferred_developer")
+    if dev_pref and isinstance(dev_pref, str) and dev_pref.strip():
+        proj_dev = getattr(project, "developer", None) or ""
+        if dev_pref.strip().lower() in proj_dev.lower():
+            adj += 8.0  # developer match
+        else:
+            adj += -2.0  # mild penalty for non-preferred developer
+
+    # ── Completion date proximity ────────────────────────────────────────────
+    completion_pref = wizard.get("completion_date")
+    if completion_pref:
+        from datetime import date as _date
+        try:
+            max_date = _date.fromisoformat(str(completion_pref))
+            proj_date = getattr(project, "completion_date", None)
+            if proj_date is not None:
+                if isinstance(proj_date, str):
+                    proj_date = _date.fromisoformat(proj_date)
+                if hasattr(proj_date, "date"):
+                    proj_date = proj_date.date()
+                if proj_date <= max_date:
+                    adj += 4.0  # on time
+                # past max_date → handled by hard filter
+        except (ValueError, TypeError):
+            pass
+
     # ── Renovation / new-build preference ──────────────────────────────────
     # renovation_preference values:
     #   "any"               → no adjustment
@@ -1201,13 +1256,69 @@ def _compute_unit_match_score(
             if d is not None and d < 5000:
                 return 0.0, {"hard_filter": "airport_noise"}
 
-        # Outdoor: if any outdoor type is "must", unit must have some exterior
+        # Outdoor: unified outdoor_space preference
         outdoor = wizard.get("outdoor") or {}
+        if outdoor.get("outdoor_space") == "must":
+            ext = unit.exterior_area_m2
+            if ext is None or float(ext) <= 0:
+                return 0.0, {"hard_filter": "outdoor_space"}
+            min_out = outdoor.get("min_outdoor_area_m2")
+            if min_out is not None and float(ext) < float(min_out):
+                return 0.0, {"hard_filter": "outdoor_space_too_small"}
+        # Legacy: keep old balcony/terrace/garden hard filters for backwards compat
         for outdoor_key in ("balcony", "terrace", "garden"):
             if outdoor.get(outdoor_key) == "must":
                 val = getattr(unit, f"{outdoor_key}_area_m2", None)
                 if val is None or float(val) <= 0:
                     return 0.0, {"hard_filter": outdoor_key}
+
+        # Energy class: hard filter if set
+        energy_pref = wizard.get("energy_class")
+        if energy_pref and energy_pref != "ignore":
+            unit_ec = getattr(project, "energy_class", None)
+            if unit_ec:
+                ec_order = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6}
+                req_rank = ec_order.get(energy_pref.upper(), 99)
+                unit_rank = ec_order.get(str(unit_ec).strip().upper()[:1], 99)
+                if unit_rank > req_rank + 1:  # allow 1 grade tolerance
+                    return 0.0, {"hard_filter": "energy_class"}
+
+        # Completion date: hard filter
+        completion_pref = wizard.get("completion_date")
+        if completion_pref:
+            from datetime import date as _date
+            try:
+                max_date = _date.fromisoformat(str(completion_pref))
+                proj_date = getattr(project, "completion_date", None)
+                if proj_date is not None:
+                    if isinstance(proj_date, str):
+                        proj_date = _date.fromisoformat(proj_date)
+                    if hasattr(proj_date, "date"):
+                        proj_date = proj_date.date()
+                    if proj_date > max_date:
+                        return 0.0, {"hard_filter": "completion_date"}
+            except (ValueError, TypeError):
+                pass
+
+        # Developer preference: soft filter (no hard exclusion, handled in adjustment)
+
+        # Days on market: hard filter
+        budget_prefs = wizard.get("budget") or {}
+        max_dom = budget_prefs.get("max_days_on_market")
+        if max_dom is not None:
+            proj_dom = getattr(project, "max_days_on_market", None)
+            if proj_dom is not None and int(proj_dom) > int(max_dom):
+                return 0.0, {"hard_filter": "days_on_market"}
+
+        # Payment contract: hard filter
+        max_pct = budget_prefs.get("max_payment_contract_pct")
+        if max_pct is not None:
+            proj_pc = getattr(project, "payment_contract", None)
+            if proj_pc is not None:
+                # DB stores as fraction 0-1, wizard stores as percent 0-100
+                pct_val = float(proj_pc) * 100 if float(proj_pc) <= 1 else float(proj_pc)
+                if pct_val > float(max_pct):
+                    return 0.0, {"hard_filter": "payment_contract"}
 
         # Renovation preference: "only_new" / "only_renovation" as hard filter
         reno_pref = wizard.get("renovation_preference")
@@ -3446,7 +3557,7 @@ def _build_units_query(
         base = base.where(Unit.public_transport_to_center_min >= min_public_transport_to_center_min)
     if max_public_transport_to_center_min is not None:
         base = base.where(Unit.public_transport_to_center_min <= max_public_transport_to_center_min)
-    # Financování: jednotky bez údaje (NULL nebo 0 = nevyplněno) filtrem projdou – „—“ = jako by bylo v rozsahu
+    # Financování: jednotky bez údaje (NULL nebo 0 = nevyplněno) filtrem projdou – „—" = jako by bylo v rozsahu
     if min_payment_contract is not None:
         base = base.where(
             or_(
@@ -4440,7 +4551,7 @@ def get_projects_overview(
         item["payment_occupancy"] = _first_non_none(
             _financing_or_none(min_pay_occupancy), _financing_or_none(max_pay_occupancy)
         )
-        # Jedna hodnota „Autem do centra“ / „MHD do centra“ (klíč ride_to_center / public_transport_to_center)
+        # Jedna hodnota „Autem do centra" / „MHD do centra" (klíč ride_to_center / public_transport_to_center)
         if item.get("ride_to_center_min") is None and r.get("avg_ride_to_center_min") is not None:
             item["ride_to_center_min"] = _dec(r["avg_ride_to_center_min"])
         if item.get("public_transport_to_center_min") is None and r.get("avg_public_transport_to_center_min") is not None:
@@ -4568,7 +4679,7 @@ def _project_agg_subquery():
 def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     """Build one project item dict: id, catalog keys (from Project), computed keys."""
     out: dict[str, Any] = {"id": project.id}
-    # Sloupec „Projekt“ má v get_columns accessor „name“ (z CATALOG_TO_DB), takže musíme vracet i name
+    # Sloupec „Projekt" má v get_columns accessor „name" (z CATALOG_TO_DB), takže musíme vracet i name
     out["name"] = getattr(project, "name", None)
     catalog_cols = get_project_columns()
     for col in catalog_cols:
@@ -4647,7 +4758,7 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         else:
             out[k] = v
 
-    # Jedna hodnota „Autem do centra“ / „MHD do centra“: klíč ride_to_center / public_transport_to_center.
+    # Jedna hodnota „Autem do centra" / „MHD do centra": klíč ride_to_center / public_transport_to_center.
     # Projekt je často nemá; doplníme z agregátu jednotek (průměr).
     if out.get("ride_to_center_min") is None and agg.get("avg_ride_to_center_min") is not None:
         v = agg["avg_ride_to_center_min"]
@@ -5087,7 +5198,7 @@ def list_projects(
             or_(
                 # Projekt má alespoň jednu dostupnou jednotku => vždy aktivní
                 agg_subq.c.units_available > 0,
-                # Projekt bez sold_date: ponechat jen pokud není „starý“
+                # Projekt bez sold_date: ponechat jen pokud není „starý"
                 and_(
                     agg_subq.c.sold_date.is_(None),
                     or_(
