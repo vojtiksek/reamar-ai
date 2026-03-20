@@ -292,86 +292,86 @@ const BACKEND_SORT_FIELDS = [
   "walkability_label",
 ] as const;
 
-// Sloupce, které nechceme zobrazovat v tabulce jednotek ani v nabídce „Sloupce“,
+// Sloupce, které nechceme zobrazovat v tabulce jednotek ani v nabídce „Sloupce",
 // ale data zůstávají k dispozici pro filtry a detail jednotky.
 const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
-  “original_price_czk”,
-  “original_price_per_m2_czk”,
-  “administrative_district_iga”,
-  “project_url”,
-  “project.project_url”,
-  // Trvale skryté sloupce – nechceme je ani v nabídce „Sloupce”
-  “address”,
-  “project.address”,
-  “availability_status”,
-  “unit_name”,
-  “building”,
-  “url”,
-  “unit_url”,
-  “id”,
-  “external_id”,
+  "original_price_czk",
+  "original_price_per_m2_czk",
+  "administrative_district_iga",
+  "project_url",
+  "project.project_url",
+  // Trvale skryté sloupce – nechceme je ani v nabídce „Sloupce"
+  "address",
+  "project.address",
+  "availability_status",
+  "unit_name",
+  "building",
+  "url",
+  "unit_url",
+  "id",
+  "external_id",
   // Standardy (zobrazeny v collapsible řádku)
-  “overall_quality”,
-  “project.overall_quality”,
-  “category”,
-  “project.category”,
-  “energy_class”,
-  “project.energy_class”,
-  “heating”,
-  “project.heating”,
-  “air_conditioning”,
-  “project.air_conditioning”,
-  “cooling_ceilings”,
-  “project.cooling_ceilings”,
-  “exterior_blinds”,
-  “project.exterior_blinds”,
-  “smart_home”,
-  “project.smart_home”,
-  “windows”,
-  “project.windows”,
-  “partition_walls”,
-  “project.partition_walls”,
-  “floors”,
-  “project.floors”,
-  “recuperation”,
-  “project.recuperation”,
-  “cooling”,
-  “project.cooling”,
-  “renovation”,
-  “project.renovation”,
+  "overall_quality",
+  "project.overall_quality",
+  "category",
+  "project.category",
+  "energy_class",
+  "project.energy_class",
+  "heating",
+  "project.heating",
+  "air_conditioning",
+  "project.air_conditioning",
+  "cooling_ceilings",
+  "project.cooling_ceilings",
+  "exterior_blinds",
+  "project.exterior_blinds",
+  "smart_home",
+  "project.smart_home",
+  "windows",
+  "project.windows",
+  "partition_walls",
+  "project.partition_walls",
+  "floors",
+  "project.floors",
+  "recuperation",
+  "project.recuperation",
+  "cooling",
+  "project.cooling",
+  "renovation",
+  "project.renovation",
   // Parkování (v collapsible)
-  “min_parking_indoor_price_czk”,
-  “max_parking_indoor_price_czk”,
-  “min_parking_outdoor_price_czk”,
-  “max_parking_outdoor_price_czk”,
+  "min_parking_indoor_price_czk",
+  "max_parking_indoor_price_czk",
+  "min_parking_outdoor_price_czk",
+  "max_parking_outdoor_price_czk",
   // Amenities (v collapsible)
-  “concierge”,
-  “project.concierge”,
-  “reception”,
-  “project.reception”,
-  “bike_room”,
-  “project.bike_room”,
-  “stroller_room”,
-  “project.stroller_room”,
-  “fitness”,
-  “project.fitness”,
-  “courtyard_garden”,
-  “project.courtyard_garden”,
+  "concierge",
+  "project.concierge",
+  "reception",
+  "project.reception",
+  "bike_room",
+  "project.bike_room",
+  "stroller_room",
+  "project.stroller_room",
+  "fitness",
+  "project.fitness",
+  "courtyard_garden",
+  "project.courtyard_garden",
   // Hluk a mikro-lokalita (v collapsible)
-  “noise_day_db”,
-  “project.noise_day_db”,
-  “noise_night_db”,
-  “project.noise_night_db”,
-  “noise_label”,
-  “project.noise_label”,
-  “micro_location_score”,
-  “project.micro_location_score”,
-  “micro_location_label”,
-  “project.micro_location_label”,
+  "noise_day_db",
+  "project.noise_day_db",
+  "noise_night_db",
+  "project.noise_night_db",
+  "noise_label",
+  "project.noise_label",
+  "micro_location_score",
+  "project.micro_location_score",
+  "micro_location_label",
+  "project.micro_location_label",
 ]);
 
 // Sloupce, které mají být pro nového uživatele výchozím způsobem skryté,
-// ale v nabídce „Sloupce“ je lze znovu zapnout.
+// ale v nabídce „Sloupce" je lze znovu zapnout.
 const DEFAULT_HIDDEN_COLUMN_KEYS = new Set<string>([
   // Projektové počty jednotek
   "total_units",
@@ -405,7 +405,7 @@ const DEFAULT_HIDDEN_COLUMN_KEYS = new Set<string>([
   "last_seen",
   "sold_date",
   // Standardy – nyní trvale skryté v HIDDEN_TABLE_COLUMN_KEYS
-  // Jednotkové financování – v tabulce použijeme sloupec „Financování (a/b/c)“
+  // Jednotkové financování – v tabulce použijeme sloupec „Financování (a/b/c)"
   "payment_contract",
   "payment_construction",
   "payment_occupancy",
@@ -790,7 +790,7 @@ export default function Home() {
 
   const [expandedRowId, setExpandedRowId] = useState<string | null>(null);
   const rowClickTimeoutRef = useRef<number | null>(null);
-  /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL” přepsat state starou URL (router.replace je async). */
+  /** Po kliknutí na řazení/paginaci zabráníme efektu „sync z URL" přepsat state starou URL (router.replace je async). */
   const skipSyncSortPaginationRef = useRef(false);
   const activeClientIdRef = useRef<number | null>(null);
 
@@ -1364,7 +1364,7 @@ export default function Home() {
   const visibleColumns = useMemo(() => {
     if (serverColumns && serverColumns.length > 0) {
       const byKey = new Map(serverColumns.map((c) => [c.key, c]));
-      // Syntetické sloupce: „Financování“ (a/b/c) a „Počet jednotek“ (celkem/dostupné)
+      // Syntetické sloupce: „Financování" (a/b/c) a „Počet jednotek" (celkem/dostupné)
       if (!byKey.has("financing_scheme")) {
         byKey.set("financing_scheme", {
           key: "financing_scheme",
