@@ -21,7 +21,7 @@ ENUM_SEARCH_FORMAT = "enum_search"
 BOOLEAN_FORMAT = "boolean"
 # Max. počet distinct hodnot pro enum/enum_search filtry.
 # 200 bylo málo pro projekty (dlouhé seznamy developerů/projektů),
-# rozšíříme limit, aby se do nabídky vešly i „dlouhé“ ocasy jako Klamovka Park.
+# rozšíříme limit, aby se do nabídky vešly i „dlouhé" ocasy jako Klamovka Park.
 OPTIONS_LIMIT = 2000
 
 # Catalog column (CSV "column") -> (entity, db_attr). entity is "Unit" or "Project".
@@ -292,8 +292,8 @@ def get_filter_groups(db: Session) -> dict:
 
     def _group_sort_key(item: tuple[str, list[dict]]) -> tuple[int, str]:
         name, _ = item
-        # „Obecné” chceme vždy jako první box ve filtrech (nad Cenou atd.).
-        if name == “Obecné”:
+        # „Obecné" chceme vždy jako první box ve filtrech (nad Cenou atd.).
+        if name == "Obecné":
             return (0, name)
         return (1, name)
 
