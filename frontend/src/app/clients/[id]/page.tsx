@@ -244,6 +244,8 @@ export default function ClientDetailPage() {
       min_area?: number | null;
       tolerate_minus_10?: boolean;
       payment_schedule?: "upfront" | "during_construction" | "on_completion" | "ignore";
+      max_payment_contract_pct?: number | null;
+      max_days_on_market?: number | null;
     };
     standards?: {
       rekuperace?: Priority;
@@ -254,11 +256,12 @@ export default function ClientDetailPage() {
       parking?: Priority;
     };
     outdoor?: {
+      outdoor_space?: Priority;
+      min_outdoor_area_m2?: number | null;
       balcony?: Priority;
       terrace?: Priority;
       garden?: Priority;
       anything_ok?: Priority;
-      min_outdoor_area_m2?: number | null;
       preferred_floor?: "ground" | "low" | "middle" | "high" | "ignore";
       ground_floor_sensitive?: Priority;
       orientation?: {
@@ -290,6 +293,9 @@ export default function ClientDetailPage() {
       privacy_vs_services?: "privacy" | "services" | "ignore";
     };
     renovation_preference?: "any" | "prefer_new" | "only_new" | "prefer_renovation" | "only_renovation";
+    completion_date?: string | null;
+    energy_class?: "A" | "B" | "C" | "D" | "ignore" | null;
+    preferred_developer?: string | null;
     commute?: {
       points?: {
         id: string;
@@ -1066,20 +1072,53 @@ export default function ClientDetailPage() {
                         )}
                         {wizardExtras.budget.ideal_area != null && (
                           <div>
-                            <p className="text-[11px] font-medium text-slate-500">Ideální plocha</p>
+                            <p className="text-[11px] font-medium text-slate-500">Idealni plocha</p>
                             <p className="font-medium text-slate-900">{formatAreaM2(wizardExtras.budget.ideal_area)}</p>
+                          </div>
+                        )}
+                        {wizardExtras.budget.max_payment_contract_pct != null && (
+                          <div>
+                            <p className="text-[11px] font-medium text-slate-500">Max. platba pri podpisu</p>
+                            <p className="font-medium text-slate-900">{wizardExtras.budget.max_payment_contract_pct} %</p>
+                          </div>
+                        )}
+                        {wizardExtras.budget.max_days_on_market != null && (
+                          <div>
+                            <p className="text-[11px] font-medium text-slate-500">Max. dni na trhu</p>
+                            <p className="font-medium text-slate-900">{wizardExtras.budget.max_days_on_market} dni</p>
                           </div>
                         )}
                       </div>
                     )}
-                    {/* Location info */}
-                    {profile.polygon_geojson && (
-                      <div className="mt-3">
-                        <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-medium text-sky-700">
-                          Oblast definována na mapě
+                    {/* New preferences row */}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {wizardExtras.completion_date && (
+                        <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-medium text-blue-700">
+                          Nastehovat do: {new Date(wizardExtras.completion_date).toLocaleDateString("cs-CZ")}
                         </span>
-                      </div>
-                    )}
+                      )}
+                      {wizardExtras.energy_class && wizardExtras.energy_class !== "ignore" && (
+                        <span className="inline-flex items-center rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-medium text-emerald-700">
+                          Min. energ. trida: {wizardExtras.energy_class}
+                        </span>
+                      )}
+                      {wizardExtras.preferred_developer && (
+                        <span className="inline-flex items-center rounded-full bg-violet-100 px-2.5 py-0.5 text-[11px] font-medium text-violet-700">
+                          Developer: {wizardExtras.preferred_developer}
+                        </span>
+                      )}
+                      {wizardExtras.outdoor?.outdoor_space && wizardExtras.outdoor.outdoor_space !== "ignore" && (
+                        <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-medium text-amber-700">
+                          Venek: {wizardExtras.outdoor.outdoor_space === "must" ? "musi byt" : "preferuje"}
+                          {wizardExtras.outdoor.min_outdoor_area_m2 ? ` (min. ${wizardExtras.outdoor.min_outdoor_area_m2} m2)` : ""}
+                        </span>
+                      )}
+                      {profile.polygon_geojson && (
+                        <span className="inline-flex items-center rounded-full bg-sky-100 px-2.5 py-0.5 text-[11px] font-medium text-sky-700">
+                          Oblast definovana na mape
+                        </span>
+                      )}
+                    </div>
                   </ReamarCard>
                 ) : (
                   /* No wizard data — show CTA */
@@ -1724,6 +1763,64 @@ export default function ClientDetailPage() {
                           <option value="on_completion">Co nejvíce až po dokončení</option>
                         </select>
                       </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className={reamarLabelClass}>Max. platba při podpisu (%)</label>
+                          <input
+                            type="number"
+                            min={0}
+                            max={100}
+                            value={wizardExtras.budget?.max_payment_contract_pct ?? ""}
+                            onChange={(e) =>
+                              setWizardExtras((prev) => ({
+                                ...prev,
+                                budget: {
+                                  ...(prev.budget ?? {}),
+                                  max_payment_contract_pct: e.target.value ? Number(e.target.value) : null,
+                                },
+                              }))
+                            }
+                            className={cn("mt-1", reamarInputClass)}
+                            placeholder="Např. 20"
+                          />
+                          <p className="mt-1 text-[11px] text-slate-500">Kolik % z ceny je klient ochotný zaplatit hned po podpisu.</p>
+                        </div>
+                        <div>
+                          <label className={reamarLabelClass}>Max. dní na trhu</label>
+                          <input
+                            type="number"
+                            min={0}
+                            value={wizardExtras.budget?.max_days_on_market ?? ""}
+                            onChange={(e) =>
+                              setWizardExtras((prev) => ({
+                                ...prev,
+                                budget: {
+                                  ...(prev.budget ?? {}),
+                                  max_days_on_market: e.target.value ? Number(e.target.value) : null,
+                                },
+                              }))
+                            }
+                            className={cn("mt-1", reamarInputClass)}
+                            placeholder="Např. 180"
+                          />
+                          <p className="mt-1 text-[11px] text-slate-500">Preferuje cerstvejsi nabidky? Nechte prazdne pokud neresi.</p>
+                        </div>
+                      </div>
+                      <div>
+                        <label className={reamarLabelClass}>Datum nastehovaní do</label>
+                        <input
+                          type="date"
+                          value={wizardExtras.completion_date ?? ""}
+                          onChange={(e) =>
+                            setWizardExtras((prev) => ({
+                              ...prev,
+                              completion_date: e.target.value || null,
+                            }))
+                          }
+                          className={cn("mt-1", reamarInputClass)}
+                        />
+                        <p className="mt-1 text-[11px] text-slate-500">Datum dokonceni projektu - do kdy se chce klient nastehovat.</p>
+                      </div>
                     </div>
                   )}
 
@@ -1900,31 +1997,30 @@ export default function ClientDetailPage() {
                         </div>
                       </div>
 
-                      {/* ── Venkovní prostor ── */}
+                      {/* ── Venkovní prostor (unified) ── */}
                       <div className="space-y-3">
                         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Venkovní prostor</p>
                         <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-                          {[
-                            ["balcony", "Balkon"],
-                            ["terrace", "Terasa"],
-                            ["garden", "Zahrada"],
-                          ].map(([key, label]) => (
-                            <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                              <span className="text-sm text-slate-700">{label}</span>
+                          <div className="px-4 py-3">
+                            <div className="flex items-start justify-between gap-4">
+                              <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-slate-900">Venkovní prostor</p>
+                                <p className="mt-0.5 text-[11px] text-slate-500">Balkon, terasa nebo zahrada - jakýkoli venkovní prostor u jednotky.</p>
+                              </div>
                               <PrefToggle
                                 hard
-                                value={(wizardExtras.outdoor as any)?.[key] ?? "ignore"}
+                                value={wizardExtras.outdoor?.outdoor_space ?? "ignore"}
                                 onChange={(v) =>
                                   setWizardExtras((prev) => ({
                                     ...prev,
-                                    outdoor: { ...(prev.outdoor ?? {}), [key]: v as Priority },
+                                    outdoor: { ...(prev.outdoor ?? {}), outdoor_space: v as Priority },
                                   }))
                                 }
                               />
                             </div>
-                          ))}
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-3">
+                        {(wizardExtras.outdoor?.outdoor_space === "must" || wizardExtras.outdoor?.outdoor_space === "prefer") && (
                           <div>
                             <label className={reamarLabelClass}>Min. venkovní plocha (m²)</label>
                             <input
@@ -1943,6 +2039,27 @@ export default function ClientDetailPage() {
                               placeholder="Např. 10"
                             />
                           </div>
+                        )}
+                      </div>
+
+                      {/* ── Developer ── */}
+                      <div className="space-y-2">
+                        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Developer</p>
+                        <div>
+                          <label className={reamarLabelClass}>Preferovaný developer</label>
+                          <input
+                            type="text"
+                            value={wizardExtras.preferred_developer ?? ""}
+                            onChange={(e) =>
+                              setWizardExtras((prev) => ({
+                                ...prev,
+                                preferred_developer: e.target.value || null,
+                              }))
+                            }
+                            className={cn("mt-1", reamarInputClass)}
+                            placeholder="Např. Central Group, YIT..."
+                          />
+                          <p className="mt-1 text-[11px] text-slate-500">Nechte prázdné pokud klient nemá preferenci.</p>
                         </div>
                       </div>
 
@@ -2043,6 +2160,44 @@ export default function ClientDetailPage() {
                             </div>
                           </div>
                         ))}
+                      </div>
+                      {/* Energeticka trida */}
+                      <div className="space-y-2 mt-4">
+                        <label className={reamarLabelClass}>Minimalni energeticka trida</label>
+                        <div className="flex flex-wrap gap-1.5">
+                          {(
+                            [
+                              { value: "ignore", label: "Neresim" },
+                              { value: "A", label: "A" },
+                              { value: "B", label: "B" },
+                              { value: "C", label: "C" },
+                              { value: "D", label: "D" },
+                            ] as const
+                          ).map(({ value, label }) => {
+                            const active = (wizardExtras.energy_class ?? "ignore") === value;
+                            return (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={() =>
+                                  setWizardExtras((prev) => ({
+                                    ...prev,
+                                    energy_class: value === "ignore" ? null : value,
+                                  }))
+                                }
+                                className={cn(
+                                  "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                                  active
+                                    ? "border-slate-900 bg-slate-900 text-white"
+                                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                                )}
+                              >
+                                {label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <p className="text-[11px] text-slate-500">Jednotky s horsí energetickou tridou budou penalizovany ve skore.</p>
                       </div>
                     </div>
                   )}
