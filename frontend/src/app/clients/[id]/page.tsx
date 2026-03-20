@@ -944,7 +944,7 @@ export default function ClientDetailPage() {
                       <ReamarButton variant="primary" size="sm" onClick={() => {
                         const filters = profileToFilters(profile);
                         const params = filtersToSearchParams(filters);
-                        setActiveClient({ id: client.id, name: client.name, derivedFilters: filters });
+                        activate({ id: client.id, name: client.name, derivedFilters: filters });
                         router.push(`/units?${params.toString()}`);
                       }}>
                         Hledat jednotky
