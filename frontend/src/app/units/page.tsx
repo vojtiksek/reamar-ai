@@ -368,6 +368,11 @@ const HIDDEN_TABLE_COLUMN_KEYS = new Set<string>([
   "project.micro_location_score",
   "micro_location_label",
   "project.micro_location_label",
+  // Foto a půdorys (zobrazíme jen na detail stránce)
+  "project_photo",
+  "project.project_photo",
+  "floor_plan",
+  "project.floor_plan",
   // Vzdálenosti od infrastruktury (beta)
   "distance_to_primary_road_m",
   "project.distance_to_primary_road_m",
