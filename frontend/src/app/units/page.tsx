@@ -2704,63 +2704,167 @@ export default function Home() {
                       </tr>
                       {isExpanded && (
                         <tr className="bg-slate-50/80">
-                          <td colSpan={visibleColumns.length + (activeClient ? 1 : 0)} className="px-4 py-3">
-                            <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3 lg:grid-cols-5 text-sm">
-                              {/* Key unit data */}
+                          <td colSpan={visibleColumns.length + (activeClient ? 1 : 0)} className="p-0">
+                            <div className="sticky left-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden border-b border-slate-200 bg-slate-50/90 px-5 py-4">
+                              {/* Section: Unit basics */}
+                              <div className="mb-3">
+                                <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Základní údaje</h4>
+                                <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                  {(() => {
+                                    const basicFields: Array<{ label: string; value: unknown }> = [
+                                      { label: "Patro", value: getValue(u, "floor", "floor") },
+                                      { label: "Orientace", value: getValue(u, "orientation", "orientation") },
+                                      { label: "Venkovní plocha", value: (() => { const v = getValue(u, "exterior_area_m2", "exterior_area_m2"); return v != null ? `${Number(v).toFixed(1)} m²` : null; })() },
+                                      { label: "Ekvivalentní plocha", value: (() => { const v = getValue(u, "equivalent_area_m2", "equivalent_area_m2"); return v != null ? `${Number(v).toFixed(1)} m²` : null; })() },
+                                      { label: "Původní cena", value: (() => { const v = getValue(u, "original_price_czk", "original_price_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_czk" }) : null; })() },
+                                      { label: "Původní cena/m²", value: (() => { const v = getValue(u, "original_price_per_m2_czk", "original_price_per_m2_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_per_m2_czk" }) : null; })() },
+                                    ];
+                                    return basicFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
+                                      <div key={f.label}>
+                                        <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                        <p className="font-medium text-slate-900">{String(f.value)}</p>
+                                      </div>
+                                    ));
+                                  })()}
+                                </div>
+                              </div>
+                              {/* Section: Standards */}
+                              <div className="mb-3">
+                                <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Standardy</h4>
+                                <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                  {(() => {
+                                    const standardFields: Array<{ label: string; value: unknown }> = [
+                                      { label: "Kvalita", value: getValue(u, "overall_quality", "overall_quality") },
+                                      { label: "Topení", value: getValue(u, "heating", "heating") },
+                                      { label: "Okna", value: getValue(u, "windows", "windows") },
+                                      { label: "Příčky", value: getValue(u, "partition_walls", "partition_walls") },
+                                      { label: "Podlaha", value: getValue(u, "floors", "floors") ?? getValue(u, "project.floors", "floors") },
+                                      { label: "Klimatizace", value: getValue(u, "air_conditioning", "air_conditioning") },
+                                      { label: "Chlazení stropem", value: getValue(u, "cooling_ceilings", "cooling_ceilings") },
+                                      { label: "Žaluzie", value: getValue(u, "exterior_blinds", "exterior_blinds") },
+                                      { label: "Smart home", value: getValue(u, "smart_home", "smart_home") },
+                                      { label: "Rekuperace", value: getValue(u, "recuperation", "recuperation") ?? getValue(u, "project.recuperation", "recuperation") },
+                                      { label: "Výška stropů", value: getValue(u, "ceiling_height", "ceiling_height") ?? getValue(u, "project.ceiling_height", "ceiling_height") },
+                                      { label: "Kategorie", value: getValue(u, "category", "category") ?? getValue(u, "project.category", "category") },
+                                    ];
+                                    const formatBool = (v: unknown) => {
+                                      if (v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano") return "Ano";
+                                      if (v === false || v === "false" || v === "0" || String(v).toLowerCase() === "ne") return "Ne";
+                                      return null;
+                                    };
+                                    return standardFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
+                                      <div key={f.label}>
+                                        <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                        <p className="font-medium text-slate-900">
+                                          {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false","ano","ne","1","0"].includes(f.value.toLowerCase()))
+                                            ? formatBool(f.value) ?? String(f.value)
+                                            : String(f.value)}
+                                        </p>
+                                      </div>
+                                    ));
+                                  })()}
+                                </div>
+                              </div>
+                              {/* Section: Location & walkability */}
+                              <div className="mb-3">
+                                <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Lokalita</h4>
+                                <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                  {(() => {
+                                    const locFields: Array<{ label: string; value: unknown }> = [
+                                      { label: "Obec", value: getValue(u, "project.municipality", "municipality") },
+                                      { label: "Adresa", value: getValue(u, "project.address", "address") },
+                                      { label: "Walkability", value: (() => { const v = getValue(u, "walkability_score", "walkability_score") ?? getValue(u, "project.walkability_score", "walkability_score"); return v != null ? `${Math.round(Number(v))} (${getValue(u, "walkability_label", "walkability_label") ?? getValue(u, "project.walkability_label", "walkability_label") ?? ""})` : null; })() },
+                                      { label: "Hluk", value: getValue(u, "noise_label", "noise_label") ?? getValue(u, "project.noise_label", "noise_label") },
+                                      { label: "Mikro-lokalita", value: getValue(u, "micro_location_label", "micro_location_label") ?? getValue(u, "project.micro_location_label", "micro_location_label") },
+                                      { label: "Autem do centra", value: (() => { const v = (getValue(u, "ride_to_center_min", "ride_to_center_min") ?? getValue(u, "project.ride_to_center_min", "ride_to_center_min")) as number | null; return v != null ? `${v} min` : null; })() },
+                                      { label: "MHD do centra", value: (() => { const v = (getValue(u, "public_transport_to_center_min", "public_transport_to_center_min") ?? getValue(u, "project.public_transport_to_center_min", "public_transport_to_center_min")) as number | null; return v != null ? `${v} min` : null; })() },
+                                    ];
+                                    return locFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
+                                      <div key={f.label}>
+                                        <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                        <p className="font-medium text-slate-900">{String(f.value)}</p>
+                                      </div>
+                                    ));
+                                  })()}
+                                </div>
+                              </div>
+                              {/* Section: Financing */}
                               {(() => {
-                                const fields: Array<{ label: string; value: unknown }> = [
-                                  { label: "Patro", value: getValue(u, "floor", "floor") },
-                                  { label: "Orientace", value: getValue(u, "orientation", "orientation") },
-                                  { label: "Venkovní plocha", value: (() => { const v = getValue(u, "exterior_area_m2", "exterior_area_m2"); return v != null ? `${Number(v).toFixed(1)} m\u00b2` : null; })() },
-                                  { label: "Původní cena", value: (() => { const v = getValue(u, "original_price_czk", "original_price_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_czk" }) : null; })() },
-                                  { label: "Topení", value: getValue(u, "heating", "heating") },
-                                  { label: "Klimatizace", value: getValue(u, "air_conditioning", "air_conditioning") },
-                                  { label: "Žaluzie", value: getValue(u, "exterior_blinds", "exterior_blinds") },
-                                  { label: "Smart home", value: getValue(u, "smart_home", "smart_home") },
-                                  { label: "Kvalita", value: getValue(u, "overall_quality", "overall_quality") },
-                                  { label: "Okna", value: getValue(u, "windows", "windows") },
-                                  { label: "Podlaha", value: getValue(u, "floors", "floors") ?? getValue(u, "project.floors", "floors") },
-                                  { label: "Walkability", value: (() => { const v = getValue(u, "walkability_score", "walkability_score") ?? getValue(u, "project.walkability_score", "walkability_score"); return v != null ? String(Math.round(Number(v))) : null; })() },
-                                  { label: "Mikro-lokalita", value: getValue(u, "micro_location_label", "micro_location_label") ?? getValue(u, "project.micro_location_label", "micro_location_label") },
+                                const finFields: Array<{ label: string; value: unknown }> = [
+                                  { label: "Platba SOSBK", value: (() => { const v = getValue(u, "payment_contract", "payment_contract") as number | null; return v != null ? `${Math.round(Number(v) <= 1 ? Number(v) * 100 : Number(v))} %` : null; })() },
+                                  { label: "Platba výstavba", value: (() => { const v = getValue(u, "payment_construction", "payment_construction") as number | null; return v != null ? `${Math.round(Number(v) <= 1 ? Number(v) * 100 : Number(v))} %` : null; })() },
+                                  { label: "Platba dokončení", value: (() => { const v = getValue(u, "payment_occupancy", "payment_occupancy") as number | null; return v != null ? `${Math.round(Number(v) <= 1 ? Number(v) * 100 : Number(v))} %` : null; })() },
+                                  { label: "Garáž", value: (() => { const v = getValue(u, "min_parking_indoor_price_czk", "min_parking_indoor_price_czk") as number | null; return v != null ? formatValue(v, { display_format: "currency", key: "min_parking_indoor_price_czk" }) : null; })() },
+                                  { label: "Stání", value: (() => { const v = getValue(u, "min_parking_outdoor_price_czk", "min_parking_outdoor_price_czk") as number | null; return v != null ? formatValue(v, { display_format: "currency", key: "min_parking_outdoor_price_czk" }) : null; })() },
+                                ];
+                                const filled = finFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined);
+                                if (filled.length === 0) return null;
+                                return (
+                                  <div className="mb-3">
+                                    <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Financování</h4>
+                                    <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                      {filled.map((f) => (
+                                        <div key={f.label}>
+                                          <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                          <p className="font-medium text-slate-900">{String(f.value)}</p>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                );
+                              })()}
+                              {/* Section: Amenities */}
+                              {(() => {
+                                const amenFields: Array<{ label: string; value: unknown }> = [
+                                  { label: "Concierge", value: getValue(u, "concierge", "concierge") ?? getValue(u, "project.concierge", "concierge") },
+                                  { label: "Recepce", value: getValue(u, "reception", "reception") ?? getValue(u, "project.reception", "reception") },
+                                  { label: "Kolárna", value: getValue(u, "bike_room", "bike_room") ?? getValue(u, "project.bike_room", "bike_room") },
+                                  { label: "Kočárkárna", value: getValue(u, "stroller_room", "stroller_room") ?? getValue(u, "project.stroller_room", "stroller_room") },
+                                  { label: "Fitness", value: getValue(u, "fitness", "fitness") ?? getValue(u, "project.fitness", "fitness") },
+                                  { label: "Zahrada", value: getValue(u, "courtyard_garden", "courtyard_garden") ?? getValue(u, "project.courtyard_garden", "courtyard_garden") },
                                 ];
                                 const formatBool = (v: unknown) => {
-                                  if (v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano") return "Ano";
-                                  if (v === false || v === "false" || v === "0" || String(v).toLowerCase() === "ne") return "Ne";
+                                  if (v === true || v === "true" || v === "1") return "Ano";
+                                  if (v === false || v === "false" || v === "0") return "Ne";
                                   return null;
                                 };
-                                return fields
-                                  .filter((f) => f.value != null && f.value !== "" && f.value !== undefined)
-                                  .map((f) => (
-                                    <div key={f.label}>
-                                      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">{f.label}</p>
-                                      <p className="font-medium text-slate-900">
-                                        {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false","ano","ne","1","0"].includes(f.value.toLowerCase()))
-                                          ? formatBool(f.value) ?? String(f.value)
-                                          : String(f.value)}
-                                      </p>
+                                const filled = amenFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined);
+                                if (filled.length === 0) return null;
+                                return (
+                                  <div className="mb-3">
+                                    <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Amenities</h4>
+                                    <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                      {filled.map((f) => (
+                                        <div key={f.label}>
+                                          <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                          <p className="font-medium text-slate-900">{formatBool(f.value) ?? String(f.value)}</p>
+                                        </div>
+                                      ))}
                                     </div>
-                                  ));
+                                  </div>
+                                );
                               })()}
-                            </div>
-                            <div className="mt-3 flex gap-2">
-                              <a
-                                href={`/units/${encodeURIComponent(u.external_id)}`}
-                                className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
-                                data-no-row-nav
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                Detail jednotky
-                              </a>
-                              {u.project && (u.project as Record<string, unknown>).id && (
+                              {/* Action buttons */}
+                              <div className="mt-3 flex gap-2">
                                 <a
-                                  href={`/projects/${(u.project as Record<string, unknown>).id}`}
-                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                  href={`/units/${encodeURIComponent(u.external_id)}`}
+                                  className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
                                   data-no-row-nav
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  Detail projektu
+                                  Detail jednotky
                                 </a>
-                              )}
+                                {u.project && (u.project as Record<string, unknown>).id && (
+                                  <a
+                                    href={`/projects/${(u.project as Record<string, unknown>).id}`}
+                                    className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                    data-no-row-nav
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    Detail projektu
+                                  </a>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>

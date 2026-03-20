@@ -1530,67 +1530,121 @@ export default function ProjectsPage() {
                     </tr>
                     {isExpanded && (
                       <tr className="bg-slate-50/80">
-                        <td colSpan={visibleColumns.length} className="px-4 py-3">
-                          <div className="grid grid-cols-2 gap-x-8 gap-y-2 sm:grid-cols-3 lg:grid-cols-5 text-sm">
+                        <td colSpan={visibleColumns.length} className="p-0">
+                          <div className="sticky left-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden border-b border-slate-200 bg-slate-50/90 px-5 py-4">
+                            {/* Standards */}
+                            <div className="mb-3">
+                              <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Standardy</h4>
+                              <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                {(() => {
+                                  const fields: Array<{ label: string; value: unknown }> = [
+                                    { label: "Kvalita", value: p["overall_quality"] },
+                                    { label: "Topení", value: p["heating"] },
+                                    { label: "Okna", value: p["windows"] },
+                                    { label: "Příčky", value: p["partition_walls"] },
+                                    { label: "Podlaha", value: p["floors"] },
+                                    { label: "Klimatizace", value: p["air_conditioning"] },
+                                    { label: "Chlazení stropem", value: p["cooling_ceilings"] },
+                                    { label: "Žaluzie", value: p["exterior_blinds"] },
+                                    { label: "Smart home", value: p["smart_home"] },
+                                    { label: "Rekuperace", value: p["recuperation"] },
+                                    { label: "Výška stropů", value: p["ceiling_height"] },
+                                    { label: "Kategorie", value: p["category"] },
+                                  ];
+                                  const formatBool = (v: unknown) => {
+                                    if (v === true || v === "true" || v === "1") return "Ano";
+                                    if (v === false || v === "false" || v === "0") return "Ne";
+                                    return null;
+                                  };
+                                  return fields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
+                                    <div key={f.label}>
+                                      <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                      <p className="font-medium text-slate-900">
+                                        {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false"].includes(f.value.toLowerCase()))
+                                          ? formatBool(f.value) ?? String(f.value) : String(f.value)}
+                                      </p>
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+                            {/* Location & walkability */}
+                            <div className="mb-3">
+                              <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Lokalita</h4>
+                              <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                {(() => {
+                                  const fields: Array<{ label: string; value: unknown }> = [
+                                    { label: "Adresa", value: p["address"] },
+                                    { label: "Obec", value: p["municipality"] },
+                                    { label: "Okres", value: p["district"] },
+                                    { label: "Walkability", value: p["walkability_score"] != null ? `${Math.round(Number(p["walkability_score"]))} (${p["walkability_label"] ?? ""})` : null },
+                                    { label: "Hluk", value: p["noise_label"] },
+                                    { label: "Mikro-lokalita", value: p["micro_location_label"] },
+                                    { label: "Dní na trhu", value: p["max_days_on_market"] },
+                                    { label: "Od", value: p["project_first_seen"] },
+                                  ];
+                                  return fields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
+                                    <div key={f.label}>
+                                      <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                      <p className="font-medium text-slate-900">{String(f.value)}</p>
+                                    </div>
+                                  ));
+                                })()}
+                              </div>
+                            </div>
+                            {/* Amenities */}
                             {(() => {
-                              const fields: Array<{ label: string; value: unknown }> = [
-                                { label: "Adresa", value: p["address"] },
-                                { label: "Obec", value: p["municipality"] },
-                                { label: "Okres", value: p["district"] },
-                                { label: "Kvalita", value: p["overall_quality"] },
-                                { label: "Topení", value: p["heating"] },
-                                { label: "Okna", value: p["windows"] },
-                                { label: "Podlaha", value: p["floors"] },
-                                { label: "Klimatizace", value: p["air_conditioning"] },
-                                { label: "Rekuperace", value: p["recuperation"] },
-                                { label: "Žaluzie", value: p["exterior_blinds"] },
-                                { label: "Smart home", value: p["smart_home"] },
-                                { label: "Walkability", value: p["walkability_score"] != null ? `${Math.round(Number(p["walkability_score"]))} (${p["walkability_label"] ?? ""})` : null },
-                                { label: "Hluk", value: p["noise_label"] },
-                                { label: "Mikro-lokalita", value: p["micro_location_label"] },
-                                { label: "Dní na trhu", value: p["max_days_on_market"] },
-                                { label: "Od", value: p["project_first_seen"] },
+                              const amenFields: Array<{ label: string; value: unknown }> = [
+                                { label: "Concierge", value: p["concierge"] },
+                                { label: "Recepce", value: p["reception"] },
+                                { label: "Kolárna", value: p["bike_room"] },
+                                { label: "Kočárkárna", value: p["stroller_room"] },
+                                { label: "Fitness", value: p["fitness"] },
+                                { label: "Zahrada", value: p["courtyard_garden"] },
                               ];
                               const formatBool = (v: unknown) => {
                                 if (v === true || v === "true" || v === "1") return "Ano";
                                 if (v === false || v === "false" || v === "0") return "Ne";
                                 return null;
                               };
-                              return fields
-                                .filter((f) => f.value != null && f.value !== "" && f.value !== undefined)
-                                .map((f) => (
-                                  <div key={f.label}>
-                                    <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-slate-500">{f.label}</p>
-                                    <p className="font-medium text-slate-900">
-                                      {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false"].includes(f.value.toLowerCase()))
-                                        ? formatBool(f.value) ?? String(f.value)
-                                        : String(f.value)}
-                                    </p>
+                              const filled = amenFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined);
+                              if (filled.length === 0) return null;
+                              return (
+                                <div className="mb-3">
+                                  <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Amenities</h4>
+                                  <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
+                                    {filled.map((f) => (
+                                      <div key={f.label}>
+                                        <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
+                                        <p className="font-medium text-slate-900">{formatBool(f.value) ?? String(f.value)}</p>
+                                      </div>
+                                    ))}
                                   </div>
-                                ));
+                                </div>
+                              );
                             })()}
-                          </div>
-                          <div className="mt-3 flex gap-2">
-                            <a
-                              href={`/projects/${p.id}`}
-                              className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
-                              data-no-row-nav
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              Detail projektu
-                            </a>
-                            {p["project_url"] && (
+                            <div className="mt-3 flex gap-2">
                               <a
-                                href={p["project_url"] as string}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                href={`/projects/${p.id}`}
+                                className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
                                 data-no-row-nav
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                ↗ Web projektu
+                                Detail projektu
                               </a>
-                            )}
+                              {p["project_url"] && (
+                                <a
+                                  href={p["project_url"] as string}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+                                  data-no-row-nav
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  ↗ Web projektu
+                                </a>
+                              )}
+                            </div>
                           </div>
                         </td>
                       </tr>
