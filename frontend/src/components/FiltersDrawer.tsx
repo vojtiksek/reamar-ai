@@ -146,7 +146,7 @@ export function FiltersDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/50 transition-opacity" aria-hidden onClick={onClose} />
       <div
-        className="fixed top-0 right-0 z-50 flex h-full w-full max-w-[720px] flex-col rounded-l-2xl border-l border-slate-200 bg-white shadow-2xl"
+        className="fixed top-0 right-0 z-50 flex h-full w-full max-w-[900px] flex-col rounded-l-2xl border-l border-slate-200 bg-white shadow-2xl"
         role="dialog"
         aria-label="Filtry"
       >
@@ -196,7 +196,7 @@ export function FiltersDrawer({
                   </button>
                   {!isCollapsed && (
                     <div className="px-4 pb-3 pt-1">
-                      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                      <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
                         {group.filters.map((spec) => (
                           <FilterField key={spec.key} spec={spec} currentFilters={currentFilters} onChange={onChange} />
                         ))}
