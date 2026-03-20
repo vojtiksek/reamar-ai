@@ -2713,11 +2713,11 @@ export default function Home() {
                                   {(() => {
                                     const basicFields: Array<{ label: string; value: unknown }> = [
                                       { label: "Patro", value: getValue(u, "floor", "floor") },
-                                      { label: "Orientace", value: getValue(u, "orientation", "orientation") },
-                                      { label: "Venkovní plocha", value: (() => { const v = getValue(u, "exterior_area_m2", "exterior_area_m2"); return v != null ? `${Number(v).toFixed(1)} m²` : null; })() },
-                                      { label: "Ekvivalentní plocha", value: (() => { const v = getValue(u, "equivalent_area_m2", "equivalent_area_m2"); return v != null ? `${Number(v).toFixed(1)} m²` : null; })() },
-                                      { label: "Původní cena", value: (() => { const v = getValue(u, "original_price_czk", "original_price_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_czk" }) : null; })() },
-                                      { label: "Původní cena/m²", value: (() => { const v = getValue(u, "original_price_per_m2_czk", "original_price_per_m2_czk"); return v != null ? formatValue(v, { display_format: "currency", key: "original_price_per_m2_czk" }) : null; })() },
+                                      { label: "Kategorie", value: getValue(u, "category", "category") ?? getValue(u, "project.category", "category") },
+                                      { label: "Rekonstrukce", value: getValue(u, "renovation", "renovation") ?? getValue(u, "project.renovation", "renovation") },
+                                      { label: "Energetická třída", value: getValue(u, "energy_class", "energy_class") ?? getValue(u, "project.energy_class", "energy_class") },
+                                      { label: "Dní na trhu", value: getValue(u, "max_days_on_market", "max_days_on_market") ?? getValue(u, "project.max_days_on_market", "max_days_on_market") },
+                                      { label: "Počet jednotek", value: getValue(u, "total_units", "total_units") ?? getValue(u, "project.total_units", "total_units") },
                                     ];
                                     return basicFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
                                       <div key={f.label}>
@@ -2745,7 +2745,6 @@ export default function Home() {
                                       { label: "Smart home", value: getValue(u, "smart_home", "smart_home") },
                                       { label: "Rekuperace", value: getValue(u, "recuperation", "recuperation") ?? getValue(u, "project.recuperation", "recuperation") },
                                       { label: "Výška stropů", value: getValue(u, "ceiling_height", "ceiling_height") ?? getValue(u, "project.ceiling_height", "ceiling_height") },
-                                      { label: "Kategorie", value: getValue(u, "category", "category") ?? getValue(u, "project.category", "category") },
                                     ];
                                     const formatBool = (v: unknown) => {
                                       if (v === true || v === "true" || v === "1" || String(v).toLowerCase() === "ano") return "Ano";
@@ -2770,14 +2769,17 @@ export default function Home() {
                                 <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Lokalita</h4>
                                 <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
                                   {(() => {
+                                    const fmtDist = (v: unknown) => { if (v == null) return null; const m = Number(v); return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m)} m`; };
                                     const locFields: Array<{ label: string; value: unknown }> = [
                                       { label: "Obec", value: getValue(u, "project.municipality", "municipality") },
-                                      { label: "Adresa", value: getValue(u, "project.address", "address") },
                                       { label: "Walkability", value: (() => { const v = getValue(u, "walkability_score", "walkability_score") ?? getValue(u, "project.walkability_score", "walkability_score"); return v != null ? `${Math.round(Number(v))} (${getValue(u, "walkability_label", "walkability_label") ?? getValue(u, "project.walkability_label", "walkability_label") ?? ""})` : null; })() },
                                       { label: "Hluk", value: getValue(u, "noise_label", "noise_label") ?? getValue(u, "project.noise_label", "noise_label") },
                                       { label: "Mikro-lokalita", value: getValue(u, "micro_location_label", "micro_location_label") ?? getValue(u, "project.micro_location_label", "micro_location_label") },
                                       { label: "Autem do centra", value: (() => { const v = (getValue(u, "ride_to_center_min", "ride_to_center_min") ?? getValue(u, "project.ride_to_center_min", "ride_to_center_min")) as number | null; return v != null ? `${v} min` : null; })() },
                                       { label: "MHD do centra", value: (() => { const v = (getValue(u, "public_transport_to_center_min", "public_transport_to_center_min") ?? getValue(u, "project.public_transport_to_center_min", "public_transport_to_center_min")) as number | null; return v != null ? `${v} min` : null; })() },
+                                      { label: "Park", value: fmtDist(getValue(u, "distance_to_park_m", "distance_to_park_m") ?? getValue(u, "project.distance_to_park_m", "distance_to_park_m")) },
+                                      { label: "Restaurace", value: fmtDist(getValue(u, "distance_to_restaurant_m", "distance_to_restaurant_m") ?? getValue(u, "project.distance_to_restaurant_m", "distance_to_restaurant_m")) },
+                                      { label: "Kavárna", value: fmtDist(getValue(u, "distance_to_cafe_m", "distance_to_cafe_m") ?? getValue(u, "project.distance_to_cafe_m", "distance_to_cafe_m")) },
                                     ];
                                     return locFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
                                       <div key={f.label}>
