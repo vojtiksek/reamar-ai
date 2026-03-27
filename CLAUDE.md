@@ -31,6 +31,10 @@ When asked about UI features like maps, tables, filters, or detail pages:
 
 ---
 
+## Machines
+- **Mac mini** — primary coding machine, AI/Claude host, shared DB host, internal app server (`~/reamar-ai`)
+- **MacBook** — secondary/mobile machine for review, fallback edits, and testing (`~/Desktop/reamar_ai`)
+
 ## Stack
 - **Backend**: FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL (PostGIS)
 - **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind)
