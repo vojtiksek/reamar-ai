@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Copy to ~/Library/LaunchAgents/com.reamar.backend.plist and replace /Users/USERNAME with your home path -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.reamar.backend</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/USERNAME/reamar-ai/scripts/launchd_backend.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/USERNAME/reamar-ai/logs/backend.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/USERNAME/reamar-ai/logs/backend.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/USERNAME</string>
+        <key>PATH</key>
+        <string>/Users/USERNAME/.orbstack/bin:/Users/USERNAME/reamar-ai/backend/.venv/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
