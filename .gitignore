@@ -26,7 +26,14 @@ yarn-error.log*
 
 # Local tooling
 .claude/
+.claudeignore
 .playwright-mcp/
+
+# Logs
+logs/
+
+# Local scripts (auto-pull etc.)
+scripts/
 
 # Backups / dumps
 **/*.sql
