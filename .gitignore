@@ -31,12 +31,6 @@ yarn-error.log*
 .claudeignore
 .playwright-mcp/
 
-# Logs
-logs/
-
-# Local scripts (auto-pull etc.)
-scripts/
-
 # Backups / dumps
 **/*.sql
 **/*.dump
