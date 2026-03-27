@@ -5964,7 +5964,8 @@ def create_share_link(
     db.add(link)
     db.commit()
 
-    base_url = "http://localhost:3000"  # Phase 3 will read this from config/env
+    from .settings import settings
+    base_url = settings.frontend_url
     return ShareLinkResponse(url=f"{base_url}/share/{token}", expires_at=expires)
 
 

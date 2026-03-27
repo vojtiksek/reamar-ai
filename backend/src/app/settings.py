@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     # If not set, walkability uses air distance as fallback and sets walkability_walking_fallback_used.
     osrm_url: str | None = Field(default=None, validation_alias="OSRM_URL")
 
+    frontend_url: str = Field(default="http://localhost:3001", validation_alias="FRONTEND_URL")
+
     model_config = SettingsConfigDict(
         env_file=str(_PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
