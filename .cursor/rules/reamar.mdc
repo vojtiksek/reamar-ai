@@ -1,0 +1,96 @@
+# Reamar AI – Project Rules
+
+## Project purpose
+
+This project is a real estate intelligence tool used by brokers to match clients with new development units.
+
+The core workflow:
+
+1. broker creates a client profile
+2. client preferences are collected via a wizard
+3. location is defined by:
+   - polygon
+   - commute time
+   - district
+4. the system calculates matching units
+5. broker receives recommended units
+
+The product is used live during meetings with clients.
+
+---
+
+## Tech stack
+
+Frontend:
+- Next.js (App Router)
+- React
+- TypeScript
+- TailwindCSS
+- Leaflet (maps)
+
+Backend:
+- FastAPI
+- Python
+- PostgreSQL
+- PostGIS
+
+Infrastructure:
+- Docker
+- OSM data
+- custom scrapers for projects and units
+
+---
+
+## Coding rules
+
+1. Do not break existing functionality.
+2. Prefer extending existing components instead of creating duplicates.
+3. Keep frontend logic minimal — business logic belongs to backend.
+4. Always keep API responses typed.
+5. Never remove existing filters without explicit instruction.
+
+---
+
+## UX philosophy
+
+This tool is used **during live broker-client meetings**.
+
+Therefore:
+
+- UI must be simple
+- questions must be easy to understand
+- avoid complex forms
+- focus on decision-making
+
+The client wizard should feel like a guided conversation.
+
+---
+
+## Map logic
+
+Location filtering supports:
+
+1. polygon search
+2. commute-based filtering
+3. district filtering
+
+These can be combined.
+
+Example:
+polygon area + commute 30min to work.
+
+---
+
+## Matching logic
+
+Units are matched using:
+
+- price
+- layout
+- floor area
+- location
+- client preferences
+- building features
+- developer quality
+
+Matching results should always explain WHY a unit was recommended.

@@ -1,0 +1,672 @@
+"use client";
+
+import { FiltersDrawer } from "@/components/FiltersDrawer";
+import { useFilterGroups } from "@/hooks/useFilterGroups";
+import { useFilterDrawer } from "@/hooks/useFilterDrawer";
+import { API_BASE } from "@/lib/api";
+import {
+  buildUnitsQuery,
+  countActiveFilters,
+  filtersToSearchParams,
+  parseFiltersFromSearchParams,
+  type CurrentFilters,
+} from "@/lib/filters";
+import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, polygonToGeoJson, type LatLng } from "@/lib/geo";
+import Link from "next/link";
+import dynamic from "next/dynamic";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { LatLngExpression } from "leaflet";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useActiveClient } from "@/contexts/ActiveClientContext";
+import { filtersEqual, filtersToProfilePatch } from "@/lib/clientFilters";
+import { ClientModeBar } from "@/components/ClientModeBar";
+
+type ProjectMapItem = {
+  id: number;
+  project: string | null;
+  municipality?: string | null;
+  city?: string | null;
+  district?: string | null;
+  avg_price_per_m2_czk?: number | null;
+  gps_latitude?: number | null;
+  gps_longitude?: number | null;
+   units_available?: number | null;
+   units_reserved?: number | null;
+};
+
+type ProjectsResponse = {
+  items: ProjectMapItem[];
+  total: number;
+};
+
+const ProjectsLeafletMap = dynamic(() => import("./ProjectsLeafletMap"), {
+  ssr: false,
+});
+
+const DEFAULT_POI_CATEGORIES = [
+  "supermarkets",
+  "pharmacies",
+  "parks",
+  "restaurants",
+  "tram_stops",
+  "bus_stops",
+  "metro_stations",
+];
+
+const ALL_POI_CATEGORIES = [
+  ...DEFAULT_POI_CATEGORIES,
+  "cafes",
+  "fitness",
+  "playgrounds",
+  "kindergartens",
+  "primary_schools",
+];
+
+const POI_CATEGORY_LABELS: Record<string, string> = {
+  supermarkets: "Supermarkety",
+  pharmacies: "Lékárny",
+  parks: "Parky",
+  restaurants: "Restaurace",
+  tram_stops: "Tram",
+  bus_stops: "Bus",
+  metro_stations: "Metro",
+  cafes: "Kavárny",
+  fitness: "Fitness",
+  playgrounds: "Hřiště",
+  kindergartens: "Školky",
+  primary_schools: "ZŠ",
+};
+
+/**
+ * Parse the first polygon ring from a GeoJSON Polygon or MultiPolygon string.
+ * For MultiPolygon, only the first polygon's outer ring is used (Phase 3 MVP limitation).
+ * Returns [] on any parse failure or if the ring has fewer than 3 points.
+ */
+function parseFirstPolygonFromGeoJson(geojson: string): LatLng[] {
+  try {
+    const geo = JSON.parse(geojson) as { type?: string; coordinates?: unknown };
+    let coords: number[][] | null = null;
+    if (geo?.type === "Polygon") {
+      coords = (geo.coordinates as number[][][])?.[0] ?? null;
+    } else if (geo?.type === "MultiPolygon") {
+      coords = (geo.coordinates as number[][][][])?.[0]?.[0] ?? null;
+    }
+    if (!coords || coords.length < 3) return [];
+    return coords
+      .map((c) => ({ lat: c[1], lng: c[0] }))
+      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+  } catch {
+    return [];
+  }
+}
+
+export default function ProjectsMapPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const [projects, setProjects] = useState<ProjectMapItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [polygon, setPolygon] = useState<LatLng[]>(() =>
+    decodePolygon(searchParams?.get("poly") ?? undefined)
+  );
+  const [drawing, setDrawing] = useState(false);
+  const [draftPolygon, setDraftPolygon] = useState<LatLng[]>([]);
+
+  const filterGroups = useFilterGroups("filters");
+  const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
+  const [poiCategoriesEnabled, setPoiCategoriesEnabled] = useState<Set<string>>(
+    () => new Set(DEFAULT_POI_CATEGORIES)
+  );
+  const [poiOverviewData, setPoiOverviewData] = useState<{
+    project: { lat: number; lon: number };
+    categories: Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>>;
+  } | null>(null);
+  const [poiOverviewLoading, setPoiOverviewLoading] = useState(false);
+  const [poiPanelOpen, setPoiPanelOpen] = useState(true);
+
+  const filtersInUrl: CurrentFilters = useMemo(
+    () => parseFiltersFromSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
+    [searchParams]
+  );
+
+  const { currentFilters, drawerOpen, openDrawer, closeDrawer, onReset, onChangeFilter } = useFilterDrawer(filtersInUrl);
+
+  const { activeClient, activate } = useActiveClient();
+  const isClientOverridden = activeClient != null && !filtersEqual(filtersInUrl, activeClient.derivedFilters);
+  // On the map page, saving is available whenever a client is active — both filter overrides
+  // and polygon-only changes should be persistable, so we show the button for any active client.
+  const canSaveToClient = activeClient != null;
+  const [savingToClient, setSavingToClient] = useState(false);
+
+  useEffect(() => {
+    if (selectedProjectId == null) {
+      setPoiOverviewData(null);
+      return;
+    }
+    let cancelled = false;
+    setPoiOverviewLoading(true);
+    const categories = Array.from(poiCategoriesEnabled).filter(Boolean);
+    const params = new URLSearchParams({
+      categories: categories.join(","),
+      per_category: "2",
+    });
+    fetch(`${API_BASE}/projects/${selectedProjectId}/walkability-poi-overview?${params}`)
+      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+      .then((data: { project?: { lat: number; lon: number } | null; categories?: Record<string, unknown[]> }) => {
+        if (cancelled) return;
+        if (data.project && data.categories) {
+          setPoiOverviewData({ project: data.project, categories: data.categories as Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>> });
+        } else {
+          setPoiOverviewData(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setPoiOverviewData(null);
+      })
+      .finally(() => {
+        if (!cancelled) setPoiOverviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProjectId, poiCategoriesEnabled]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAll() {
+      setLoading(true);
+      setError(null);
+      try {
+        const limit = 500;
+        let offset = 0;
+        let all: ProjectMapItem[] = [];
+        let total = Infinity;
+
+        // Z URL si načteme aktuální filtry (stejně jako na /units a /projects)
+        // a pomocí buildUnitsQuery z nich postavíme dotaz na backend.
+        const rawParams = new URLSearchParams(searchParams?.toString() ?? "");
+        const filters: CurrentFilters = parseFiltersFromSearchParams(rawParams);
+        // supportedKeys musí být katalogové klíče (price, ride_to_center, …),
+        // ne „ride_to_center_min“ apod., jinak se range filtry (dojezd) nezapíšou.
+        const supportedKeys = new Set(
+          Object.keys(filters).map((k) => k.replace(/_(min|max)$/, ""))
+        );
+
+        // Geofilter (obdélník okolo polygonu) přidáme zvlášť, aby se aplikoval
+        // globálně (před limitem/offsetem), ale nijak neměnil logiku ostatních filtrů.
+        const geoParams = new URLSearchParams();
+        if (polygon.length >= 3) {
+          const bounds = getPolygonBounds(polygon);
+          if (bounds) {
+            geoParams.set("min_latitude", String(bounds.minLat));
+            geoParams.set("max_latitude", String(bounds.maxLat));
+            geoParams.set("min_longitude", String(bounds.minLng));
+            geoParams.set("max_longitude", String(bounds.maxLng));
+          }
+        }
+
+        while (!cancelled && offset < total) {
+          // Pro každý chunk znovu postavíme dotaz, aby:
+          // - filtry byly zapsané stejně jako pro /units (availability=…&availability=…),
+          // - backend viděl úplně stejné parametry jako list jednotek.
+          const coreQuery = buildUnitsQuery(
+            filters,
+            supportedKeys,
+            { limit, offset },
+            { sort_by: "avg_price_per_m2_czk", sort_dir: "asc" }
+          );
+          const coreParams = new URLSearchParams(coreQuery);
+          geoParams.forEach((v, k) => {
+            coreParams.set(k, v);
+          });
+
+          const res = await fetch(`${API_BASE}/projects?${coreParams.toString()}`);
+          if (!res.ok) {
+            throw new Error(res.statusText || `HTTP ${res.status}`);
+          }
+          const data: ProjectsResponse = await res.json();
+          const items = data.items ?? [];
+          all = all.concat(items);
+          total = data.total ?? items.length;
+          if (items.length < limit) break;
+          offset += limit;
+        }
+        if (cancelled) return;
+        const withGps = all.filter(
+          (p) => p.gps_latitude != null && p.gps_longitude != null
+        );
+        setProjects(withGps);
+      } catch (e) {
+        if (!cancelled) {
+          setError(e instanceof Error ? e.message : "Chyba načítání projektů");
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+    void loadAll();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams?.toString(), polygon]);
+
+  const visibleProjects = useMemo(() => {
+    let base = projects;
+    const activePoly = polygon;
+    if (activePoly.length >= 3) {
+      base = base.filter((p) => {
+        if (p.gps_latitude == null || p.gps_longitude == null) return false;
+        return isPointInPolygon(p.gps_latitude, p.gps_longitude, activePoly);
+      });
+    }
+    return base;
+  }, [projects, polygon]);
+
+  const center: LatLngExpression = useMemo(() => {
+    const source = visibleProjects.length > 0 ? visibleProjects : projects;
+    if (source.length === 0) {
+      // Základní centrum na Prahu
+      return [50.0755, 14.4378];
+    }
+    const latSum = source.reduce((s, p) => s + (p.gps_latitude ?? 0), 0);
+    const lonSum = source.reduce((s, p) => s + (p.gps_longitude ?? 0), 0);
+    return [latSum / source.length, lonSum / source.length] as LatLngExpression;
+  }, [projects, visibleProjects]);
+
+  const applyFiltersToUrl = useCallback(
+    (next: CurrentFilters) => {
+      const params = filtersToSearchParams(next);
+      if (polygon.length >= 3) {
+        params.set("poly", encodePolygon(polygon));
+      }
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    },
+    [pathname, router, polygon]
+  );
+
+  const syncPolygonToUrl = (poly: LatLng[] | null) => {
+    const params = filtersToSearchParams(filtersInUrl);
+    if (poly && poly.length >= 3) {
+      params.set("poly", encodePolygon(poly));
+    }
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  };
+
+  // Initialize polygon from active client's saved polygon when:
+  // - client mode is active and has a polygonGeoJson
+  // - the current map polygon is empty (no polygon in URL, no manually drawn polygon)
+  // Runs once per client activation. Does not override a polygon the broker drew manually.
+  const clientPolygonInitializedRef = useRef(false);
+  useEffect(() => {
+    if (clientPolygonInitializedRef.current) return;
+    if (!activeClient?.polygonGeoJson) return;
+    if (polygon.length > 0) {
+      // Map already has a polygon (from URL or prior drawing); mark as handled.
+      clientPolygonInitializedRef.current = true;
+      return;
+    }
+    const pts = parseFirstPolygonFromGeoJson(activeClient.polygonGeoJson);
+    if (pts.length >= 3) {
+      clientPolygonInitializedRef.current = true;
+      setPolygon(pts);
+      syncPolygonToUrl(pts);
+    }
+    // syncPolygonToUrl is a stable closure for the current render; intentionally omitted
+    // from deps to avoid re-running on every render. activeClient?.polygonGeoJson is the
+    // true trigger — only re-run if the client's polygon changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClient?.polygonGeoJson]);
+
+  const handleSaveToClient = useCallback(async () => {
+    if (!activeClient) return;
+    setSavingToClient(true);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const patch = filtersToProfilePatch(filtersInUrl, polygon);
+      await fetch(`${API_BASE}/clients/${activeClient.clientId}/profile`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(patch),
+      }).then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); });
+      // Update baseline so override badge disappears and polygonGeoJson is in sync
+      const savedGeoJson = polygonToGeoJson(polygon);
+      activate({ ...activeClient, derivedFilters: { ...filtersInUrl }, polygonGeoJson: savedGeoJson });
+      // Trigger recompute in background
+      fetch(`${API_BASE}/clients/${activeClient.clientId}/recommendations/recompute`, {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }).catch(() => {});
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Uložení se nezdařilo");
+    } finally {
+      setSavingToClient(false);
+    }
+  }, [activeClient, filtersInUrl, polygon, activate]);
+
+  const resetToClient = useCallback(() => {
+    if (!activeClient) return;
+    applyFiltersToUrl(activeClient.derivedFilters);
+  }, [activeClient, applyFiltersToUrl]);
+
+  const onResetAll = useCallback(() => {
+    onReset();
+    applyFiltersToUrl(activeClient ? activeClient.derivedFilters : {});
+  }, [onReset, applyFiltersToUrl, activeClient]);
+
+  const onApply = useCallback(() => {
+    applyFiltersToUrl(currentFilters);
+    closeDrawer();
+  }, [applyFiltersToUrl, currentFilters, closeDrawer]);
+
+  const handleMapClick = (lat: number, lng: number) => {
+    if (!drawing) return;
+    setDraftPolygon((prev) => [...prev, { lat, lng }]);
+  };
+
+  // Escape cancels drawing, Ctrl+Z undoes last point
+  useEffect(() => {
+    if (!drawing) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDrawing(false);
+        setDraftPolygon([]);
+      } else if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        setDraftPolygon((prev) => prev.slice(0, -1));
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [drawing]);
+
+  return (
+    <div className="flex h-[calc(100vh-60px)] flex-col gap-3 overflow-hidden pb-2 pt-3">
+      {/* Toolbar — no duplicate nav, GlobalNav from layout handles navigation */}
+      <div className="glass-header shrink-0 flex flex-wrap items-center gap-3 rounded-2xl px-4 py-3">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (!drawing) {
+                setDraftPolygon([]);
+                setDrawing(true);
+              } else {
+                setDrawing(false);
+                setDraftPolygon([]);
+              }
+            }}
+            className={
+              "rounded-full border px-3 py-1.5 text-sm font-medium transition " +
+              (drawing
+                ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+                : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
+            }
+          >
+            Výběr oblasti
+          </button>
+          {polygon.length >= 3 && !drawing && (
+            <button
+              type="button"
+              onClick={() => {
+                setPolygon([]);
+                setDraftPolygon([]);
+                syncPolygonToUrl(null);
+              }}
+              className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+            >
+              Zrušit oblast
+            </button>
+          )}
+          {drawing && draftPolygon.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setDraftPolygon((prev) => prev.slice(0, -1))}
+              className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+              title="Ctrl+Z"
+            >
+              Zpět bod
+            </button>
+          )}
+          {drawing && draftPolygon.length >= 3 && (
+            <button
+              type="button"
+              onClick={() => {
+                setPolygon(draftPolygon);
+                setDrawing(false);
+                syncPolygonToUrl(draftPolygon);
+              }}
+              className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-700"
+            >
+              Uložit oblast
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={openDrawer}
+          className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90"
+        >
+          Filtry
+          {countActiveFilters(filtersInUrl) > 0 && (
+            <span className={`ml-1.5 rounded-full px-1.5 py-0.5 text-[10px] font-semibold text-white ${isClientOverridden ? "bg-amber-500" : "bg-slate-900"}`}>
+              {countActiveFilters(filtersInUrl)}
+            </span>
+          )}
+        </button>
+        {isClientOverridden && (
+          <button
+            type="button"
+            onClick={resetToClient}
+            className="glass-pill border border-amber-200 bg-amber-50 px-3 py-1.5 text-sm font-medium text-amber-800 hover:bg-amber-100"
+          >
+            Zpět na klienta
+          </button>
+        )}
+        {canSaveToClient && (
+          <button
+            type="button"
+            onClick={handleSaveToClient}
+            disabled={savingToClient}
+            className="glass-pill border border-amber-400 bg-amber-400 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-500 disabled:opacity-60"
+            title="Uložit aktuální filtry a oblast jako nový profil klienta"
+          >
+            {savingToClient ? "Ukládám…" : "Uložit změny do klienta"}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onResetAll}
+          disabled={loading}
+          className="glass-pill border border-transparent px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-white/90 disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          Reset
+        </button>
+        <span className="ml-auto text-sm text-slate-500">
+          <span className="font-semibold text-slate-900">{visibleProjects.length}</span> projektů s GPS
+        </span>
+      </div>
+
+      <ClientModeBar isOverridden={isClientOverridden} />
+
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      <div className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-slate-200/70 shadow-sm">
+        <aside className="hidden w-80 flex-shrink-0 flex-col border-r border-slate-200/70 bg-white/80 backdrop-blur-sm md:flex">
+          <div className="border-b border-slate-200/70 px-4 py-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Projekty</p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-3 py-3 text-xs sm:text-sm">
+            {loading && <div className="text-slate-600">Načítání…</div>}
+            {!loading && visibleProjects.length === 0 && (
+              <div className="rounded-2xl border border-slate-200/70 bg-white/80 p-3 text-sm text-slate-600 backdrop-blur-sm">
+                Žádné projekty nevyhovují filtrům nebo nemají GPS. Zkuste upravit filtry nebo zrušit výběr oblasti.
+              </div>
+            )}
+            <div className="mb-3 border-b border-slate-200/70 pb-3">
+              <button
+                type="button"
+                onClick={() => setPoiPanelOpen((o) => !o)}
+                className="flex w-full items-center justify-between text-left text-[11px] font-semibold uppercase tracking-widest text-slate-500"
+              >
+                Walkability POI na mapě
+                <span className="text-slate-400">{poiPanelOpen ? "▼" : "▶"}</span>
+              </button>
+              {poiPanelOpen && (
+                <div className="mt-2 space-y-2 text-xs">
+                  <p className="text-slate-600">
+                    Klikněte na projekt v seznamu nebo na značku na mapě a zobrazí se 1–2 nejbližší POI za kategorii.
+                  </p>
+                  {selectedProjectId != null && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedProjectId(null)}
+                      className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
+                    >
+                      Zrušit výběr projektu
+                    </button>
+                  )}
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                    {ALL_POI_CATEGORIES.map((cat) => (
+                      <label key={cat} className="flex cursor-pointer items-center gap-1.5">
+                        <input
+                          type="checkbox"
+                          checked={poiCategoriesEnabled.has(cat)}
+                          onChange={() => {
+                            setPoiCategoriesEnabled((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(cat)) next.delete(cat);
+                              else next.add(cat);
+                              return next;
+                            });
+                          }}
+                          className="rounded border-slate-300"
+                        />
+                        <span className="text-slate-700">{POI_CATEGORY_LABELS[cat] ?? cat}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <ul className="space-y-2">
+              {visibleProjects.map((p) => (
+                <li
+                  key={p.id}
+                  className={`rounded-2xl border p-3 shadow-sm transition backdrop-blur-sm ${
+                    selectedProjectId === p.id
+                      ? "border-sky-400/60 bg-sky-50/80"
+                      : "border-slate-200/70 bg-white/80 hover:border-slate-300"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProjectId(selectedProjectId === p.id ? null : p.id)}
+                    className="w-full text-left"
+                  >
+                    <div className="text-sm font-semibold text-slate-900">
+                      {p.project ?? "Projekt bez názvu"}
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-500">
+                      {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
+                    </div>
+                    {p.avg_price_per_m2_czk != null && (
+                      <div className="mt-2 flex items-baseline justify-between">
+                        <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Prům. m²</span>
+                        <span className="text-sm font-semibold text-slate-900">
+                          {new Intl.NumberFormat("cs-CZ", {
+                            maximumFractionDigits: 0,
+                            minimumFractionDigits: 0,
+                          }).format(p.avg_price_per_m2_czk)}{" "}
+                          Kč/m²
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                  <Link
+                    href={`/projects/${p.id}`}
+                    className="mt-2 inline-block rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Detail →
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </aside>
+        <section className="relative flex-1 bg-slate-50/50">
+          {/* Legenda barev podle průměrné ceny m² */}
+          <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-2xl border border-slate-200/70 bg-white/90 px-3 py-2.5 text-[11px] text-slate-700 shadow-sm backdrop-blur-sm">
+            <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-widest text-slate-500">
+              Barva podle ceny m²
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-emerald-700">levnější</span>
+              <div className="h-1.5 w-24 rounded-full bg-gradient-to-r from-emerald-500 via-orange-400 to-red-600" />
+              <span className="text-[10px] text-red-700">dražší</span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-emerald-500" />
+              <span className="text-[10px] text-slate-700">nejlevnější projekty</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-orange-400" />
+              <span className="text-[10px] text-slate-700">střed cenového spektra</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-red-600" />
+              <span className="text-[10px] text-slate-700">nejdražší projekty</span>
+            </div>
+            <div className="mt-0.5 flex items-center gap-1.5">
+              <span className="inline-flex h-2 w-2 rounded-full bg-gray-400" />
+              <span className="text-[10px] text-slate-700">bez dostupné ceny m²</span>
+            </div>
+          </div>
+
+          {loading && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-white/70 text-sm text-slate-700">
+              Načítání mapy…
+            </div>
+          )}
+          {(poiOverviewLoading && selectedProjectId != null) && (
+            <div className="absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-2xl border border-slate-200/70 bg-white/95 px-3 py-1.5 text-xs text-slate-600 shadow-sm backdrop-blur-sm">
+              Načítám POI…
+            </div>
+          )}
+          <ProjectsLeafletMap
+            projects={visibleProjects}
+            center={center}
+            polygon={polygon}
+            draftPolygon={draftPolygon}
+            drawing={drawing}
+            onMapClick={handleMapClick}
+            selectedProjectId={selectedProjectId}
+            onProjectSelect={setSelectedProjectId}
+            poiOverview={poiOverviewData}
+          />
+        </section>
+      </div>
+      <FiltersDrawer
+        open={drawerOpen}
+        onClose={closeDrawer}
+        filterGroups={filterGroups}
+        currentFilters={currentFilters}
+        onChange={onChangeFilter}
+        onReset={onReset}
+        onApply={onApply}
+      />
+    </div>
+  );
+}
+

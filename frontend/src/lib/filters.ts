@@ -32,17 +32,53 @@ const CATALOG_TO_UNITS_API: Record<
   price: { min: "min_price", max: "max_price" },
   price_per_sm: { min: "min_price_per_m2", max: "max_price_per_m2" },
   floor_area: { min: "min_floor_area", max: "max_floor_area" },
+  price_change: { min: "min_price_change", max: "max_price_change" },
+  original_price: { min: "min_original_price", max: "max_original_price" },
+  original_price_per_sm: {
+    min: "min_original_price_per_m2",
+    max: "max_original_price_per_m2",
+  },
+  total_area: { min: "min_total_area", max: "max_total_area" },
+  exterior_area: { min: "min_exterior_area", max: "max_exterior_area" },
+  balcony_area: { min: "min_balcony_area", max: "max_balcony_area" },
+  terrace_area: { min: "min_terrace_area", max: "max_terrace_area" },
+  garden_area: { min: "min_garden_area", max: "max_garden_area" },
+  days_on_market: { min: "min_days_on_market", max: "max_days_on_market" },
+  floor: { min: "min_floor", max: "max_floor" },
+  floors: { min: "min_floors", max: "max_floors" },
   layout: { list: "layout" },
   district: { list: "district" },
   municipality: { list: "municipality" },
+  project: { list: "project" },
   heating: { list: "heating" },
   windows: { list: "windows" },
+  orientation: { list: "orientation" },
+  category: { list: "category" },
+  overall_quality: { list: "overall_quality" },
+  partition_walls: { list: "partition_walls" },
+  city: { list: "city" },
+  cadastral_area_iga: { list: "cadastral_area_iga" },
+  municipal_district_iga: { list: "municipal_district_iga" },
+  administrative_district_iga: { list: "administrative_district_iga" },
+  region_iga: { list: "region_iga" },
+  developer: { list: "developer" },
+  building: { list: "building" },
+  availability: { list: "availability" },
   available: { bool: "available" },
   permit_regular: { bool: "permit_regular" },
   renovation: { bool: "renovation" },
   air_conditioning: { bool: "air_conditioning" },
   cooling_ceilings: { bool: "cooling_ceilings" },
   smart_home: { bool: "smart_home" },
+  exterior_blinds: { bool: "exterior_blinds" },
+  ride_to_center: { min: "min_ride_to_center_min", max: "max_ride_to_center_min" },
+  public_transport_to_center: {
+    min: "min_public_transport_to_center_min",
+    max: "max_public_transport_to_center_min",
+  },
+  payment_contract: { min: "min_payment_contract", max: "max_payment_contract" },
+  payment_construction: { min: "min_payment_construction", max: "max_payment_construction" },
+  payment_occupancy: { min: "min_payment_occupancy", max: "max_payment_occupancy" },
 };
 
 /**
@@ -58,8 +94,18 @@ export function filtersToUnitsParams(
     const api = CATALOG_TO_UNITS_API[key];
     if (!api) continue;
     if (api.min != null) {
-      const vMin = filters[`${key}_min`] as number | undefined;
-      const vMax = filters[`${key}_max`] as number | undefined;
+      let vMin = filters[`${key}_min`] as number | undefined;
+      let vMax = filters[`${key}_max`] as number | undefined;
+      // Backend očekává payment_* jako 0–1 (zlomek). Ve state máme vždy 0–1 (FiltersDrawer ukládá 10% jako 0.1).
+      // Škálovat jen když hodnota vypadá jako procenta ( > 1 ), jinak by se 0.1 z URL znovu dělilo na 0.001.
+      if (
+        (key === "payment_contract" || key === "payment_construction" || key === "payment_occupancy") &&
+        (vMin != null || vMax != null)
+      ) {
+        const toFraction = (v: number) => (v > 1 ? v / 100 : v);
+        if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) vMin = toFraction(vMin);
+        if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) vMax = toFraction(vMax);
+      }
       if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) out[api.min] = vMin;
       if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) out[api.max!] = vMax;
     }
@@ -114,17 +160,69 @@ const API_TO_CATALOG: Record<string, { key: string; suffix?: string }> = {
   max_price_per_m2: { key: "price_per_sm", suffix: "max" },
   min_floor_area: { key: "floor_area", suffix: "min" },
   max_floor_area: { key: "floor_area", suffix: "max" },
+   min_price_change: { key: "price_change", suffix: "min" },
+   max_price_change: { key: "price_change", suffix: "max" },
+   min_original_price: { key: "original_price", suffix: "min" },
+   max_original_price: { key: "original_price", suffix: "max" },
+   min_original_price_per_m2: {
+     key: "original_price_per_sm",
+     suffix: "min",
+   },
+   max_original_price_per_m2: {
+     key: "original_price_per_sm",
+     suffix: "max",
+   },
+   min_total_area: { key: "total_area", suffix: "min" },
+   max_total_area: { key: "total_area", suffix: "max" },
+   min_exterior_area: { key: "exterior_area", suffix: "min" },
+   max_exterior_area: { key: "exterior_area", suffix: "max" },
+   min_balcony_area: { key: "balcony_area", suffix: "min" },
+   max_balcony_area: { key: "balcony_area", suffix: "max" },
+   min_terrace_area: { key: "terrace_area", suffix: "min" },
+   max_terrace_area: { key: "terrace_area", suffix: "max" },
+   min_garden_area: { key: "garden_area", suffix: "min" },
+   max_garden_area: { key: "garden_area", suffix: "max" },
+   min_days_on_market: { key: "days_on_market", suffix: "min" },
+   max_days_on_market: { key: "days_on_market", suffix: "max" },
+   min_floor: { key: "floor", suffix: "min" },
+   max_floor: { key: "floor", suffix: "max" },
+   min_floors: { key: "floors", suffix: "min" },
+   max_floors: { key: "floors", suffix: "max" },
   layout: { key: "layout" },
   district: { key: "district" },
   municipality: { key: "municipality" },
+  project: { key: "project" },
   heating: { key: "heating" },
   windows: { key: "windows" },
+  orientation: { key: "orientation" },
+  category: { key: "category" },
+  overall_quality: { key: "overall_quality" },
+  partition_walls: { key: "partition_walls" },
+  city: { key: "city" },
+  cadastral_area_iga: { key: "cadastral_area_iga" },
+  municipal_district_iga: { key: "municipal_district_iga" },
+  administrative_district_iga: { key: "administrative_district_iga" },
+  region_iga: { key: "region_iga" },
+  developer: { key: "developer" },
+  building: { key: "building" },
+  availability: { key: "availability" },
   available: { key: "available" },
   permit_regular: { key: "permit_regular" },
   renovation: { key: "renovation" },
   air_conditioning: { key: "air_conditioning" },
   cooling_ceilings: { key: "cooling_ceilings" },
   smart_home: { key: "smart_home" },
+  exterior_blinds: { key: "exterior_blinds" },
+  min_ride_to_center_min: { key: "ride_to_center", suffix: "min" },
+  max_ride_to_center_min: { key: "ride_to_center", suffix: "max" },
+  min_public_transport_to_center_min: { key: "public_transport_to_center", suffix: "min" },
+  max_public_transport_to_center_min: { key: "public_transport_to_center", suffix: "max" },
+  min_payment_contract: { key: "payment_contract", suffix: "min" },
+  max_payment_contract: { key: "payment_contract", suffix: "max" },
+  min_payment_construction: { key: "payment_construction", suffix: "min" },
+  max_payment_construction: { key: "payment_construction", suffix: "max" },
+  min_payment_occupancy: { key: "payment_occupancy", suffix: "min" },
+  max_payment_occupancy: { key: "payment_occupancy", suffix: "max" },
 };
 
 /** List-type API params (multi-select, repeated in URL) */
@@ -132,8 +230,22 @@ const API_LIST_PARAMS = new Set([
   "layout",
   "district",
   "municipality",
+  "project",
   "heating",
   "windows",
+  "orientation",
+  "category",
+  "overall_quality",
+  "partition_walls",
+  "city",
+  "cadastral_area_iga",
+  "municipal_district_iga",
+  "administrative_district_iga",
+  "region_iga",
+  "developer",
+  "building",
+  // Stav jednotky (available / reserved / sold / ...), může mít více hodnot najednou.
+  "availability",
 ]);
 
 export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFilters {
@@ -166,6 +278,11 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFi
       const v = bool(apiKey);
       if (v !== undefined) filters[key] = v;
     }
+  }
+  // Výchozí stav: po otevření aplikace filtrujeme na dostupné / rezervované / neviditelné jednotky.
+  // Pokud v URL není žádný parametr availability, nastavíme implicitně tento stav.
+  if (!("availability" in filters)) {
+    filters.availability = ["available", "unseen", "reserved"];
   }
   return filters;
 }

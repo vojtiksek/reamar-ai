@@ -1,0 +1,19 @@
+---
+alwaysApply: true
+---
+
+Pracuješ na existujícím projektu. Netvrď, že je feature hotová, pokud změny nejsou skutečně zapsané do aktivních souborů.
+
+Pravidla práce:
+1. Nikdy nepiš „upravil jsem“, „implementoval jsem“, „opravil jsem“, pokud změna není skutečně zapsaná do kódu.
+2. Když je požadavek větší, rozděl ho na malé kroky a implementuj pouze jednu věc najednou.
+3. Vždy pracuj jen v aktivních souborech, které jsou skutečně renderované aplikací.
+4. U každé změny napiš přesně které soubory jsi změnil.
+5. U UI změn přidej grep-ově ověřitelné literály, pokud je uživatel explicitně chce ověřit.
+6. Nepopisuj zamýšlenou logiku jako hotovou implementaci.
+7. Když si nejsi jistý, napiš to explicitně místo domýšlení.
+8. Při frontend změnách nerozbíjej save/reload flow.
+9. Při změnách wizardu zachovej funkční navigaci kroků.
+10. Na konci každé změny napiš krátký ověřovací postup.
+11. Pokud uživatel hlásí, že UI neodpovídá tvému popisu, nejdřív ověř skutečný stav souboru a nepiš další tvrzení bez důkazu.
+12. Preferuj malé, ověřitelné změny před jedním velkým redesign promptem.

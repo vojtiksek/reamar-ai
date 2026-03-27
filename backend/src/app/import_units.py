@@ -12,11 +12,34 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import desc, select, tuple_
+from sqlalchemy import delete, desc, select, tuple_
 from sqlalchemy.orm import Session
 
 from .db import get_db
-from .models import Project, Unit, UnitPriceHistory, UnitSnapshot
+from .overrides import compute_equivalent_price_per_m2
+from .models import (
+    Project,
+    Unit,
+    UnitApiPending,
+    UnitOverride,
+    UnitPriceHistory,
+    UnitSnapshot,
+    UnitEvent,
+    Client,
+    ClientProfile,
+    ClientUnitMatch,
+    CommuteCache,
+)
+from .overrides import OVERRIDEABLE_FIELDS, apply_override, build_override_map
+from .aggregates import recompute_local_price_diffs, recompute_project_aggregates
+from .project_location_metrics import (
+    enrich_project_location_metrics,
+    should_enrich_after_project_change,
+)
+from .main import _compute_unit_match_score
+
+# Pole, u kterých při rozdílu API vs. aktuální neukládáme přímo, ale do pending (uživatel zvolí).
+API_CONFLICT_FIELDS = frozenset({"price_czk", "availability_status"})  # price_per_m2_czk je počítaná, ne importovaná
 
 # Canonical mapping: API JSON key -> Unit DB attribute. No duplicate columns; renames only.
 # Keys not listed use _key_to_attr(key) if that column exists. Skip: unique_id, id, project, availability.
@@ -70,6 +93,20 @@ def _get_attr_for_json_key(key: str) -> str | None:
     if attr in _get_unit_data_columns():
         return attr
     return None
+
+
+def _attrs_tracked_from_unit_data(unit_data: dict[str, Any]) -> set[str]:
+    """Set of Unit attribute names that may be updated from this unit_data (for change report)."""
+    attrs: set[str] = set()
+    for key in unit_data:
+        if key == "availability":
+            attrs.add("availability_status")
+            attrs.add("available")
+        elif key not in ("unique_id", "id"):
+            attr = _get_attr_for_json_key(key)
+            if attr:
+                attrs.add(attr)
+    return attrs
 
 
 def _normalize_value_for_column(value: Any, column_type: Any = None) -> Any:
@@ -158,6 +195,22 @@ def normalize_bool(value: Any) -> bool | None:
         return bool(value)
     except (ValueError, TypeError):
         return None
+
+
+def normalize_exterior_blinds(value: Any) -> str | None:
+    """Store API value as 'true' | 'false' | 'preparation'."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "on"):
+        return "true"
+    if s in ("false", "0", "no", "off"):
+        return "false"
+    if s == "preparation":
+        return "preparation"
+    return s if s else None
 
 
 def normalize_str(value: Any, max_length: int | None = None) -> str | None:
@@ -341,6 +394,88 @@ def batch_load_latest_price_history(
     return {r.unit_id: r for r in rows}
 
 
+def batch_load_unit_overrides(
+    db: Session,
+    unit_ids: list[int],
+) -> dict[int, dict[str, str]]:
+    """Load unit overrides for given unit IDs. Returns unit_id -> {field: value}."""
+    if not unit_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(unit_ids))
+    stmt = select(UnitOverride).where(UnitOverride.unit_id.in_(unique_ids))
+    rows = db.execute(stmt).scalars().all()
+    return build_override_map([r for r in rows])
+
+
+def _effective_value(unit: Unit, overrides: dict[str, str], field: str) -> Any:
+    """Aktuální efektivní hodnota pole (override nebo hodnota na jednotce)."""
+    base = getattr(unit, field, None)
+    if field not in overrides:
+        return base
+    return apply_override(field, overrides[field], base, unit.id)
+
+
+def apply_unit_data_respecting_overrides(
+    unit: Unit,
+    unit_data: dict[str, Any],
+    overrides: dict[str, str],
+    pending_list: list[tuple[int, str, str]],
+    *,
+    only_if_present: bool = False,
+) -> None:
+    """Jako apply_unit_data_mapped, ale:
+    - u override polí (UnitOverride) nepřepisujeme základní hodnoty z API
+    - u price_czk, price_per_m2_czk, availability_status:
+        * pokud je na poli override → rozdíl API vs. efektivní ukládáme do pending_list
+        * pokud override není → hodnotu z API normálně zapíšeme (bez pending)
+    """
+    unit.raw_json = dict(unit_data)
+    table = Unit.__table__
+
+    for key, value in unit_data.items():
+        if key == "availability":
+            new_status = normalize_str(value, 50)
+            new_available = (new_status or "").lower() == "available"
+            # Pokud existuje override na availability_status, API do pole přímo nezapisujeme
+            # a případný rozdíl ukládáme jen jako pending návrh.
+            if overrides.get("availability_status") is not None:
+                effective = _effective_value(unit, overrides, "availability_status")
+                if str(new_status or "") != str(effective or ""):
+                    pending_list.append((unit.id, "availability_status", new_status or ""))
+                continue
+            # Bez override zapisujeme hodnotu z API přímo (bez pending).
+            if not only_if_present or value is not None:
+                unit.availability_status = new_status
+                unit.available = new_available
+            continue
+        if key in ("unique_id", "id"):
+            continue
+        attr = _get_attr_for_json_key(key)
+        if not attr:
+            continue
+        if only_if_present and value is None:
+            continue
+        # Pole s overrides na jednotce nikdy nepřepisujeme přímo – override má přednost.
+        if attr in OVERRIDEABLE_FIELDS and attr in overrides:
+            # U konfliktních polí (cena, cena/m2, stav) chceme návrhy z API (pending),
+            # u ostatních override polí API ignorujeme úplně.
+            if attr in API_CONFLICT_FIELDS:
+                effective = _effective_value(unit, overrides, attr)
+                col = table.c.get(attr)
+                column_type = col.type if col is not None else None
+                normalized = _normalize_value_for_column(value, column_type)
+                if normalized != effective:
+                    pending_list.append(
+                        (unit.id, attr, str(normalized) if normalized is not None else "")
+                    )
+            # Ať už konflikt byl nebo ne, základní hodnotu na jednotce neměníme.
+            continue
+        col = table.c.get(attr)
+        column_type = col.type if col is not None else None
+        normalized = _normalize_value_for_column(value, column_type)
+        setattr(unit, attr, normalized)
+
+
 def apply_unit_data(
     unit: Unit,
     unit_data: dict[str, Any],
@@ -360,8 +495,8 @@ def apply_unit_data(
         unit.available = (normalize_str(availability, 50) or "").lower() == "available"
     if not only_if_present or unit_data.get("price") is not None:
         unit.price_czk = normalize_int(unit_data.get("price"))
-    if not only_if_present or unit_data.get("price_per_sm") is not None:
-        unit.price_per_m2_czk = normalize_int(unit_data.get("price_per_sm"))
+    # price_per_m2_czk: ignorujeme API hodnotu, počítáme ekvivalentní cenu z ploch
+    # (přepočet se provede na konci funkce po nastavení všech ploch)
     if not only_if_present or unit_data.get("price_change") is not None:
         unit.price_change = normalize_decimal(unit_data.get("price_change"), 4)
     if not only_if_present or unit_data.get("original_price") is not None:
@@ -419,7 +554,7 @@ def apply_unit_data(
     if not only_if_present or unit_data.get("cooling_ceilings") is not None:
         unit.cooling_ceilings = normalize_bool(unit_data.get("cooling_ceilings"))
     if not only_if_present or unit_data.get("exterior_blinds") is not None:
-        unit.exterior_blinds = normalize_bool(unit_data.get("exterior_blinds"))
+        unit.exterior_blinds = normalize_exterior_blinds(unit_data.get("exterior_blinds"))
     if not only_if_present or unit_data.get("smart_home") is not None:
         unit.smart_home = normalize_bool(unit_data.get("smart_home"))
     if not only_if_present or unit_data.get("category") is not None:
@@ -470,6 +605,13 @@ def apply_unit_data(
         unit.developer = normalize_str(unit_data.get("developer"), 255)
     if not only_if_present or unit_data.get("url") is not None:
         unit.url = normalize_str(unit_data.get("url"), 1024)
+
+    # Vždy přepočítat ekvivalentní cenu za m² z aktuálních ploch
+    unit.price_per_m2_czk = compute_equivalent_price_per_m2(
+        unit.price_czk,
+        float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+        float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
+    )
 
 
 def should_insert_history(
@@ -527,6 +669,7 @@ def import_units(
     units_updated = 0
     history_inserted = 0
     snapshot_id: int | None = None
+    changes_by_field: dict[str, int] = {}
 
     with get_db() as db:
         if not dry_run:
@@ -539,6 +682,8 @@ def import_units(
         else:
             from datetime import timezone
             captured_at = datetime.now(timezone.utc)
+
+        touched_project_ids: set[int] = set()
 
         for chunk_start in range(0, len(valid), chunk_size):
             chunk = valid[chunk_start : chunk_start + chunk_size]
@@ -567,17 +712,81 @@ def import_units(
 
             existing_unit_ids = [u.id for u in units_map.values()]
             latest_history = batch_load_latest_price_history(db, existing_unit_ids) if existing_unit_ids else {}
+            override_map = batch_load_unit_overrides(db, existing_unit_ids)
+            pending_list: list[tuple[int, str, str]] = []
+
+            # Track which projects need location-metrics enrichment (new or gps/region changed)
+            old_project_location: dict[tuple[str | None, str, str | None], tuple[Any, Any, Any]] = {}
+            for key in project_key_to_project:
+                if key in projects_map:
+                    p = project_key_to_project[key]
+                    old_project_location[key] = (p.gps_latitude, p.gps_longitude, p.region_iga)
+            enrich_project_ids: set[int] = set()
+            for key in project_key_to_project:
+                if key not in projects_map and project_key_to_project[key].id is not None:
+                    enrich_project_ids.add(project_key_to_project[key].id)
 
             for unit_data, key, external_id in chunk:
                 project = project_key_to_project[key]
                 project_id = project.id  # None in dry-run for new projects; we don't persist then
+                if project_id is not None:
+                    touched_project_ids.add(project_id)
                 apply_project_data(project, unit_data, only_if_present=(key in projects_map))
                 unit = units_map.get(external_id)
                 is_new = unit is None
 
                 if is_new:
                     unit = Unit(external_id=external_id, project_id=project_id or 0)
-                apply_unit_data_mapped(unit, unit_data, only_if_present=not is_new)
+                    apply_unit_data_mapped(unit, unit_data, only_if_present=False)
+                else:
+                    attrs_tracked = _attrs_tracked_from_unit_data(unit_data)
+                    old_vals = {a: getattr(unit, a, None) for a in attrs_tracked}
+                    apply_unit_data_respecting_overrides(
+                        unit,
+                        unit_data,
+                        override_map.get(unit.id, {}),
+                        pending_list,
+                        only_if_present=True,
+                    )
+                    for a in attrs_tracked:
+                        new_v = getattr(unit, a, None)
+                        old_v = old_vals.get(a)
+                        if old_v != new_v:
+                            changes_by_field[a] = changes_by_field.get(a, 0) + 1
+
+                    # Detect unit events based on changes in price and availability/status.
+                    old_price = old_vals.get("price_czk")
+                    new_price = getattr(unit, "price_czk", None)
+                    if old_price is not None and new_price is not None and old_price != new_price:
+                        ev_type = "price_drop" if new_price < old_price else "price_increase"
+                        if not dry_run:
+                            db.add(
+                                UnitEvent(
+                                    unit_id=unit.id,
+                                    event_type=ev_type,
+                                    old_value=str(old_price),
+                                    new_value=str(new_price),
+                                )
+                            )
+
+                    old_available = old_vals.get("available")
+                    new_available = getattr(unit, "available", None)
+                    if old_available is not None and new_available is not None and old_available != new_available:
+                        if old_available is False and new_available is True:
+                            ev_type = "status_available"
+                        elif old_available is True and new_available is False:
+                            ev_type = "status_reserved"
+                        else:
+                            ev_type = None
+                        if ev_type and not dry_run:
+                            db.add(
+                                UnitEvent(
+                                    unit_id=unit.id,
+                                    event_type=ev_type,
+                                    old_value=str(old_available),
+                                    new_value=str(new_available),
+                                )
+                            )
 
                 if is_new:
                     if dry_run:
@@ -588,6 +797,16 @@ def import_units(
                     db.add(unit)
                     db.flush()
                     units_created += 1
+                    # Record new unit event
+                    if not dry_run:
+                        db.add(
+                            UnitEvent(
+                                unit_id=unit.id,
+                                event_type="new_unit",
+                                old_value=None,
+                                new_value=None,
+                            )
+                        )
                     last = None
                 else:
                     units_updated += 1
@@ -613,10 +832,107 @@ def import_units(
                             )
                         )
 
+            if not dry_run and pending_list:
+                for (uid, field, value) in pending_list:
+                    db.execute(
+                        delete(UnitApiPending).where(
+                            UnitApiPending.unit_id == uid,
+                            UnitApiPending.field == field,
+                        )
+                    )
+                    db.add(UnitApiPending(unit_id=uid, field=field, value=value))
+
+            # Mark existing projects for enrichment when gps or region changed
+            for key in project_key_to_project:
+                if key in projects_map:
+                    p = project_key_to_project[key]
+                    old = old_project_location.get(key)
+                    if old is not None and p.id is not None and should_enrich_after_project_change(
+                        is_new_project=False,
+                        old_lat=old[0],
+                        old_lon=old[1],
+                        old_region=old[2],
+                        new_lat=p.gps_latitude,
+                        new_lon=p.gps_longitude,
+                        new_region=p.region_iga,
+                    ):
+                        enrich_project_ids.add(p.id)
+
             if not dry_run:
                 db.flush()
+                for pid in sorted(enrich_project_ids):
+                    enrich_project_location_metrics(db, pid)
+
+                # Invalidate commute cache for projects whose GPS changed.
+                if enrich_project_ids:
+                    db.execute(delete(CommuteCache).where(CommuteCache.project_id.in_(enrich_project_ids)))
+
+            # After flushing unit changes and potential events, generate client alerts for new events.
+            if not dry_run:
+                # Load recent events for units touched in this chunk
+                unit_ids = [u.id for u in units_map.values()]
+                if unit_ids:
+                    events = (
+                        db.execute(
+                            select(UnitEvent)
+                            .where(UnitEvent.unit_id.in_(unit_ids))
+                            .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    # Map unit_id -> latest event per type (simple last-seen)
+                    events_by_unit: dict[int, list[UnitEvent]] = {}
+                    for ev in events:
+                        events_by_unit.setdefault(ev.unit_id, []).append(ev)
+
+                    if events_by_unit:
+                        # Load clients + profiles once (simple approach: all clients)
+                        clients = db.execute(select(Client)).scalars().all()
+                        profiles_map: dict[int, ClientProfile | None] = {}
+                        if clients:
+                            prof_rows = db.execute(
+                                select(ClientProfile).where(
+                                    ClientProfile.client_id.in_([c.id for c in clients])
+                                )
+                            ).scalars().all()
+                            for p in prof_rows:
+                                profiles_map[p.client_id] = p
+
+                        for unit in units_map.values():
+                            unit_events = events_by_unit.get(unit.id)
+                            if not unit_events:
+                                continue
+                            # For alerting, we don't care which exact event, we just use latest.
+                            latest_event = unit_events[0]
+                            project = project_key_to_project[project_key(unit)]
+                            for client in clients:
+                                profile = profiles_map.get(client.id)
+                                score, _parts = _compute_unit_match_score(unit, project, profile)
+                                if score >= 80.0:
+                                    exists = db.execute(
+                                        select(ClientUnitMatch).where(
+                                            ClientUnitMatch.client_id == client.id,
+                                            ClientUnitMatch.unit_id == unit.id,
+                                        )
+                                    ).scalars().first()
+                                    if not exists:
+                                        db.add(
+                                            ClientUnitMatch(
+                                                client_id=client.id,
+                                                unit_id=unit.id,
+                                                score=score,
+                                                event_type=latest_event.event_type,
+                                            )
+                                        )
+
 
         if not dry_run:
+            # Recompute cached project aggregates for all affected projects in this import
+            if touched_project_ids:
+                recompute_project_aggregates(db, sorted(touched_project_ids))
+            # Recompute local price diffs (vs. market) for all units
+            recompute_local_price_diffs(db)
             db.commit()
 
     total_elapsed = time.perf_counter() - total_start
@@ -634,6 +950,16 @@ def import_units(
     if dry_run:
         print("(dry-run: no changes written)")
     print(f"Total time: {total_elapsed:.2f}s | {rate:.1f} units/s")
+
+    if changes_by_field and units_updated > 0:
+        print("\n--- Changes by field (updated units) ---")
+        bulk_threshold = max(500, int(0.5 * units_updated))
+        for attr in sorted(changes_by_field.keys()):
+            count = changes_by_field[attr]
+            if count >= bulk_threshold:
+                print(f"  {attr}: {count} units (bulk)")
+            else:
+                print(f"  {attr}: {count} units")
 
 
 def main() -> None:

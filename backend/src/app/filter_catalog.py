@@ -19,7 +19,10 @@ RANGE_FORMATS = frozenset({
 ENUM_FORMAT = "enum"
 ENUM_SEARCH_FORMAT = "enum_search"
 BOOLEAN_FORMAT = "boolean"
-OPTIONS_LIMIT = 200
+# Max. počet distinct hodnot pro enum/enum_search filtry.
+# 200 bylo málo pro projekty (dlouhé seznamy developerů/projektů),
+# rozšíříme limit, aby se do nabídky vešly i „dlouhé" ocasy jako Klamovka Park.
+OPTIONS_LIMIT = 2000
 
 # Catalog column (CSV "column") -> (entity, db_attr). entity is "Unit" or "Project".
 # Full API schema: backend_supported=true for all columns that exist; enum options from Unit where stored.
@@ -69,7 +72,10 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "payment_construction": ("Unit", "payment_construction"),
     "payment_occupancy": ("Unit", "payment_occupancy"),
     "building": ("Unit", "building"),
+    # URL jednotky – v katalogu je jako unit_url, v DB jako Unit.url
     "url": ("Unit", "url"),
+    "unit_url": ("Unit", "url"),
+    "id": ("Unit", "id"),
     "address": ("Unit", "address"),
     "city": ("Unit", "city"),
     "municipality": ("Unit", "municipality"),
@@ -83,6 +89,61 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "district_okres_iga": ("Unit", "district_okres_iga"),
     # Project – used when filter is explicitly project-scoped (project name, developer for project)
     "project": ("Project", "name"),
+    "ceiling_height": ("Project", "ceiling_height"),
+    "recuperation": ("Project", "recuperation"),
+    "cooling": ("Project", "cooling"),
+    "concierge": ("Project", "concierge"),
+    "reception": ("Project", "reception"),
+    "bike_room": ("Project", "bike_room"),
+    "stroller_room": ("Project", "stroller_room"),
+    "fitness": ("Project", "fitness"),
+    "courtyard_garden": ("Project", "courtyard_garden"),
+    "noise_day_db": ("Project", "noise_day_db"),
+    "noise_night_db": ("Project", "noise_night_db"),
+    "noise_label": ("Project", "noise_label"),
+    "distance_to_primary_road_m": ("Project", "distance_to_primary_road_m"),
+    "distance_to_tram_tracks_m": ("Project", "distance_to_tram_tracks_m"),
+    "distance_to_railway_m": ("Project", "distance_to_railway_m"),
+    "distance_to_airport_m": ("Project", "distance_to_airport_m"),
+    "micro_location_score": ("Project", "micro_location_score"),
+    "micro_location_label": ("Project", "micro_location_label"),
+    "walkability_score": ("Project", "walkability_score"),
+    "walkability_label": ("Project", "walkability_label"),
+    "walkability_daily_needs_score": ("Project", "walkability_daily_needs_score"),
+    "walkability_transport_score": ("Project", "walkability_transport_score"),
+    "walkability_leisure_score": ("Project", "walkability_leisure_score"),
+    "walkability_family_score": ("Project", "walkability_family_score"),
+    # Walkability distances (Project-level)
+    "distance_to_supermarket_m": ("Project", "distance_to_supermarket_m"),
+    "distance_to_pharmacy_m": ("Project", "distance_to_pharmacy_m"),
+    "distance_to_restaurant_m": ("Project", "distance_to_restaurant_m"),
+    "distance_to_cafe_m": ("Project", "distance_to_cafe_m"),
+    "distance_to_park_m": ("Project", "distance_to_park_m"),
+    "distance_to_fitness_m": ("Project", "distance_to_fitness_m"),
+    "distance_to_playground_m": ("Project", "distance_to_playground_m"),
+    "distance_to_kindergarten_m": ("Project", "distance_to_kindergarten_m"),
+    "distance_to_primary_school_m": ("Project", "distance_to_primary_school_m"),
+    "distance_to_tram_stop_m": ("Project", "distance_to_tram_stop_m"),
+    "distance_to_bus_stop_m": ("Project", "distance_to_bus_stop_m"),
+    "distance_to_metro_station_m": ("Project", "distance_to_metro_station_m"),
+    # Walkability counts in 500 m (Project-level)
+    "count_supermarket_500m": ("Project", "count_supermarket_500m"),
+    "count_pharmacy_500m": ("Project", "count_pharmacy_500m"),
+    "count_restaurant_500m": ("Project", "count_restaurant_500m"),
+    "count_cafe_500m": ("Project", "count_cafe_500m"),
+    "count_park_500m": ("Project", "count_park_500m"),
+    "count_fitness_500m": ("Project", "count_fitness_500m"),
+    "count_playground_500m": ("Project", "count_playground_500m"),
+    "count_kindergarten_500m": ("Project", "count_kindergarten_500m"),
+    "count_primary_school_500m": ("Project", "count_primary_school_500m"),
+    # Lokální cenová odchylka (p.b., vypočtená offline)
+    "local_price_diff_500m": ("Unit", "local_price_diff_500m"),
+    "local_price_diff_1000m": ("Unit", "local_price_diff_1000m"),
+    "local_price_diff_2000m": ("Unit", "local_price_diff_2000m"),
+    # Nová pole (Sprint C)
+    "completion_date": ("Project", "completion_date"),
+    "floors_above_ground": ("Project", "floors_above_ground"),
+    "energy_class": ("Project", "energy_class"),
 }
 
 
@@ -164,7 +225,7 @@ def get_filter_specs() -> list[dict]:
 
 
 def _get_enum_options(db: Session, entity: str, attr: str) -> list[str]:
-    """Query distinct non-null values; full string values; exclude nulls; sort case-insensitive; limit 200."""
+    """Query distinct non-null values; full string values; exclude nulls; sort case-insensitive; limit OPTIONS_LIMIT."""
     if entity == "Unit":
         col = getattr(Unit, attr, None)
         if col is None:
@@ -222,11 +283,22 @@ def get_filter_groups(db: Session) -> dict:
             continue
         if filter_type == "boolean":
             out["options"] = [True, False]
-        elif filter_type == "enum":
+        elif filter_type in ("enum", "enum_search"):
+            # Pro enum i enum_search vracíme seznam možných hodnot,
+            # aby UI mohlo nabídnout našeptávání i vícenásobný výběr.
             entity_db, attr = CATALOG_TO_DB[key]
             out["options"] = _get_enum_options(db, entity_db, attr)
         groups[group_name].append(out)
-    return {"groups": [{"name": k, "filters": v} for k, v in sorted(groups.items())]}
+
+    def _group_sort_key(item: tuple[str, list[dict]]) -> tuple[int, str]:
+        name, _ = item
+        # „Obecné" chceme vždy jako první box ve filtrech (nad Cenou atd.).
+        if name == "Obecné":
+            return (0, name)
+        return (1, name)
+
+    ordered_groups = [ {"name": name, "filters": flt} for name, flt in sorted(groups.items(), key=_group_sort_key) ]
+    return {"groups": ordered_groups}
 
 
 # Legacy exports for list_units dynamic filters

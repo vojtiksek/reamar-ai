@@ -1,6 +1,6 @@
-## Reamar AI Backend Skeleton
+## Reamar AI
 
-This is a minimal FastAPI + SQLAlchemy 2.0 backend with PostgreSQL (via Docker Compose) and Alembic migrations, set up for local development on macOS.
+Webová aplikace pro nemovitosti: jednotky (byty) a developerské projekty. Backend FastAPI + SQLAlchemy 2.0 + PostgreSQL, frontend Next.js.
 
 ### Requirements
 
@@ -177,6 +177,34 @@ alembic revision --autogenerate -m "init schema"
 alembic upgrade head
 ```
 
+#### 5.1 Backfill cached project aggregates
+
+The `project_aggregates` table stores cached per-project metrics computed from
+effective unit values (base + overrides). If you add this feature to an
+existing database, you should backfill aggregates once.
+
+From the `backend` directory, with your virtual environment active:
+
+```bash
+cd backend
+source .venv/bin/activate
+python -m app.scripts.backfill_project_aggregates
+```
+
+This script will:
+
+- find all distinct `project_id` values in the `units` table,
+- recompute aggregates in batches of 200 projects,
+- upsert rows into `project_aggregates`,
+- print progress and total elapsed time.
+
+To verify, you can inspect the table directly, for example:
+
+```sql
+SELECT COUNT(*) FROM project_aggregates;
+SELECT * FROM project_aggregates LIMIT 10;
+```
+
 ### 6. Import Units from JSON
 
 The import script loads unit data from JSON files into the database.
@@ -221,11 +249,92 @@ python -m app.import_units big.json --source api --chunk-size 5000
 - Upserts `Unit` records by `external_id` (from `unique_id` in JSON)
 - Normalizes all fields (prices, areas, GPS coordinates, booleans, etc.)
 - Inserts `UnitPriceHistory` rows only when price/availability values change
+- **After each import**, automatically runs **recompute of project aggregates** and **recompute of local price diffs** (odchylka od trhu)
 - Prints counts (projects created/reused, units created/updated, history rows inserted), snapshot id, total time, and units/sec
 
-### 7. Stopping Services
+#### Stahování z BuiltMind API
+
+Data lze stáhnout přímo z BuiltMind API a rovnou naimportovat (bez ručního ukládání JSONu). Potřebujete API klíč z dokumentace (PDF); **nikdy ho necommitujte** – uložte ho do `.env`:
+
+```bash
+# V .env (necommitujte)
+BUILTMIND_API_KEY=sk_live_...
+```
+
+Z adresáře `backend` s aktivním venv:
+
+```bash
+# Stáhnout z API a naimportovat do DB
+python -m app.fetch_builtmind
+
+# Jen stáhnout a uložit do souboru (bez importu)
+python -m app.fetch_builtmind --output data.json --no-import
+
+# Jen ověřit, že API odpovídá (počet jednotek)
+python -m app.fetch_builtmind --dry-run
+```
+
+Skript volá BuiltMind API (`country=czechia`, `export_type=market_data_dashboard`), stáhne JSON z presigned URL a převede názvy polí na formát očekávaný importem (např. `unit_id` → `unique_id`, `project_name` → `project`). Závislost: `requests` (už v `pyproject.toml`).
+
+#### Jak spustit import
+
+1. **Záloha (doporučeno)** – před prvním nebo rizikovým importem zálohujte DB (viz níže).
+2. Z `backend/` s aktivním venv a nastaveným `BUILTMIND_API_KEY` v `.env` (v kořeni projektu):
+   ```bash
+   python -m app.fetch_builtmind
+   ```
+   Nebo z adresáře `backend` spusťte `./run_import.sh` (načte `.env` z kořene; první spuštění: `chmod +x run_import.sh`).
+   Případně jen z JSON souboru: `python -m app.import_units cesta/k/souboru.json --source api`
+3. Po běhu se vypíše **Import Summary** (projekty/jednotky vytvořené/aktualizované, snapshot, čas) a **Changes by field** – u každého pole počet aktualizovaných jednotek; u hromadných změn (celý sloupec, např. žaluzie) je řádek zkrácen na „N units (bulk)“.
+
+#### Záloha a vrácení (rollback)
+
+Import mění data v jedné transakci (commit na konci). Pokud se něco pokazí, **obnova jen z této aplikace není** – potřebujete zálohu DB.
+
+- **Před importem** (z kořene projektu nebo tam, kde máte přístup k `pg_dump`):
+  ```bash
+  pg_dump -h localhost -p 5433 -U reamar reamar > backup_pred_importem_$(date +%Y%m%d_%H%M).sql
+  ```
+- **Vrácení:** obnovení z této zálohy (všechny tabulky, které import mění, se přepíší):
+  ```bash
+  psql -h localhost -p 5433 -U reamar reamar < backup_pred_importem_YYYYMMDD_HHMM.sql
+  ```
+  (Port/host/user podle vašeho `DATABASE_URL`.)
+
+### 7. Přepočet lokální odchylky od trhu
+
+Sloupce `local_price_diff_1000m` a `local_price_diff_2000m` se po každém importu přepočítají automaticky. Pro ruční přepočet (např. po úpravě dat v DB) můžete zavolat:
+
+```bash
+curl -X POST http://127.0.0.1:8001/units/local-price-diffs/recompute
+```
+
+Nebo z UI na stránce Jednotky použijte tlačítko „Přepočítat“.
+
+### 8. Frontend (Next.js)
+
+Z kořene projektu:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend běží na `http://localhost:3000`. Pro správnou komunikaci s API musí běžet backend na `http://127.0.0.1:8001` (viz `frontend/src/lib/api.ts` – `API_BASE`). V produkci nastavte v `frontend/.env.local` proměnnou `NEXT_PUBLIC_API_URL` na URL backendu (např. `https://api.example.com`).
+
+**Hlavní cesty:**
+- `/units` — tabulka jednotek, filtry, řazení, export CSV
+- `/projects` — přehled projektů, export CSV
+- `/projects/map` — mapa projektů (barvy podle ceny m², výběr oblasti)
+- `/units/[external_id]` — detail jednotky
+- `/units/debug-compare` — srovnání ceny s trhem (lokální odchylka), mapa comparables
+- `/projects/[id]` — detail projektu včetně seznamu jednotek
+
+### 9. Stopping Services
 
 - **Stop FastAPI**: Press `Ctrl+C` in the terminal where Uvicorn is running.
+- **Stop Next.js**: Press `Ctrl+C` in the terminal where `npm run dev` is running.
 - **Stop PostgreSQL**:
 
 ```bash
@@ -233,5 +342,13 @@ cd /path/to/reamar_ai
 docker-compose down
 ```
 
-This skeleton is intentionally minimal: no models, no migrations, just a working DB, configuration via `.env`, and a `/health` endpoint that validates DB connectivity.
+### 10. Testy
+
+```bash
+cd backend
+pip install -e ".[dev]"
+pytest tests/ -v
+```
+
+Integrační testy v `tests/test_api_units_projects.py` volají GET `/units`, GET `/projects` a GET `/projects/search` včetně filtrů.
 

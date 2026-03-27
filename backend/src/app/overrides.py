@@ -7,9 +7,47 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from .filter_catalog import CATALOG_TO_DB
-from .models import Project, Unit, UnitOverride
+from .models import Project, Unit, UnitOverride, ProjectOverride
+from .project_catalog import get_project_columns, get_project_overrideable_fields
 
 logger = logging.getLogger(__name__)
+
+
+def weighted_exterior_m2(exterior_area: float | None) -> float:
+    """Degressive weighting of exterior area for equivalent m² calculation.
+
+    Bands:
+        0–10 m²   → × 0.50
+        10–50 m²  → × 0.33
+        50–100 m² → × 0.20
+        100+ m²   → × 0.10
+    """
+    if exterior_area is None or exterior_area <= 0:
+        return 0.0
+    remaining = float(exterior_area)
+    result = 0.0
+    bands = [(10, 0.50), (40, 0.33), (50, 0.20), (float("inf"), 0.10)]
+    for width, weight in bands:
+        chunk = min(remaining, width)
+        result += chunk * weight
+        remaining -= chunk
+        if remaining <= 0:
+            break
+    return round(result, 2)
+
+
+def compute_equivalent_price_per_m2(
+    price_czk: int | float | None,
+    floor_area_m2: float | None,
+    exterior_area_m2: float | None,
+) -> int | None:
+    """Compute price per equivalent m² using degressive exterior weighting."""
+    if price_czk is None or floor_area_m2 is None or floor_area_m2 <= 0:
+        return None
+    equiv = float(floor_area_m2) + weighted_exterior_m2(exterior_area_m2)
+    if equiv <= 0:
+        return None
+    return round(price_czk / equiv)
 
 OVERRIDEABLE_FIELDS = frozenset(
     {
@@ -20,19 +58,60 @@ OVERRIDEABLE_FIELDS = frozenset(
         "floor_area_m2",
         "equivalent_area_m2",
         "exterior_area_m2",
+        "layout",
+        "balcony_area_m2",
+        "terrace_area_m2",
+        "garden_area_m2",
+        "floor",
+        "orientation",
+        "renovation",
+        "url",
     }
 )
 
-_INT_FIELDS = frozenset({"price_czk", "price_per_m2_czk"})
-_BOOL_FIELDS = frozenset({"available"})
+_INT_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "floor"})
+_BOOL_FIELDS = frozenset({"available", "renovation"})
 _DECIMAL_FIELDS = frozenset(
     {
         "floor_area_m2",
         "equivalent_area_m2",
         "exterior_area_m2",
+        "balcony_area_m2",
+        "terrace_area_m2",
+        "garden_area_m2",
     }
 )
-_STR_FIELDS = frozenset({"availability_status"})
+_STR_FIELDS = frozenset({"availability_status", "layout", "orientation", "url"})
+
+# Project-level overrideable fields (catalog column keys) derived from field_catalog.csv
+_PROJECT_OVERRIDEABLE_FROM_CATALOG = frozenset(get_project_overrideable_fields())
+
+# Additional fields that can be overridden at project level (unit-level fields applied to all units)
+# Used for Standardy: user edits on project detail apply to project and to every unit in lists/detail.
+_PROJECT_OVERRIDE_TYPE_FALLBACK: dict[str, str] = {
+    "renovation": "bool",
+    "heating": "enum",
+    "category": "enum",
+    "floors": "text",
+    "air_conditioning": "bool",
+    "cooling_ceilings": "bool",
+    "exterior_blinds": "text",  # "true" | "false" | "preparation"
+    "smart_home": "bool",
+    # Projektové standardy & amenities (manual-first, import jen do Project.*, nikdy do overrides)
+    "ceiling_height": "text",
+    "recuperation": "bool",
+    "cooling": "bool",
+    "concierge": "bool",
+    "reception": "bool",
+    "bike_room": "bool",
+    "stroller_room": "bool",
+    "fitness": "bool",
+    "courtyard_garden": "bool",
+}
+
+PROJECT_OVERRIDEABLE_FIELDS = _PROJECT_OVERRIDEABLE_FROM_CATALOG | frozenset(
+    _PROJECT_OVERRIDE_TYPE_FALLBACK
+)
 
 
 def _parse_int(value: str) -> int | None:
@@ -122,6 +201,76 @@ def build_override_map(overrides: list[UnitOverride]) -> dict[int, dict[str, str
     return result
 
 
+def build_project_override_map(overrides: list[ProjectOverride]) -> dict[int, dict[str, str]]:
+    """Build project_id -> {field: value} from project_override rows."""
+    result: dict[int, dict[str, str]] = {}
+    for o in overrides:
+        if o.field not in PROJECT_OVERRIDEABLE_FIELDS:
+            continue
+        if o.project_id not in result:
+            result[o.project_id] = {}
+        result[o.project_id][o.field] = o.value
+    return result
+
+
+def _parse_project_override_value(value: str, data_type: str) -> Any:
+    """Best-effort parse for project override values based on column data_type."""
+    dt = (data_type or "").lower()
+    if dt == "bool":
+        parsed = _parse_bool(value)
+        return parsed if parsed is not None else None
+    if dt == "number":
+        # Allow integer or decimal; fall back to None on parse failure
+        try:
+            v = float(str(value).strip())
+        except (TypeError, ValueError):
+            return None
+        return v
+    # date/enum/text – keep as stripped string
+    if value is None:
+        return None
+    return str(value).strip()
+
+
+def apply_project_overrides_to_item(
+    project_id: int,
+    item: dict[str, Any],
+    override_map: dict[int, dict[str, str]],
+    *,
+    attr_keyed: bool = False,
+) -> dict[str, Any]:
+    """
+    Apply project-level overrides to a flat project dict.
+
+    If attr_keyed is False, item is keyed by catalog keys (field names).
+    If attr_keyed is True, item is keyed by DB attribute names (accessors);
+    overrides (catalog keys) are applied by setting item[attr] = parsed.
+    """
+    overrides = override_map.get(project_id)
+    if not overrides:
+        return item
+
+    from .project_catalog import PROJECT_CATALOG_TO_ATTR
+
+    col_types: dict[str, str] = {
+        c["key"]: c.get("data_type", "text") for c in get_project_columns()
+    }
+
+    for field, raw in overrides.items():
+        data_type = col_types.get(field) or _PROJECT_OVERRIDE_TYPE_FALLBACK.get(field, "text")
+        parsed = _parse_project_override_value(raw, data_type)
+        if parsed is None and data_type in ("number", "bool"):
+            continue
+        if attr_keyed:
+            attr = PROJECT_CATALOG_TO_ATTR.get(field)
+            if attr is not None and attr in item:
+                item[attr] = parsed
+        else:
+            # Set on item so project and unit dicts get override (e.g. heating on unit data)
+            item[field] = parsed
+    return item
+
+
 def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -> dict[str, Any]:
     """Build a dict for UnitResponse with overrides applied (highest priority)."""
     overrides = override_map.get(unit.id) or {}
@@ -141,6 +290,8 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         except (TypeError, ValueError):
             return v
 
+    _ride = _dec(base.project.ride_to_center_min) if base.project else None
+    _mhd = _dec(base.project.public_transport_to_center_min) if base.project else None
     project_info = {
         "developer": base.project.developer,
         "name": base.project.name,
@@ -154,8 +305,10 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "region_iga": base.project.region_iga,
         "gps_latitude": _dec(base.project.gps_latitude),
         "gps_longitude": _dec(base.project.gps_longitude),
-        "ride_to_center_min": _dec(base.project.ride_to_center_min),
-        "public_transport_to_center_min": _dec(base.project.public_transport_to_center_min),
+        "ride_to_center_min": _ride,
+        "public_transport_to_center_min": _mhd,
+        "ride_to_center": _ride,
+        "public_transport_to_center": _mhd,
         "permit_regular": base.project.permit_regular,
         "renovation": base.project.renovation,
         "overall_quality": base.project.overall_quality,
@@ -174,6 +327,13 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
                 value = _get(attr, base_val)
             else:
                 value = base_val
+            # Jednotka: autem/MHD do centra – fallback z projektu, když na jednotce není
+            if column in ("ride_to_center", "public_transport_to_center") and value is None and base.project:
+                value = getattr(
+                    base.project,
+                    "ride_to_center_min" if column == "ride_to_center" else "public_transport_to_center_min",
+                    None,
+                )
             value = _dec(value)
         else:  # "Project"
             proj: Project | None = base.project
@@ -183,25 +343,32 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
 
     return {
         "external_id": base.external_id,
+        "project_id": base.project_id,
         "unit_name": base.unit_name,
-        "layout": base.layout,
-        "floor": base.floor,
+        "layout": _get("layout", base.layout),
+        "floor": _get("floor", base.floor),
         "availability_status": _get("availability_status", base.availability_status),
         "available": _get("available", base.available),
         "price_czk": _get("price_czk", base.price_czk),
-        "price_per_m2_czk": _get("price_per_m2_czk", base.price_per_m2_czk),
+        "price_per_m2_czk": compute_equivalent_price_per_m2(
+            _get("price_czk", base.price_czk),
+            _dec(_get("floor_area_m2", base.floor_area_m2)),
+            _dec(_get("exterior_area_m2", base.exterior_area_m2)),
+        ) or base.price_per_m2_czk,
         "floor_area_m2": _dec(_get("floor_area_m2", base.floor_area_m2)),
         "equivalent_area_m2": _dec(_get("equivalent_area_m2", base.equivalent_area_m2)),
         "exterior_area_m2": _dec(_get("exterior_area_m2", base.exterior_area_m2)),
-        "balcony_area_m2": _dec(base.balcony_area_m2),
-        "terrace_area_m2": _dec(base.terrace_area_m2),
-        "garden_area_m2": _dec(base.garden_area_m2),
+        "balcony_area_m2": _dec(_get("balcony_area_m2", base.balcony_area_m2)),
+        "terrace_area_m2": _dec(_get("terrace_area_m2", base.terrace_area_m2)),
+        "garden_area_m2": _dec(_get("garden_area_m2", base.garden_area_m2)),
         "municipality": base.municipality,
         "city": base.city,
         "postal_code": base.postal_code,
-        "ride_to_center_min": _dec(base.ride_to_center_min),
-        "public_transport_to_center_min": _dec(base.public_transport_to_center_min),
-        "url": base.url,
+        "ride_to_center_min": _dec(base.ride_to_center_min) or _ride,
+        "public_transport_to_center_min": _dec(base.public_transport_to_center_min) or _mhd,
+        "orientation": _get("orientation", base.orientation),
+        "renovation": _get("renovation", base.renovation),
+        "url": _get("url", base.url),
         "project": project_info,
         "data": data,
     }

@@ -9,6 +9,7 @@ Requires-Dist: SQLAlchemy>=2.0.0
 Requires-Dist: psycopg[binary]>=3.1.0
 Requires-Dist: alembic>=1.13.0
 Requires-Dist: pydantic-settings>=2.2.0
+Requires-Dist: requests>=2.28.0
 Provides-Extra: dev
 Requires-Dist: ipython; extra == "dev"
 Requires-Dist: pytest>=7.0; extra == "dev"

@@ -5,7 +5,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-# CSV column (catalog key) -> Project model attribute name. Only for columns that exist on Project.
+# CSV column (catalog key) -> Project overview item key (flat, no dots).
+# Used when building GET /projects/overview items; keys must match /columns?view=projects accessors.
 PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "developer": "developer",
     "name": "name",
@@ -28,7 +29,36 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "heating": "heating",
     "partition_walls": "partition_walls",
     "amenities": "amenities",
+    # Noise fields stored directly on Project (computed offline from Prague noise map)
+    "noise_day_db": "noise_day_db",
+    "noise_night_db": "noise_night_db",
+    "noise_label": "noise_label",
+    # Micro-location (distances + score/label from OSM batch)
+    "distance_to_primary_road_m": "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m": "distance_to_tram_tracks_m",
+    "distance_to_railway_m": "distance_to_railway_m",
+    "distance_to_airport_m": "distance_to_airport_m",
+    "micro_location_score": "micro_location_score",
+    "micro_location_label": "micro_location_label",
+    "project_url": "project_url",  # from overrides when set
     "project": "name",  # alias for name
+    # Financing fields are computed/project-level values living on the overview item dict.
+    # We map catalog keys to the same item keys so overrides can apply in both list + detail views.
+    "payment_contract": "payment_contract",
+    "payment_construction": "payment_construction",
+    "payment_occupancy": "payment_occupancy",
+    # Walkability (POI-based; separate from micro_location)
+    "walkability_score": "walkability_score",
+    "walkability_label": "walkability_label",
+    "walkability_daily_needs_score": "walkability_daily_needs_score",
+    "walkability_transport_score": "walkability_transport_score",
+    "walkability_leisure_score": "walkability_leisure_score",
+    "walkability_family_score": "walkability_family_score",
+    # Sprint C: nová pole
+    "completion_date": "completion_date",
+    "image_url": "image_url",
+    "floors_above_ground": "floors_above_ground",
+    "energy_class": "energy_class",
 }
 
 # Computed column keys (kind="computed") in display order.
@@ -122,12 +152,14 @@ def _load_project_catalog_rows() -> list[dict]:
                 sort_priority = int(_normalize(row.get("sort_priority", "")) or 0)
             except (TypeError, ValueError):
                 sort_priority = 0
+            editable = _normalize(row.get("Editable", "")).upper() == "ANO"
             rows.append({
                 "column": column,
                 "alias": _normalize(row.get("Alias", "")) or column,
                 "display_format": _normalize(row.get("display_format", "")),
                 "unit_label": _normalize(row.get("unit_label", "")),
                 "sort_priority": sort_priority,
+                "editable": editable,
             })
     rows.sort(key=lambda r: (r["sort_priority"], r["alias"]))
     _cached_project_columns = rows
@@ -153,8 +185,18 @@ def get_project_columns() -> list[dict]:
             "data_type": data_type,
             "unit": unit,
             "kind": "catalog",
+            "editable": r.get("editable", False),
         })
     return out
+
+
+def get_project_overrideable_fields() -> set[str]:
+    """
+    Return catalog column keys for project fields that are editable (Editable == ANO)
+    and visible on web (Zobrazit na webu == ANO).
+    """
+    rows = _load_project_catalog_rows()
+    return {r["column"] for r in rows if r.get("editable")}
 
 
 def get_projects_columns_with_computed() -> list[dict]:
@@ -179,4 +221,5 @@ def get_projects_columns_with_computed() -> list[dict]:
 def get_allowed_sort_keys() -> set[str]:
     """Keys that are valid for sort_by (catalog + computed)."""
     catalog_keys = {c["key"] for c in get_project_columns()}
-    return catalog_keys | set(COMPUTED_COLUMN_KEYS)
+    # project_url odvozený z jednotek; name = accessor sloupce „Projekt“, řazení stejné jako project
+    return catalog_keys | set(COMPUTED_COLUMN_KEYS) | {"project_url", "name"}

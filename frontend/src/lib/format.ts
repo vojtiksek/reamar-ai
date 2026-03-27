@@ -3,11 +3,13 @@
  * Used in table, summary bar, and unit detail.
  */
 
+/** CZK: celá čísla, mezery mezi tisíci (1 234 567 Kč), bez desetinných míst. */
 const CZK = new Intl.NumberFormat("cs-CZ", {
   style: "currency",
   currency: "CZK",
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
+  useGrouping: true,
 });
 
 export function formatCurrencyCzk(value: number | null | undefined): string {
@@ -15,14 +17,16 @@ export function formatCurrencyCzk(value: number | null | undefined): string {
   return CZK.format(Math.round(value));
 }
 
+/** Cena za m²: stejný styl jako CZK – celá čísla, mezery mezi tisíci, bez desetinných míst. */
 const CZK_PER_M2 = new Intl.NumberFormat("cs-CZ", {
   maximumFractionDigits: 0,
   minimumFractionDigits: 0,
+  useGrouping: true,
 });
 
 export function formatCurrencyPerM2(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${CZK_PER_M2.format(Math.round(value))} Kč/m²`;
+  return `${CZK_PER_M2.format(Math.round(value))} Kč`;
 }
 
 export function formatAreaM2(value: number | null | undefined): string {
@@ -32,12 +36,38 @@ export function formatAreaM2(value: number | null | undefined): string {
 
 export function formatMinutes(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value)) return "—";
-  return `${Number(value).toFixed(1)} min`;
+  // Bez desetinných míst – jen celé minuty.
+  return `${Math.round(Number(value))} min`;
 }
 
-export function formatPercent(value: number | null | undefined): string {
-  if (value == null || Number.isNaN(value)) return "—";
-  return `${Math.round(value)} %`;
+/**
+ * Formát pro počet dní (např. „Dní na trhu“).
+ */
+export function formatDays(value: number | null | undefined): string {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+  return `${Math.round(Number(value))} dní`;
+}
+
+/**
+ * Percent formatter for display.
+ * - Fractions 0..1 (e.g. 0.2) are always shown as percent (20 %).
+ * - Values already in 0..100 are shown as-is (20 -> 20 %).
+ * @param fractionDigits - optional number of decimal places (e.g. 1 -> "85.6 %")
+ * @param treatZeroAsEmpty - if true, 0 is shown as "—" (for financing where 0 = nevyplněno)
+ */
+export function formatPercent(
+  value: number | null | undefined,
+  fractionDigits?: number,
+  treatZeroAsEmpty?: boolean
+): string {
+  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+  const n = Number(value);
+  if (treatZeroAsEmpty && n === 0) return "—";
+  const pct = n > 1 ? n : n * 100;
+  if (fractionDigits != null && fractionDigits >= 0) {
+    return `${pct.toFixed(fractionDigits)} %`;
+  }
+  return `${Math.round(pct)} %`;
 }
 
 /**
@@ -66,8 +96,66 @@ export function formatByDisplayFormat(
   catalogKey?: string
 ): string {
   if (value == null || value === "") return "—";
+
+  // Speciální slovník pro rekonstrukci (projekt/jednotka)
+  if (catalogKey === "renovation") {
+    const raw = String(value ?? "").toLowerCase();
+    const isTrue =
+      value === true ||
+      ["true", "1", "yes", "ano"].includes(raw);
+    return isTrue ? "rekonstrukce" : "novostavba";
+  }
+
+  // Žaluzie – necháme původní hodnoty z dat (preparation/true/false)
+  if (catalogKey === "exterior_blinds") {
+    const num = Number(value);
+    if (!Number.isNaN(num)) {
+      return num === 1 ? "true" : "false";
+    }
+    return String(value);
+  }
+
   if (typeof value === "boolean") return value ? "ANO" : "NE";
+
   if (catalogKey === "layout" && typeof value === "string") return formatLayout(value);
+
+  // Odchylka od trhu je z backendu už v procentech (44.33 = 44,33 %) – nezobrazovat jako 4433 %
+  if (
+    catalogKey != null &&
+    (catalogKey === "local_price_diff_1000m" || catalogKey === "local_price_diff_2000m")
+  ) {
+    const n = Number(value);
+    if (Number.isNaN(n)) return "—";
+    const sign = n > 0 ? "+" : n < 0 ? "−" : "";
+    return `${sign}${Math.abs(n).toFixed(1)} %`;
+  }
+
+  // Hluk (dB) – denní / noční
+  if (catalogKey === "noise_day_db" || catalogKey === "noise_night_db") {
+    const n = Number(value);
+    if (value == null || value === "" || Number.isNaN(n)) return "—";
+    return `${n} dB`;
+  }
+  // Hluk lokality (klasifikace)
+  if (catalogKey === "noise_label") {
+    if (value == null || String(value).trim() === "") return "—";
+    return String(value);
+  }
+
+  // Vzdálenost v m: do 999 m => "123 m", od 1000 m => "1.2 km", null => "—"
+  const distanceKeys = [
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+  ];
+  if (catalogKey != null && distanceKeys.includes(catalogKey)) {
+    if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+    const m = Number(value);
+    if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+    return `${Math.round(m)} m`;
+  }
+
   switch (displayFormat) {
     case "currency":
       return formatCurrencyCzk(Number(value));
@@ -77,10 +165,27 @@ export function formatByDisplayFormat(
       return formatAreaM2(Number(value));
     case "duration_minutes":
       return formatMinutes(Number(value));
-    case "percent":
-      return formatPercent(Number(value));
-    case "integer":
-      return Number.isNaN(Number(value)) ? String(value) : `${Math.round(Number(value))}`;
+    case "duration_days":
+      return formatDays(Number(value));
+    case "percent": {
+      const isFinancing =
+        catalogKey != null &&
+        (catalogKey.includes("payment_contract") ||
+          catalogKey.includes("payment_construction") ||
+          catalogKey.includes("payment_occupancy"));
+      return formatPercent(Number(value), undefined, isFinancing);
+    }
+    case "boolean": {
+      const raw = String(value ?? "").toLowerCase();
+      const isTrue =
+        value === true ||
+        ["true", "1", "yes", "ano"].includes(raw);
+      return isTrue ? "ANO" : "NE";
+    }
+    case "integer": {
+      const n = Number(value);
+      return Number.isNaN(n) ? String(value) : `${Math.round(n)}`;
+    }
     default:
       return String(value);
   }
@@ -94,10 +199,35 @@ export type FormatValueMeta = {
 
 /**
  * Format a value for display using catalog meta (display_format, unit_label, key).
- * Uses display_format for currency, area_m2, duration_minutes, percent, boolean, layout enum.
  */
 export function formatValue(value: unknown, meta: FormatValueMeta): string {
   const displayFormat = meta.display_format ?? "text";
   const catalogKey = meta.key;
   return formatByDisplayFormat(value, displayFormat, catalogKey);
+}
+
+/**
+ * Format a date value to Czech locale string (e.g. "1. 3. 2026").
+ */
+export function formatDate(value: unknown): string {
+  if (value == null || value === "") return "—";
+  try {
+    const d = value instanceof Date ? value : new Date(String(value));
+    if (Number.isNaN(d.getTime())) return String(value);
+    return d.toLocaleDateString("cs-CZ");
+  } catch {
+    return String(value);
+  }
+}
+
+/**
+ * Format a list of layout codes (e.g. ["layout_2", "layout_3"]) to a display string.
+ */
+export function formatLayoutsList(value: unknown): string {
+  if (value == null || value === "") return "—";
+  if (Array.isArray(value)) {
+    const parts = value.map((v) => formatLayout(typeof v === "string" ? v : String(v)));
+    return parts.length ? parts.join(", ") : "—";
+  }
+  return String(value);
 }

@@ -84,6 +84,7 @@ def _load_web_columns() -> list[dict]:
                 "entity_raw": entity_raw,
                 "display_format": _normalize(row.get("display_format", "")),
                 "filterable": _normalize(row.get("Filterable", "")).upper() == "ANO",
+                "editable": _normalize(row.get("Editable", "")).upper() == "ANO",
                 "sort_priority": sort_priority,
                 "web_order": web_order,
             })
@@ -94,6 +95,9 @@ def _load_web_columns() -> list[dict]:
 def _key_and_accessor(column: str, entity: str) -> tuple[str, str]:
     """Return (key, accessor) for stable id and frontend path. Prefer DB column name."""
     catalog_key = column
+    # U projektů: jedna hodnota „ride_to_center“ / „public_transport_to_center“ (ne min/max)
+    if entity == "project" and catalog_key in ("ride_to_center", "public_transport_to_center"):
+        return (f"project.{catalog_key}", f"project.{catalog_key}")
     if catalog_key in CATALOG_TO_DB:
         entity_type, db_attr = CATALOG_TO_DB[catalog_key]
         if entity_type == "Unit":
@@ -102,6 +106,68 @@ def _key_and_accessor(column: str, entity: str) -> tuple[str, str]:
     if entity == "project":
         return (f"project.{column}", f"project.{column}")
     return (column, column)
+
+
+# Exact keys returned by GET /projects/overview (flat item keys). For view=projects we only
+# return columns whose accessor is in this set so the table never shows empty/stale columns.
+PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
+    "id",
+    "name",
+    "project",  # alias for name (název projektu)
+    "developer",
+    "address",
+    "city",
+    "municipality",
+    "district",
+    "postal_code",
+    "cadastral_area_iga",
+    "administrative_district_iga",
+    "region_iga",
+    "gps_latitude",
+    "gps_longitude",
+    "ride_to_center",
+    "public_transport_to_center",
+    "permit_regular",
+    "renovation",
+    "overall_quality",
+    "windows",
+    "heating",
+    "partition_walls",
+    "amenities",
+    "project_url",
+    "total_units",
+    "available_units",
+    "availability_ratio",
+    "avg_price_czk",
+    "avg_price_per_m2_czk",
+    "min_price_czk",
+    "max_price_czk",
+    "avg_floor_area_m2",
+    "min_parking_indoor_price_czk",
+    "min_parking_outdoor_price_czk",
+    "project_first_seen",
+    "project_last_seen",
+    "max_days_on_market",
+    # Single-value financing fields per project (computed from units or overrides)
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
+    "noise_day_db",
+    "noise_night_db",
+    "noise_label",
+    "distance_to_primary_road_m",
+    "distance_to_tram_tracks_m",
+    "distance_to_railway_m",
+    "distance_to_airport_m",
+    "micro_location_score",
+    "micro_location_label",
+    "walkability_score",
+    "walkability_label",
+    "walkability_daily_needs_score",
+    "walkability_transport_score",
+    "walkability_leisure_score",
+    "walkability_family_score",
+})
 
 
 def get_columns(view: str) -> list[dict]:
@@ -129,11 +195,15 @@ def get_columns(view: str) -> list[dict]:
     for r in rows_sorted:
         key, accessor = _key_and_accessor(r["column"], r["entity"])
         # For the projects view we expose a flat row (no nested project.* object),
-        # so strip the \"project.\" prefix from key/accessor.
+        # so strip the "project." prefix from key/accessor.
         if view == "projects" and accessor.startswith("project."):
             accessor = accessor.split(".", 1)[1]
             if key.startswith("project."):
                 key = key.split(".", 1)[1]
+        # For view=projects only: include only columns that exist on overview items (no dots).
+        if view == "projects":
+            if accessor not in PROJECTS_OVERVIEW_KEYS:
+                continue
         display_format = r["display_format"]
         data_type = _display_format_to_data_type(display_format)
         sortable = _infer_sortable(display_format)
@@ -145,6 +215,7 @@ def get_columns(view: str) -> list[dict]:
             "display_format": display_format,
             "sortable": sortable,
             "filterable": r["filterable"],
+            "editable": r.get("editable", False),
             "accessor": accessor,
         })
     if view == "projects":
