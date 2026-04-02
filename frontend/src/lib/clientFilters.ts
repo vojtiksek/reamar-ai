@@ -75,7 +75,7 @@ export function profileToFilters(profile: ClientProfileForFilters): CurrentFilte
         if (s === "4kk")   return "layout_4";
         return null; // unknown bucket — skip
       })
-      .filter((v): v is string => v !== null);
+       .filter((v) => v !== null) as string[];
     if (dbLayouts.length > 0) filters.layout = dbLayouts;
   }
 
@@ -153,7 +153,7 @@ export function filtersToProfilePatch(filters: CurrentFilters, polygon?: LatLng[
   if (Array.isArray(layout) && layout.length > 0) {
     const profileLayouts = layout
       .map(dbLayoutToProfileValue)
-      .filter((v): v is string => v !== null);
+       .filter((v) => v !== null) as string[];
     patch.layouts = profileLayouts.length > 0 ? { values: profileLayouts } : null;
   } else {
     patch.layouts = null;

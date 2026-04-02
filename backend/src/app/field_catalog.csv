@@ -40,13 +40,18 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3007;Dispozice;Jednotka;terrace_area;Terasa;ANO;ANO;ANO;m²;1;area_m2;
 3008;Dispozice;Jednotka;garden_area;Zahrada;ANO;ANO;ANO;m²;1;area_m2;
 3009;Dispozice;Jednotka;floor;Podlaží;ANO;ANO;NE;;0;integer;
-3010;Dispozice;Projekt;floors;Podlaha;ANO;NE;NE;;;enum;
+3010;Dispozice;Projekt;floors;Podlahový materiál;ANO;NE;NE;;;enum;
 3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
 3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;NE;ANO;;0;integer;
 
 4001;Obecné;Jednotka;availability;Obecné;ANO;ANO;NE;;;enum;
+4010;Obecné;Jednotka;use_type;Typ využití;ANO;ANO;ANO;;;enum;
+4011;Obecné;Jednotka;reserved_date;Datum rezervace;ANO;NE;ANO;;;date;
+4012;Obecné;Jednotka;reservation_duration_days;Délka rezervace (dny);ANO;NE;ANO;;0;integer;
+4013;Obecné;Jednotka;is_stale_reservation;Stará rezervace;ANO;NE;ANO;;;boolean;
 4007;Obecné;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
+4009;Obecné;Projekt;construction_completion;Dokončení výstavby (API);ANO;ANO;NE;;;text;
 4008;Obecné;Projekt;energy_class;Energetická třída;ANO;ANO;ANO;;;enum;
 4002;Obecné;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
 4003;Obecné;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;
@@ -54,18 +59,18 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 4005;Obecné;Projekt;sold_date;Datum prodeje;ANO;NE;NE;;;date;
 4006;Obecné;Projekt;renovation;Rekonstrukce;ANO;ANO;NE;;;boolean;
 
-5001;Standardy;Projekt;overall_quality;Kvalita;ANO;NE;ANO;;;enum;
+5001;Standardy;Projekt;overall_quality;Kvalita;ANO;ANO;ANO;;;enum;
 5002;Standardy;Jednotka;heating;Topení;ANO;ANO;ANO;;;enum;
 5003;Standardy;Jednotka;air_conditioning;Klimatizace;ANO;ANO;ANO;;;boolean;
 5004;Standardy;Jednotka;cooling_ceilings;Chlazení stropem;ANO;ANO;ANO;;;boolean;
 5005;Standardy;Jednotka;exterior_blinds;Žaluzie;ANO;ANO;ANO;;;text;
 5006;Standardy;Jednotka;smart_home;Smart home;ANO;ANO;ANO;;;boolean;
-5007;Standardy;Projekt;windows;Okna;ANO;NE;ANO;;;enum;
-5008;Standardy;Projekt;partition_walls;Příčky;ANO;NE;ANO;;;enum;
+5007;Standardy;Projekt;windows;Okna;ANO;ANO;ANO;;;enum;
+5008;Standardy;Projekt;partition_walls;Příčky;ANO;ANO;ANO;;;enum;
 5009;Standardy;Projekt;amenities;Zajímavosti;ANO;NE;ANO;;;text;
 5010;Standardy;Projekt;ceiling_height;Výška stropů (beta);ANO;ANO;ANO;;;text;
-5011;Standardy;Projekt;recuperation;Rekuperace (beta);ANO;ANO;ANO;;;boolean;
-5012;Standardy;Projekt;cooling;Chlazení (beta);ANO;ANO;ANO;;;boolean;
+5011;Standardy;Projekt;recuperation;Rekuperace (beta);ANO;ANO;ANO;;;enum;
+5012;Standardy;Projekt;cooling;Chlazení (beta);ANO;ANO;ANO;;;enum;
 
 5100;Amenities;Projekt;concierge;Concierge (beta);ANO;NE;ANO;;;boolean;
 5101;Amenities;Projekt;reception;Recepce (beta);ANO;NE;ANO;;;boolean;

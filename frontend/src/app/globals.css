@@ -1,20 +1,39 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f3ff;
+  --background: #F8F9FA;
   --foreground: #111827;
 
-  /* Glass / card tokens */
-  --glass-bg: rgba(255, 255, 255, 0.14);
-  --glass-elevated-bg: rgba(255, 255, 255, 0.92);
-  --glass-border: rgba(148, 163, 184, 0.35);
-  --glass-radius-lg: 1.5rem; /* 24px */
-  --glass-radius-md: 1rem;   /* 16px */
-  --glass-shadow-soft: 0 18px 45px rgba(15, 23, 42, 0.20);
-  --glass-shadow-subtle: 0 10px 30px rgba(15, 23, 42, 0.10);
+  /* Brand */
+  --brand-navy: #1E3A5F;
+  --brand-navy-dark: #0F2B46;
+  --brand-gold: #D4A853;
+  --brand-gold-light: #F5ECD7;
 
-  --accent-primary: #6366f1;
-  --accent-secondary: #ec4899;
+  /* Surfaces */
+  --surface-card: #FFFFFF;
+  --surface-subtle: #F1F5F9;
+  --border-default: #E2E8F0;
+  --border-subtle: #F1F5F9;
+
+  /* Shadows */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.03);
+  --shadow-elevated: 0 4px 12px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-nav: 0 1px 3px rgba(0, 0, 0, 0.06);
+
+  /* Radius */
+  --radius-lg: 1rem;
+  --radius-md: 0.75rem;
+  --radius-sm: 0.5rem;
+
+  /* Legacy compat */
+  --accent-primary: var(--brand-navy);
+  --accent-secondary: var(--brand-gold);
+  --glass-radius-lg: var(--radius-lg);
+  --glass-radius-md: var(--radius-md);
+  --glass-shadow-soft: var(--shadow-elevated);
+  --glass-shadow-subtle: var(--shadow-card);
+  --glass-border: var(--border-default);
 }
 
 @theme inline {
@@ -30,21 +49,13 @@ body {
   font-family: var(--font-geist-sans), system-ui, -apple-system, BlinkMacSystemFont,
     "SF Pro Text", "SF Pro Display", sans-serif;
   min-height: 100vh;
+  background: var(--background);
 }
 
-/* Global page background: vertical purple gradient (visible in gaps, behind all content) */
 .app-root {
   position: relative;
   min-height: 100vh;
-  background: linear-gradient(
-    180deg,
-    #e8e9ff 0%,
-    #eeefff 25%,
-    #f4f5ff 50%,
-    #f9f9ff 75%,
-    #ffffff 100%
-  );
-  background-attachment: scroll;
+  background: var(--background);
 }
 
 .app-shell {
@@ -57,37 +68,30 @@ body {
 
 @layer components {
   .glass-header {
-    backdrop-filter: blur(22px);
-    background: linear-gradient(
-        135deg,
-        rgba(255, 255, 255, 0.90),
-        rgba(255, 255, 255, 0.78)
-      );
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    box-shadow: var(--glass-shadow-subtle);
+    background: #FFFFFF;
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-nav);
   }
 
   .glass-card {
-    backdrop-filter: blur(26px);
-    background: radial-gradient(circle at top left, rgba(255, 255, 255, 0.42), rgba(248, 250, 252, 0.92));
-    border-radius: var(--glass-radius-lg);
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    box-shadow: var(--glass-shadow-soft);
+    background: var(--surface-card);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-default);
+    box-shadow: var(--shadow-card);
   }
 
   .glass-pill {
     @apply inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-medium;
-    background: rgba(255, 255, 255, 0.75);
-    border-color: rgba(148, 163, 184, 0.55);
-    backdrop-filter: blur(14px);
+    background: var(--surface-card);
+    border-color: var(--border-default);
   }
 
   .data-grid-wrapper {
     @apply flex min-h-0 flex-1 flex-col overflow-hidden;
-    border-radius: var(--glass-radius-lg);
-    border: 1px solid rgba(148, 163, 184, 0.45);
-    background: rgba(248, 250, 252, 0.9);
-    box-shadow: var(--glass-shadow-subtle);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-default);
+    background: var(--surface-card);
+    box-shadow: var(--shadow-card);
   }
 
   .data-grid-scroll {
@@ -96,5 +100,21 @@ body {
 
   .data-grid-table {
     @apply min-w-max table-auto border-collapse text-xs sm:text-sm;
+  }
+
+  /* Brand accents for client-facing */
+  .brand-header {
+    background: var(--brand-navy);
+    color: #FFFFFF;
+  }
+
+  .brand-accent {
+    color: var(--brand-gold);
+  }
+
+  .brand-badge {
+    background: var(--brand-gold-light);
+    color: var(--brand-navy);
+    border: 1px solid var(--brand-gold);
   }
 }

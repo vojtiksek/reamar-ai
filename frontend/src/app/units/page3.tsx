@@ -65,13 +65,13 @@ export default function UnitsPage() {
           <h1 className="text-lg font-semibold text-gray-900">Reamar</h1>
           <div className="relative z-10 flex shrink-0 items-center rounded-lg border border-gray-200 bg-gray-50/50 p-0.5">
             <Link
-              href="/units"
+              href="/explorer/units"
               className="rounded-md bg-black px-3 py-1.5 text-sm font-medium text-white hover:bg-gray-900"
             >
               Jednotky
             </Link>
             <Link
-              href="/projects"
+              href="/explorer/projects"
               className="rounded-md px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-white hover:text-gray-900"
             >
               Projekty

@@ -2,7 +2,7 @@
 # launchd foreground wrapper for backend — run directly by com.reamar.backend.plist
 # launchd keeps this process alive; no backgrounding needed
 
-REPO="$HOME/reamar-ai"
+REPO="$HOME/Desktop/reamar-ai"
 DOCKER="$HOME/.orbstack/bin/docker"
 UVICORN="$REPO/backend/.venv/bin/uvicorn"
 LOG="$REPO/logs/autostart.log"

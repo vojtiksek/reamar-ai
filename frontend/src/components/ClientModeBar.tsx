@@ -62,7 +62,7 @@ type Props = {
 };
 
 /**
- * Thin amber info strip shown on /units, /projects, and /projects/map when a client is active.
+ * Thin amber info strip shown on Explorer pages (/explorer/units, /explorer/projects, /explorer/map) when a client is active.
  * Shows the client name (linked to detail) and a compact summary of the profile baseline.
  * When isOverridden is true, shows a "filtr změněn" badge to signal manual override.
  */
@@ -76,7 +76,7 @@ export function ClientModeBar({ isOverridden }: Props) {
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-200/70 bg-amber-50/80 px-3 py-1.5 text-xs text-amber-900 backdrop-blur-sm">
       <span className="shrink-0 font-semibold">
         <Link
-          href={`/clients/${activeClient.clientId}`}
+          href={`/cases/${activeClient.clientId}/overview`}
           className="underline decoration-amber-400/60 underline-offset-2 hover:text-amber-700 hover:decoration-amber-600"
         >
           {activeClient.clientName}

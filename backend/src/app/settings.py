@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     frontend_url: str = Field(default="http://localhost:3001", validation_alias="FRONTEND_URL")
 
+    builtmind_api_key: str | None = Field(default=None, validation_alias="BUILTMIND_API_KEY")
+
     model_config = SettingsConfigDict(
         env_file=str(_PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",

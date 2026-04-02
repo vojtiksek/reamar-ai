@@ -2,7 +2,7 @@
 # launchd foreground wrapper for frontend — run directly by com.reamar.frontend.plist
 # launchd keeps this process alive; no backgrounding needed
 
-REPO="$HOME/reamar-ai"
+REPO="$HOME/Desktop/reamar-ai"
 NPM="/opt/homebrew/bin/npm"
 LOG="$REPO/logs/autostart.log"
 

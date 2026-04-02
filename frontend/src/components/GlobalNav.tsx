@@ -13,7 +13,7 @@ function navClass(active: boolean) {
   return [
     "rounded-full px-3.5 py-1.5 text-sm font-medium",
     active
-      ? "bg-slate-900 text-white shadow-sm"
+      ? "bg-[#1E3A5F] text-white shadow-sm"
       : "text-slate-700 hover:bg-white hover:text-slate-900",
   ].join(" ");
 }
@@ -35,29 +35,21 @@ function NavLinks() {
   const searchParams = useSearchParams();
   const { activeClient, deactivate } = useActiveClient();
 
-  const isUnits = pathname?.startsWith("/units");
-  const isProjects = pathname?.startsWith("/projects") && !pathname?.startsWith("/projects/map");
-  const isMap = pathname?.startsWith("/projects/map");
-  const isClients = pathname?.startsWith("/clients");
-  const isMatches = pathname?.startsWith("/matches");
+  const isCases = pathname?.startsWith("/cases") || pathname?.startsWith("/clients");
+  const isExplorer = pathname?.startsWith("/explorer") || pathname?.startsWith("/units") || pathname?.startsWith("/projects");
+  const isAdmin = pathname?.startsWith("/admin") || pathname?.startsWith("/matches") || pathname?.startsWith("/analytics");
 
   return (
     <>
-      <nav className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
-        <Link href={buildNavHref("/units", searchParams)} className={navClass(!!isUnits)}>
-          Jednotky
+      <nav className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 shadow-sm">
+        <Link href="/cases" className={navClass(!!isCases)}>
+          Cases
         </Link>
-        <Link href={buildNavHref("/projects", searchParams)} className={navClass(!!isProjects)}>
-          Projekty
+        <Link href={buildNavHref("/explorer/projects", searchParams)} className={navClass(!!isExplorer)}>
+          Explorer
         </Link>
-        <Link href={buildNavHref("/projects/map", searchParams)} className={navClass(!!isMap)}>
-          Mapa
-        </Link>
-        <Link href="/clients" className={navClass(!!isClients)}>
-          Klienti
-        </Link>
-        <Link href="/matches" className={navClass(!!isMatches)}>
-          Matches
+        <Link href="/admin/scoring" className={navClass(!!isAdmin)}>
+          Admin
         </Link>
       </nav>
       {activeClient && (
@@ -82,19 +74,15 @@ function NavLinks() {
 function NavLinksFallback() {
   const pathname = usePathname();
 
-  const isUnits = pathname?.startsWith("/units");
-  const isProjects = pathname?.startsWith("/projects") && !pathname?.startsWith("/projects/map");
-  const isMap = pathname?.startsWith("/projects/map");
-  const isClients = pathname?.startsWith("/clients");
-  const isMatches = pathname?.startsWith("/matches");
+  const isCases = pathname?.startsWith("/cases") || pathname?.startsWith("/clients");
+  const isExplorer = pathname?.startsWith("/explorer") || pathname?.startsWith("/units") || pathname?.startsWith("/projects");
+  const isAdmin = pathname?.startsWith("/admin") || pathname?.startsWith("/matches") || pathname?.startsWith("/analytics");
 
   return (
-    <nav className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur">
-      <Link href="/units" className={navClass(!!isUnits)}>Jednotky</Link>
-      <Link href="/projects" className={navClass(!!isProjects)}>Projekty</Link>
-      <Link href="/projects/map" className={navClass(!!isMap)}>Mapa</Link>
-      <Link href="/clients" className={navClass(!!isClients)}>Klienti</Link>
-      <Link href="/matches" className={navClass(!!isMatches)}>Matches</Link>
+    <nav className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 shadow-sm">
+      <Link href="/cases" className={navClass(!!isCases)}>Cases</Link>
+      <Link href="/explorer/projects" className={navClass(!!isExplorer)}>Explorer</Link>
+      <Link href="/admin/scoring" className={navClass(!!isAdmin)}>Admin</Link>
     </nav>
   );
 }
@@ -211,7 +199,7 @@ export function GlobalNav() {
     <header className="glass-header sticky top-0 z-30 mt-2 flex shrink-0 items-center justify-between gap-4 rounded-2xl px-4 py-2.5">
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <h1 className="shrink-0 text-lg font-semibold tracking-tight text-slate-900">
-          Reamar
+          Reamar AI
         </h1>
         <Suspense fallback={<NavLinksFallback />}>
           <NavLinks />

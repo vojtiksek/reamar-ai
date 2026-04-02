@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 
 export default function RootRedirectPage() {
-  redirect("/projects");
+  redirect("/cases");
 }
-

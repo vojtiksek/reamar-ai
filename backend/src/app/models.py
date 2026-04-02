@@ -63,8 +63,8 @@ class Project(Base):
     # Projektové standardy – ručně editovaná pole s připravenou podporou pro budoucí import.
     # Effective hodnota = override (ProjectOverride) pokud existuje, jinak Project.* (import/base).
     ceiling_height: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    recuperation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    cooling: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    recuperation: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    cooling: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
     # Projektové amenities – booleany; platí stejný princip override > base.
     concierge: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -148,11 +148,17 @@ class Project(Base):
     walkability_source: Mapped[str | None] = mapped_column(String(64), nullable=True)
     walkability_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    # Nová pole – doplňovaná ručně brokerem
+    # Nová pole – doplňovaná ručně brokerem nebo importem
     completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     floors_above_ground: Mapped[int | None] = mapped_column(Integer, nullable=True)
     energy_class: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    # BuiltMind March 2026: new API fields on project
+    construction_completion: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    project_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    builtmind_project_id: Mapped[int | None] = mapped_column(Integer, nullable=True, unique=True)
+    builtmind_developer_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     units: Mapped[list["Unit"]] = relationship(
         back_populates="project",
@@ -263,6 +269,9 @@ class Unit(Base):
     first_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
     last_seen: Mapped[date | None] = mapped_column(Date, nullable=True)
     sold_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reserved_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    reservation_duration_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_stale_reservation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     permit_regular: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     renovation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
@@ -277,7 +286,7 @@ class Unit(Base):
     building: Mapped[str | None] = mapped_column(String(255), nullable=True)
     floors: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amenities: Mapped[str | None] = mapped_column(Text, nullable=True)
-    usage: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    use_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     building_use: Mapped[str | None] = mapped_column(String(255), nullable=True)
     windows: Mapped[str | None] = mapped_column(String(255), nullable=True)
     heating: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -400,6 +409,7 @@ class ClientProfile(Base):
     filter_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     polygon_geojson: Mapped[str | None] = mapped_column(Text, nullable=True)
     commute_points_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    scoring_weights_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -414,6 +424,25 @@ class ClientProfile(Base):
     )
 
     client: Mapped["Client"] = relationship(back_populates="profile")
+
+
+class ScoringConfig(Base):
+    __tablename__ = "scoring_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    thresholds_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
 
 
 class ClientRecommendation(Base):

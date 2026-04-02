@@ -89,8 +89,15 @@ const ANO_ONLY_KEYS = new Set([
   "air_conditioning",
   "cooling_ceilings",
   "smart_home",
+]);
+
+// Filters hidden from UI because backend query support is not yet wired up
+const HIDDEN_FILTER_KEYS = new Set([
   "recuperation",
   "cooling",
+  "windows",
+  "heating",
+  "partition_walls",
 ]);
 
 // Groups that should be collapsed by default
@@ -197,7 +204,7 @@ export function FiltersDrawer({
                   {!isCollapsed && (
                     <div className="px-4 pb-3 pt-1">
                       <div className="grid gap-4 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
-                        {group.filters.map((spec) => (
+                        {group.filters.filter((spec) => !HIDDEN_FILTER_KEYS.has(spec.key)).map((spec) => (
                           <FilterField key={spec.key} spec={spec} currentFilters={currentFilters} onChange={onChange} />
                         ))}
                       </div>

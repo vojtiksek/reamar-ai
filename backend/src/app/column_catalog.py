@@ -167,6 +167,10 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "walkability_transport_score",
     "walkability_leisure_score",
     "walkability_family_score",
+    # BuiltMind March 2026 fields
+    "completion_date",
+    "construction_completion",
+    "builtmind_project_id",
 })
 
 

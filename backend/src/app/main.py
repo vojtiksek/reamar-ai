@@ -4,7 +4,6 @@ from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
 from decimal import Decimal
-from urllib.parse import urlparse
 import json
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Header
@@ -20,6 +19,12 @@ from sqlalchemy.orm import Session, aliased, selectinload
 from .column_catalog import get_columns as get_column_definitions
 from .db import check_db_connection, get_db_session
 from .filter_catalog import get_filter_groups
+from .import_semantics import (
+    canonical_ilike_clauses,
+    CANONICAL_HEATING_PATTERNS,
+    CANONICAL_WINDOWS_PATTERNS,
+    CANONICAL_PARTITION_WALLS_PATTERNS,
+)
 from .models import (
     Project,
     Unit,
@@ -35,6 +40,7 @@ from .models import (
     ClientShareLink,
     ClientNote,
     UnitEvent,
+    ScoringConfig,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -69,6 +75,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
+from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -85,6 +92,9 @@ app.add_middleware(
         "http://127.0.0.1:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3001",
+        "http://localhost:3002",
+        "http://127.0.0.1:3002",
+        "http://192.168.0.96:3002",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -309,6 +319,7 @@ class ClientProfileBody(BaseModel):
     filter_json: dict | None = None
     polygon_geojson: str | None = None
     commute_points_json: dict | None = None
+    scoring_weights_json: dict | None = None
 
 
 class ClientRecommendationItem(BaseModel):
@@ -332,6 +343,14 @@ class ClientRecommendationItem(BaseModel):
     layout_fit: float
     area_fit: float
     outdoor_fit: float = 50.0
+    commute_fit: float = 0.0
+    eligibility: str = "pass"
+    eligibility_reasons: list[str] = []
+    confidence: float = 100.0
+    confidence_label: str = "high"
+    confidence_reasons: list[str] = []
+    top_strengths: list[str] = []
+    top_compromises: list[str] = []
     distance_to_tram_stop_m: float | None = None
     distance_to_metro_station_m: float | None = None
     distance_to_bus_stop_m: float | None = None
@@ -945,6 +964,7 @@ def get_client_profile(
         filter_json=profile.filter_json,
         polygon_geojson=profile.polygon_geojson,
         commute_points_json=profile.commute_points_json,
+        scoring_weights_json=profile.scoring_weights_json,
     )
 
 
@@ -979,6 +999,7 @@ def upsert_client_profile(
         filter_json=profile.filter_json,
         polygon_geojson=profile.polygon_geojson,
         commute_points_json=profile.commute_points_json,
+        scoring_weights_json=profile.scoring_weights_json,
     )
 
 
@@ -1204,7 +1225,7 @@ def _compute_unit_match_score(
 
         # Standards: rekuperace, air_conditioning, floor_heating, external_blinds
         standards = wizard.get("standards") or {}
-        if standards.get("rekuperace") == "must" and not getattr(project, "recuperation", None):
+        if standards.get("rekuperace") == "must" and getattr(project, "recuperation", None) != "true":
             return 0.0, {"hard_filter": "rekuperace"}
         if standards.get("air_conditioning") == "must" and not getattr(unit, "air_conditioning", None):
             return 0.0, {"hard_filter": "air_conditioning"}
@@ -1595,6 +1616,20 @@ def recompute_client_recommendations(
     if profile and profile.layouts and "values" in profile.layouts:
         pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
 
+    # Resolve scoring weights: global (DB) → per-client override → normalize
+    global_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    global_w = global_cfg.config_json if global_cfg else None
+    client_w = profile.scoring_weights_json if profile else None
+    weights = resolve_weights(global_w, client_w)
+
+    # Resolve recommendation visibility thresholds
+    thresholds = resolve_thresholds(global_cfg.thresholds_json if global_cfg else None)
+    hide_below = float(thresholds["hide_below_score"])
+    strong_min = float(thresholds["strong_pick_min_score"])
+    visible_limit = int(thresholds["default_visible_limit"]) or 100
+
     scored: list[tuple[float, Unit, Project, dict[str, float]]] = []
     for unit, project in rows:
         # Optional hard filter by layout: keep only units whose bucket matches profile preferences.
@@ -1604,13 +1639,14 @@ def recompute_client_recommendations(
             unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
             if unit_bucket not in pref_layout_buckets:
                 continue
-        score, parts = _compute_unit_match_score(unit, project, profile, db)
+        result = compute_full_score(unit, project, profile, weights=weights, db=db)
+        score = result["score"]
         if score <= 0:
             continue
-        scored.append((score, unit, project, parts))
+        scored.append((score, unit, project, result))
 
-        # For strong matches (score >= 80), record client-unit match (if not already present).
-        if score >= 80.0:
+        # For strong matches, record client-unit match (if not already present).
+        if score >= strong_min:
             existing = db.execute(
                 select(ClientUnitMatch).where(
                     ClientUnitMatch.client_id == client.id,
@@ -1626,7 +1662,9 @@ def recompute_client_recommendations(
                 db.add(match)
 
     scored.sort(key=lambda t: t[0], reverse=True)
-    top = scored[:100]
+    # Apply hide_below_score: units below threshold are not stored as recommendations
+    scored = [(s, u, p, r) for s, u, p, r in scored if s >= hide_below]
+    top = scored[:visible_limit]
 
     # Delete existing non-pinned, non-hidden suggestions
     db.execute(
@@ -1647,7 +1685,7 @@ def recompute_client_recommendations(
         ).scalars().all()
     )
 
-    for score, unit, project, parts in top:
+    for score, unit, project, result in top:
         if unit.id in hidden_unit_ids:
             continue
         rec = ClientRecommendation(
@@ -1655,7 +1693,7 @@ def recompute_client_recommendations(
             unit_id=unit.id,
             project_id=project.id,
             score=score,
-            reason_json=parts,
+            reason_json=result,
         )
         db.add(rec)
     db.commit()
@@ -2204,6 +2242,14 @@ def list_client_recommendations(
                 layout_fit=float(reason.get("layout_fit", 0.0)),
                 area_fit=float(reason.get("area_fit", 0.0)),
                 outdoor_fit=float(reason.get("outdoor_fit", 50.0)),
+                commute_fit=float(reason.get("commute_fit", 0.0)),
+                eligibility=str(reason.get("eligibility", "pass")),
+                eligibility_reasons=reason.get("eligibility_reasons") or [],
+                confidence=float(reason.get("confidence", 100.0)),
+                confidence_label=str(reason.get("confidence_label", "high")),
+                confidence_reasons=reason.get("confidence_reasons") or [],
+                top_strengths=reason.get("top_strengths") or [],
+                top_compromises=reason.get("top_compromises") or [],
                 distance_to_tram_stop_m=project.distance_to_tram_stop_m,
                 distance_to_metro_station_m=project.distance_to_metro_station_m,
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
@@ -3306,8 +3352,6 @@ def _build_units_query(
     max_days_on_market: int | None = None,
     min_floor: int | None = None,
     max_floor: int | None = None,
-    min_floors: int | None = None,
-    max_floors: int | None = None,
     orientation: list[str] | None = None,
     category: list[str] | None = None,
     overall_quality: list[str] | None = None,
@@ -3334,6 +3378,7 @@ def _build_units_query(
     max_payment_construction: float | None = None,
     min_payment_occupancy: float | None = None,
     max_payment_occupancy: float | None = None,
+    recuperation: list[str] | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None.
     Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
@@ -3385,14 +3430,20 @@ def _build_units_query(
             po_heating,
             (po_heating.project_id == Unit.project_id) & (po_heating.field == "heating"),
         )
-        base = base.where(coalesce(po_heating.value, Unit.heating).in_(heating))
+        eff_heating = coalesce(po_heating.value, Unit.heating)
+        heating_clauses = canonical_ilike_clauses(eff_heating, heating, CANONICAL_HEATING_PATTERNS)
+        if heating_clauses:
+            base = base.where(or_(*heating_clauses))
     if windows is not None and len(windows) > 0:
         po_windows = aliased(ProjectOverride)
         base = base.outerjoin(
             po_windows,
             (po_windows.project_id == Unit.project_id) & (po_windows.field == "windows"),
         )
-        base = base.where(coalesce(po_windows.value, Unit.windows).in_(windows))
+        eff_windows = coalesce(po_windows.value, Unit.windows)
+        windows_clauses = canonical_ilike_clauses(eff_windows, windows, CANONICAL_WINDOWS_PATTERNS)
+        if windows_clauses:
+            base = base.where(or_(*windows_clauses))
     if permit_regular is not None:
         po_permit = aliased(ProjectOverride)
         base = base.outerjoin(
@@ -3455,10 +3506,6 @@ def _build_units_query(
         base = base.where(Unit.floor >= min_floor)
     if max_floor is not None:
         base = base.where(Unit.floor <= max_floor)
-    if min_floors is not None:
-        base = base.where(Unit.floors >= min_floors)
-    if max_floors is not None:
-        base = base.where(Unit.floors <= max_floors)
     if orientation is not None and len(orientation) > 0:
         # Orientace: hodnoty jako "E", "N", "S", "W" nebo kombinace "E,N,S".
         # Filtr má význam "alespoň jedna z vybraných světových stran".
@@ -3487,7 +3534,32 @@ def _build_units_query(
             po_partition_walls,
             (po_partition_walls.project_id == Unit.project_id) & (po_partition_walls.field == "partition_walls"),
         )
-        base = base.where(coalesce(po_partition_walls.value, Unit.partition_walls).in_(partition_walls))
+        eff_pw = coalesce(po_partition_walls.value, Unit.partition_walls)
+        pw_clauses = canonical_ilike_clauses(eff_pw, partition_walls, CANONICAL_PARTITION_WALLS_PATTERNS)
+        if pw_clauses:
+            base = base.where(or_(*pw_clauses))
+    if recuperation is not None and len(recuperation) > 0:
+        po_recup = aliased(ProjectOverride)
+        proj_recup = aliased(Project)
+        base = base.outerjoin(
+            po_recup,
+            (po_recup.project_id == Unit.project_id) & (po_recup.field == "recuperation"),
+        )
+        base = base.outerjoin(proj_recup, proj_recup.id == Unit.project_id)
+        eff_recup = coalesce(po_recup.value, proj_recup.recuperation)
+        recup_clauses = []
+        for rv in recuperation:
+            if rv == 'true':
+                recup_clauses.append(func.lower(eff_recup) == 'true')
+            elif rv == 'false':
+                recup_clauses.append(func.lower(eff_recup) == 'false')
+            elif rv == 'unknown':
+                recup_clauses.append(or_(
+                    eff_recup.is_(None),
+                    func.lower(eff_recup).notin_(['true', 'false']),
+                ))
+        if recup_clauses:
+            base = base.where(or_(*recup_clauses))
     if city is not None and len(city) > 0:
         po_city = aliased(ProjectOverride)
         base = base.outerjoin(
@@ -3713,12 +3785,11 @@ def list_units(
     max_days_on_market: Annotated[int | None, Query(ge=0)] = None,
     min_floor: Annotated[int | None, Query()] = None,
     max_floor: Annotated[int | None, Query()] = None,
-    min_floors: Annotated[int | None, Query()] = None,
-    max_floors: Annotated[int | None, Query()] = None,
     orientation: Annotated[list[str] | None, Query(description="Filter by orientation (any of)")] = None,
     category: Annotated[list[str] | None, Query(description="Filter by category (any of)")] = None,
     overall_quality: Annotated[list[str] | None, Query(description="Filter by overall_quality (any of)")] = None,
     partition_walls: Annotated[list[str] | None, Query(description="Filter by partition_walls (any of)")] = None,
+    recuperation: Annotated[list[str] | None, Query(description="Filter by recuperation (true/false/unknown)")] = None,
     city: Annotated[list[str] | None, Query(description="Filter by city (any of)")] = None,
     cadastral_area_iga: Annotated[list[str] | None, Query(description="Filter by cadastral_area_iga (any of)")] = None,
     municipal_district_iga: Annotated[list[str] | None, Query(description="Filter by municipal_district_iga (any of)")] = None,
@@ -3800,8 +3871,6 @@ def list_units(
         max_days_on_market=max_days_on_market,
         min_floor=min_floor,
         max_floor=max_floor,
-        min_floors=min_floors,
-        max_floors=max_floors,
         orientation=orientation,
         category=category,
         overall_quality=overall_quality,
@@ -3828,6 +3897,7 @@ def list_units(
         max_payment_construction=max_payment_construction,
         min_payment_occupancy=min_payment_occupancy,
         max_payment_occupancy=max_payment_occupancy,
+        recuperation=recuperation,
     )
     if pending_api:
         pending_subq = select(UnitApiPending.unit_id).where(UnitApiPending.unit_id == Unit.id)
@@ -4373,6 +4443,12 @@ def get_projects_overview(
         Project.walkability_transport_score,
         Project.walkability_leisure_score,
         Project.walkability_family_score,
+        # BuiltMind March 2026 fields
+        Project.project_url,
+        Project.completion_date,
+        Project.construction_completion,
+        Project.builtmind_project_id,
+        Project.builtmind_developer_id,
     ]
     agg_stmt = (
         select(
@@ -4473,6 +4549,8 @@ def get_projects_overview(
             else:
                 item[attr] = None
         item["id"] = r.get("id")
+        item["builtmind_project_id"] = r.get("builtmind_project_id")
+        item["builtmind_developer_id"] = r.get("builtmind_developer_id")
         total_units = r.get("total_units") or 0
         available_units = int(r.get("available_units") or 0)
         av_ratio = r.get("availability_ratio")
@@ -4660,8 +4738,6 @@ def _project_agg_subquery():
             # Fallback GPS pro projekty – průměrná poloha jednotek v projektu
             func.avg(Unit.gps_latitude).label("project_gps_latitude"),
             func.avg(Unit.gps_longitude).label("project_gps_longitude"),
-            # Sample unit URL (for deriving project_url)
-            func.min(Unit.url).label("unit_url_sample"),
             layouts,
             # Standardy z jednotek (reprezentativní hodnota pro projekt)
             func.max(Unit.category).label("sample_category"),
@@ -4681,6 +4757,9 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     out: dict[str, Any] = {"id": project.id}
     # Sloupec „Projekt" má v get_columns accessor „name" (z CATALOG_TO_DB), takže musíme vracet i name
     out["name"] = getattr(project, "name", None)
+    # BuiltMind identifiers — not in display catalog but useful for debugging / frontend cross-referencing
+    out["builtmind_project_id"] = getattr(project, "builtmind_project_id", None)
+    out["builtmind_developer_id"] = getattr(project, "builtmind_developer_id", None)
     catalog_cols = get_project_columns()
     for col in catalog_cols:
         key = col["key"]
@@ -4799,27 +4878,6 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
     pay_occupancy = _first_non_none(agg.get("min_payment_occupancy"), agg.get("max_payment_occupancy"))
     out["payment_occupancy"] = _financing_or_none(pay_occupancy)
 
-    # Derive project_url from either explicit Project.project_url or a sample unit URL.
-    if not out.get("project_url"):
-        raw_url = agg.get("unit_url_sample") or getattr(project, "project_url", None)
-        project_url: str | None = None
-        if raw_url:
-            s = str(raw_url)
-            try:
-                parsed = urlparse(s)
-                if parsed.scheme and parsed.netloc:
-                    project_url = f"{parsed.scheme}://{parsed.netloc}"
-                else:
-                    project_url = None
-            except Exception:
-                project_url = None
-            # Fallback for common .cz/ pattern (e.g. https://www.domanavinici.cz/projekty/...):
-            if not project_url and ".cz/" in s:
-                base = s.split(".cz/", 1)[0] + ".cz"
-                project_url = base
-        if project_url:
-            out["project_url"] = project_url
-
     out["available_ratio"] = (
         (units_available / units_total) if units_total else 0.0
     )
@@ -4893,7 +4951,7 @@ def _projects_order_clause(agg_subq, sort_by: str, sort_dir: str):
     dir_asc = sort_dir.strip().lower() != "desc"
     # Speciální case: řazení podle sloupců z agregátu (jiný název než v subdotazu).
     if sort_by == "project_url":
-        col = agg_subq.c.unit_url_sample
+        col = Project.project_url
     elif sort_by == "availability_ratio":
         col = agg_subq.c.availability_ratio
     elif sort_by == "available_units":
@@ -4955,8 +5013,6 @@ def _has_unit_filters(
     max_days_on_market,
     min_floor,
     max_floor,
-    min_floors,
-    max_floors,
     orientation,
     category,
     overall_quality,
@@ -5036,8 +5092,6 @@ def _has_unit_filters(
     if min_days_on_market is not None or max_days_on_market is not None:
         return True
     if min_floor is not None or max_floor is not None:
-        return True
-    if min_floors is not None or max_floors is not None:
         return True
     if orientation and len(orientation) > 0:
         return True
@@ -5135,12 +5189,11 @@ def list_projects(
     max_days_on_market: Annotated[int | None, Query(ge=0)] = None,
     min_floor: Annotated[int | None, Query()] = None,
     max_floor: Annotated[int | None, Query()] = None,
-    min_floors: Annotated[int | None, Query()] = None,
-    max_floors: Annotated[int | None, Query()] = None,
     orientation: Annotated[list[str] | None, Query()] = None,
     category: Annotated[list[str] | None, Query()] = None,
     overall_quality: Annotated[list[str] | None, Query()] = None,
     partition_walls: Annotated[list[str] | None, Query()] = None,
+    recuperation: Annotated[list[str] | None, Query(description="Filter by recuperation (true/false/unknown)")] = None,
     city: Annotated[list[str] | None, Query()] = None,
     cadastral_area_iga: Annotated[list[str] | None, Query()] = None,
     municipal_district_iga: Annotated[list[str] | None, Query()] = None,
@@ -5232,8 +5285,8 @@ def list_projects(
         min_terrace_area, max_terrace_area,
         min_garden_area, max_garden_area,
         min_days_on_market, max_days_on_market,
-        min_floor, max_floor, min_floors, max_floors,
-        orientation, category, overall_quality, partition_walls,
+        min_floor, max_floor,
+        orientation, category, overall_quality, partition_walls, recuperation,
         city, cadastral_area_iga, municipal_district_iga, administrative_district_iga, region_iga,
         developer, building, project,
         min_latitude, max_latitude, min_longitude, max_longitude,
@@ -5283,8 +5336,6 @@ def list_projects(
             max_days_on_market=max_days_on_market,
             min_floor=min_floor,
             max_floor=max_floor,
-            min_floors=min_floors,
-            max_floors=max_floors,
             orientation=orientation,
             category=category,
             overall_quality=overall_quality,
@@ -5311,6 +5362,7 @@ def list_projects(
             max_payment_construction=max_payment_construction,
             min_payment_occupancy=min_payment_occupancy,
             max_payment_occupancy=max_payment_occupancy,
+            recuperation=recuperation,
         )
         u_sub = units_base.subquery()
         matching_project_ids = select(u_sub.c.project_id).distinct()
@@ -5889,6 +5941,216 @@ def admin_walkability_refresh_and_recompute(db: DbSession) -> dict[str, Any]:
 def admin_walkability_recompute_all(db: DbSession) -> dict[str, Any]:
     """Recompute walkability for all projects with GPS (uses existing POI data)."""
     return recompute_all_walkability(db)
+
+
+# ---------------------------------------------------------------------------
+# Scoring weights — global + per-client
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/scoring-weights")
+def get_global_scoring_weights(db: DbSession) -> dict[str, Any]:
+    """Return the current global scoring weights."""
+    row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    if not row:
+        return {"weights": DEFAULT_WEIGHTS}
+    return {"weights": row.config_json}
+
+
+@app.put("/admin/scoring-weights")
+def set_global_scoring_weights(body: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Set global scoring weights. Body: {budget: 0.3, ...}."""
+    row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    if row:
+        row.config_json = body
+    else:
+        row = ScoringConfig(config_json=body)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"weights": row.config_json}
+
+
+@app.get("/clients/{client_id}/scoring-weights")
+def get_client_scoring_weights(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Return effective weights for a client (per-client override merged on top of global)."""
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    global_row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    global_w = global_row.config_json if global_row else None
+    client_w = profile.scoring_weights_json if profile else None
+    return {
+        "weights": resolve_weights(global_w, client_w),
+        "source": "client" if client_w else "global",
+    }
+
+
+@app.put("/clients/{client_id}/scoring-weights")
+def set_client_scoring_weights(
+    client_id: int,
+    body: dict[str, Any],
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Set per-client scoring weight overrides."""
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        profile = ClientProfile(client_id=client.id)
+    profile.scoring_weights_json = body
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+    return {"weights": profile.scoring_weights_json}
+
+
+@app.delete("/clients/{client_id}/scoring-weights")
+def delete_client_scoring_weights(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Remove per-client override, falling back to global weights."""
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if profile and profile.scoring_weights_json is not None:
+        profile.scoring_weights_json = None
+        db.commit()
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Scoring thresholds — recommendation visibility config
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/scoring-thresholds")
+def get_scoring_thresholds(db: DbSession) -> dict[str, Any]:
+    """Return the current recommendation visibility thresholds."""
+    row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    stored = row.thresholds_json if row else None
+    return {"thresholds": resolve_thresholds(stored)}
+
+
+@app.put("/admin/scoring-thresholds")
+def set_scoring_thresholds(body: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Set recommendation visibility thresholds."""
+    row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    # Validate: only accept known keys, numeric values
+    clean: dict[str, int | float] = {}
+    for k in DEFAULT_THRESHOLDS:
+        if k in body and body[k] is not None:
+            clean[k] = float(body[k])
+    if row:
+        row.thresholds_json = clean
+    else:
+        row = ScoringConfig(config_json=DEFAULT_WEIGHTS, thresholds_json=clean)
+        db.add(row)
+    db.commit()
+    db.refresh(row)
+    return {"thresholds": resolve_thresholds(row.thresholds_json)}
+
+
+@app.post("/admin/imports/builtmind/run")
+def admin_builtmind_import() -> dict[str, Any]:
+    """
+    Fetch fresh data from the BuiltMind API and run a full import into DB.
+    Reads BUILTMIND_API_KEY from environment. Synchronous — blocks until complete.
+    Returns structured summary: units fetched, created/updated, projects touched.
+    """
+    import contextlib
+    import io
+    import json as _json
+    import os
+    import re
+    import tempfile
+    from datetime import datetime, timezone
+    from pathlib import Path
+
+    from .fetch_builtmind import fetch_from_api
+    from .import_units import import_units as _import_units
+    from .settings import settings as _settings
+
+    api_key = (_settings.builtmind_api_key or os.environ.get("BUILTMIND_API_KEY", "")).strip()
+    if not api_key:
+        raise HTTPException(
+            status_code=503,
+            detail="BUILTMIND_API_KEY is not set in the server environment. Add it to .env and restart the backend.",
+        )
+
+    started_at = datetime.now(timezone.utc)
+    notes: list[str] = []
+
+    # 1) Fetch from API (no DB, pure HTTP)
+    try:
+        units = fetch_from_api(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"BuiltMind fetch failed: {exc}")
+    notes.append(f"Fetched {len(units)} units from BuiltMind API.")
+
+    # 2) Write to temp file, run import, capture stdout
+    fd, tmp_path_str = tempfile.mkstemp(suffix=".json", prefix="builtmind_")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(units, f, ensure_ascii=False)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            _import_units(Path(tmp_path_str), source="api", dry_run=False, chunk_size=2000)
+        import_log = buf.getvalue()
+    except Exception as exc:
+        import logging as _logging
+        _logging.exception("BuiltMind import failed")
+        raise HTTPException(status_code=500, detail=f"Import failed: {exc}")
+    finally:
+        Path(tmp_path_str).unlink(missing_ok=True)
+
+    # 3) Parse summary numbers from import stdout
+    def _parse(pattern: str, default: int = 0) -> int:
+        m = re.search(pattern, import_log)
+        return int(m.group(1)) if m else default
+
+    projects_created = _parse(r"Projects created: (\d+)")
+    projects_reused  = _parse(r"Projects reused: (\d+)")
+    units_created    = _parse(r"Units created: (\d+)")
+    units_updated    = _parse(r"Units updated: (\d+)")
+    history_inserted = _parse(r"Price history rows inserted: (\d+)")
+
+    notes.append(import_log.strip())
+    finished_at = datetime.now(timezone.utc)
+
+    return {
+        "ok": True,
+        "total_fetched": len(units),
+        "units_created": units_created,
+        "units_updated": units_updated,
+        "imported_units": units_created + units_updated,
+        "projects_created": projects_created,
+        "projects_reused": projects_reused,
+        "history_rows": history_inserted,
+        "started_at": started_at.isoformat(),
+        "finished_at": finished_at.isoformat(),
+        "elapsed_seconds": round((finished_at - started_at).total_seconds(), 1),
+        "notes": notes,
+    }
 
 
 # ── Share-link models ────────────────────────────────────────────────────────

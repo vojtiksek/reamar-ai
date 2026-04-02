@@ -13,14 +13,13 @@ function cn(...classes: (string | false | null | undefined)[]) {
 // - Surface: warm neutral (#f9fafb / slate-50) with soft shadow
 
 export const reamarCardClass = cn(
-  "rounded-3xl border border-slate-200/80 bg-slate-50/80",
-  "shadow-[0_18px_45px_rgba(15,23,42,0.08)]",
-  "backdrop-blur-sm"
+  "rounded-2xl border border-slate-200 bg-white",
+  "shadow-[0_2px_8px_rgba(0,0,0,0.06)]"
 );
 
 export const reamarSubtleCardClass = cn(
-  "rounded-2xl border border-slate-200/70 bg-white/80",
-  "shadow-[0_14px_30px_rgba(15,23,42,0.06)]"
+  "rounded-xl border border-slate-200 bg-white",
+  "shadow-[0_1px_4px_rgba(0,0,0,0.05)]"
 );
 
 export const reamarInputClass = cn(
@@ -68,11 +67,11 @@ export function ReamarButton({
 
   const variantClass =
     variant === "primary"
-      ? "bg-slate-900 text-white hover:bg-slate-800"
+      ? "bg-[#1E3A5F] text-white hover:bg-[#0F2B46]"
       : variant === "secondary"
       ? "border border-slate-900 bg-transparent text-slate-900 hover:bg-slate-900 hover:text-white"
       : variant === "subtle"
-      ? "border border-slate-200 bg-white/80 text-slate-900 hover:bg-slate-50"
+      ? "border border-slate-200 bg-white text-slate-900 hover:bg-slate-50"
       : "text-slate-600 hover:bg-slate-100";
 
   return <button className={cn(base, sizeClass, variantClass, className)} {...props} />;
@@ -100,17 +99,17 @@ type InfoBoxProps = {
 export function InfoBox({ title, tone = "neutral", children, className }: InfoBoxProps) {
   const toneClass =
     tone === "success"
-      ? "border-emerald-200/80 bg-emerald-50/80 text-emerald-900"
+      ? "border-emerald-200 bg-emerald-50 text-emerald-900"
       : tone === "warning"
-      ? "border-amber-200/80 bg-amber-50/80 text-amber-900"
+      ? "border-amber-200 bg-amber-50 text-amber-900"
       : tone === "danger"
-      ? "border-rose-200/80 bg-rose-50/80 text-rose-900"
-      : "border-slate-200/80 bg-slate-50/80 text-slate-800";
+      ? "border-rose-200 bg-rose-50 text-rose-900"
+      : "border-slate-200 bg-slate-50 text-slate-800";
 
   return (
     <div
       className={cn(
-        "rounded-2xl border px-3 py-2 text-xs shadow-[0_10px_25px_rgba(15,23,42,0.04)]",
+        "rounded-2xl border px-3 py-2 text-xs shadow-sm",
         toneClass,
         className
       )}
@@ -132,8 +131,8 @@ export function StatCard({ label, value, sublabel, className }: StatCardProps) {
   return (
     <div
       className={cn(
-        "rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-3 text-xs",
-        "shadow-[0_12px_30px_rgba(15,23,42,0.05)]",
+        "rounded-xl border border-slate-200 bg-white px-3 py-3 text-xs",
+        "shadow-[0_2px_8px_rgba(0,0,0,0.06)]",
         className
       )}
     >
@@ -182,7 +181,7 @@ export function WizardStepHeader({
         </span>
         <div className="mt-2 h-1.5 w-32 overflow-hidden rounded-full bg-slate-100">
           <div
-            className="h-full rounded-full bg-slate-900 transition-all"
+            className="h-full rounded-full bg-[#1E3A5F] transition-all"
             style={{ width: `${progress * 100}%` }}
           />
         </div>

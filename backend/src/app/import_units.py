@@ -60,6 +60,8 @@ JSON_KEY_TO_DB_ATTR: dict[str, str] = {
     "ride_to_center": "ride_to_center_min",
     "public_transport_to_center": "public_transport_to_center_min",
     "unit_url": "url",
+    # March 2026: usage renamed to use_type in API
+    "use_type": "use_type",
 }
 
 # Unit columns that are safe to set from JSON (persisted columns, not relationships).
@@ -87,7 +89,13 @@ def _key_to_attr(key: str) -> str:
 
 def _get_attr_for_json_key(key: str) -> str | None:
     """Return Unit attribute name for JSON key, or None if not a data column."""
-    if key in ("unique_id", "id", "project"):
+    # Excluded: identity/routing keys, and project-level fields that must not land on Unit.
+    if key in (
+        "unique_id", "id", "project",
+        # Project-level fields (handled in apply_project_data):
+        "builtmind_project_id", "builtmind_developer_id",
+        "project_url", "construction_completion",
+    ):
         return None
     attr = JSON_KEY_TO_DB_ATTR.get(key) or _key_to_attr(key)
     if attr in _get_unit_data_columns():
@@ -213,6 +221,25 @@ def normalize_exterior_blinds(value: Any) -> str | None:
     return s if s else None
 
 
+def normalize_project_standard_state(value: Any) -> str | None:
+    """Normalize project-level standard state (recuperation, cooling) to 'true' | 'false' | 'preparation'.
+
+    Ensures string 'false' is stored as 'false', not coerced to a truthy non-empty string.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    s = str(value).strip().lower()
+    if s in ("true", "1", "yes", "on"):
+        return "true"
+    if s in ("false", "0", "no", "off"):
+        return "false"
+    if s == "preparation":
+        return "preparation"
+    return s if s else None
+
+
 def normalize_str(value: Any, max_length: int | None = None) -> str | None:
     if value is None:
         return None
@@ -277,12 +304,17 @@ def apply_project_data(
     only_if_present: bool = False,
 ) -> None:
     """Set project fields from unit_data (project-level fields). When only_if_present=True, do not overwrite with None."""
-    if not only_if_present or unit_data.get("city") is not None:
-        project.city = normalize_str(unit_data.get("city"), 255)
-    if not only_if_present or unit_data.get("municipality") is not None:
-        project.municipality = normalize_str(unit_data.get("municipality"), 255)
-    if not only_if_present or unit_data.get("district") is not None:
-        project.district = normalize_str(unit_data.get("district"), 255)
+    # March 2026: city/district/municipality removed from API; fall back to IGA fields.
+    _city = unit_data.get("city") or unit_data.get("city_iga")
+    if not only_if_present or _city is not None:
+        project.city = normalize_str(_city, 255)
+    _municipality = unit_data.get("municipality") or unit_data.get("municipality_iga")
+    if not only_if_present or _municipality is not None:
+        project.municipality = normalize_str(_municipality, 255)
+    _district = unit_data.get("district") or unit_data.get("district_dzielnica_iga")
+    if not only_if_present or _district is not None:
+        project.district = normalize_str(_district, 255)
+
     if not only_if_present or unit_data.get("postal_code") is not None:
         project.postal_code = normalize_str(unit_data.get("postal_code"), 32)
     if not only_if_present or unit_data.get("cadastral_area_iga") is not None:
@@ -315,6 +347,39 @@ def apply_project_data(
         project.partition_walls = normalize_str(unit_data.get("partition_walls"), 255)
     if not only_if_present or unit_data.get("amenities") is not None:
         project.amenities = normalize_str(unit_data.get("amenities"), 65535)
+
+    # March 2026: new project-level fields from API
+    if not only_if_present or unit_data.get("project_url") is not None:
+        project.project_url = normalize_str(unit_data.get("project_url"), 1024)
+
+    raw_cc = unit_data.get("construction_completion")
+    if not only_if_present or raw_cc is not None:
+        project.construction_completion = normalize_str(raw_cc, 20)
+        # Also populate completion_date (Date) from "YYYY-MM" string so existing
+        # date-based filters and scoring continue to work unchanged.
+        if raw_cc:
+            try:
+                y, m = str(raw_cc).strip()[:7].split("-")
+                from datetime import date as _date
+                project.completion_date = _date(int(y), int(m), 1)
+            except (ValueError, TypeError, AttributeError):
+                pass
+        elif not only_if_present:
+            project.completion_date = None
+
+    # BuiltMind IDs: always record when present (never clear, never guard with only_if_present).
+    _bm_pid = normalize_int(unit_data.get("builtmind_project_id"))
+    if _bm_pid is not None:
+        project.builtmind_project_id = _bm_pid
+    _bm_did = normalize_int(unit_data.get("builtmind_developer_id"))
+    if _bm_did is not None:
+        project.builtmind_developer_id = _bm_did
+
+    # recuperation / cooling: project-level standards (string, not boolean)
+    if not only_if_present or unit_data.get("recuperation") is not None:
+        project.recuperation = normalize_project_standard_state(unit_data.get("recuperation"))
+    if not only_if_present or unit_data.get("cooling") is not None:
+        project.cooling = normalize_project_standard_state(unit_data.get("cooling"))
 
 
 def project_key(developer: Any, name: Any, address: Any) -> tuple[str | None, str, str | None]:
@@ -356,6 +421,21 @@ def batch_load_projects(
     )
     rows = db.execute(stmt).scalars().all()
     return {(p.developer, p.name, p.address): p for p in rows}
+
+
+def batch_load_projects_by_builtmind_id(
+    db: Session,
+    builtmind_ids: list[int],
+) -> dict[int, Project]:
+    """Load projects by builtmind_project_id. Returns builtmind_project_id -> Project."""
+    if not builtmind_ids:
+        return {}
+    unique_ids = list(dict.fromkeys(bid for bid in builtmind_ids if bid is not None))
+    if not unique_ids:
+        return {}
+    stmt = select(Project).where(Project.builtmind_project_id.in_(unique_ids))
+    rows = db.execute(stmt).scalars().all()
+    return {p.builtmind_project_id: p for p in rows}
 
 
 def batch_load_units_by_external_id(
@@ -567,8 +647,10 @@ def apply_unit_data(
         unit.building = normalize_str(unit_data.get("building"), 255)
     if not only_if_present or unit_data.get("amenities") is not None:
         unit.amenities = normalize_str(unit_data.get("amenities"), 65535)
-    if not only_if_present or unit_data.get("usage") is not None:
-        unit.usage = normalize_str(unit_data.get("usage"), 255)
+    # March 2026: API renamed usage -> use_type; read either key.
+    _use_type = unit_data.get("use_type") or unit_data.get("usage")
+    if not only_if_present or _use_type is not None:
+        unit.use_type = normalize_str(_use_type, 255)
     if not only_if_present or unit_data.get("building_use") is not None:
         unit.building_use = normalize_str(unit_data.get("building_use"), 255)
     if not only_if_present or unit_data.get("windows") is not None:
@@ -591,20 +673,31 @@ def apply_unit_data(
         unit.region_iga = normalize_str(unit_data.get("region_iga"), 255)
     if not only_if_present or unit_data.get("district_okres_iga") is not None:
         unit.district_okres_iga = normalize_str(unit_data.get("district_okres_iga"), 255)
-    if not only_if_present or unit_data.get("district") is not None:
-        unit.district = normalize_str(unit_data.get("district"), 255)
+    # March 2026: city/district/municipality removed from API; fall back to IGA fields.
+    _district = unit_data.get("district") or unit_data.get("district_dzielnica_iga")
+    if not only_if_present or _district is not None:
+        unit.district = normalize_str(_district, 255)
     if not only_if_present or unit_data.get("address") is not None:
         unit.address = normalize_str(unit_data.get("address"), 255)
-    if not only_if_present or unit_data.get("city") is not None:
-        unit.city = normalize_str(unit_data.get("city"), 255)
-    if not only_if_present or unit_data.get("municipality") is not None:
-        unit.municipality = normalize_str(unit_data.get("municipality"), 255)
+    _city = unit_data.get("city") or unit_data.get("city_iga")
+    if not only_if_present or _city is not None:
+        unit.city = normalize_str(_city, 255)
+    _municipality = unit_data.get("municipality") or unit_data.get("municipality_iga")
+    if not only_if_present or _municipality is not None:
+        unit.municipality = normalize_str(_municipality, 255)
     if not only_if_present or unit_data.get("postal_code") is not None:
         unit.postal_code = normalize_str(unit_data.get("postal_code"), 32)
     if not only_if_present or unit_data.get("developer") is not None:
         unit.developer = normalize_str(unit_data.get("developer"), 255)
     if not only_if_present or unit_data.get("url") is not None:
         unit.url = normalize_str(unit_data.get("url"), 1024)
+    # March 2026: new unit-level reservation fields
+    if not only_if_present or unit_data.get("reserved_date") is not None:
+        unit.reserved_date = normalize_date(unit_data.get("reserved_date"))
+    if not only_if_present or unit_data.get("reservation_duration_days") is not None:
+        unit.reservation_duration_days = normalize_int(unit_data.get("reservation_duration_days"))
+    if not only_if_present or unit_data.get("is_stale_reservation") is not None:
+        unit.is_stale_reservation = normalize_bool(unit_data.get("is_stale_reservation"))
 
     # Vždy přepočítat ekvivalentní cenu za m² z aktuálních ploch
     unit.price_per_m2_czk = compute_equivalent_price_per_m2(
@@ -692,14 +785,30 @@ def import_units(
 
             # Batch load existing projects and units
             projects_map = batch_load_projects(db, project_keys)
+
+            # Phase 2 project-id matching: prefer builtmind_project_id over name-key.
+            # Build key -> builtmind_project_id from first unit in chunk with that key.
+            key_to_builtmind_id: dict[tuple, int | None] = {}
+            for ud, k, _ in chunk:
+                if k not in key_to_builtmind_id:
+                    key_to_builtmind_id[k] = normalize_int(ud.get("builtmind_project_id"))
+            bm_ids = [bid for bid in key_to_builtmind_id.values() if bid is not None]
+            builtmind_id_map = batch_load_projects_by_builtmind_id(db, bm_ids)
+
             units_map = batch_load_units_by_external_id(db, external_ids)
 
-            # Resolve or create projects (unique keys per chunk)
+            # Resolve or create projects (unique keys per chunk).
+            # Priority: 1) builtmind_project_id match, 2) name-key match, 3) create new.
             project_key_to_project: dict[tuple[str | None, str, str | None], Project] = {}
             for key in project_keys:
                 if key in project_key_to_project:
                     continue
-                if key in projects_map:
+                bm_id = key_to_builtmind_id.get(key)
+                if bm_id is not None and bm_id in builtmind_id_map:
+                    # Found existing project via stable BuiltMind ID (survives renames).
+                    project_key_to_project[key] = builtmind_id_map[bm_id]
+                    projects_reused += 1
+                elif key in projects_map:
                     project_key_to_project[key] = projects_map[key]
                     projects_reused += 1
                 else:
@@ -887,6 +996,10 @@ def import_units(
                         events_by_unit.setdefault(ev.unit_id, []).append(ev)
 
                     if events_by_unit:
+                        # Build reverse map: project_id -> Project for unit lookup
+                        project_id_to_project = {
+                            p.id: p for p in project_key_to_project.values() if p.id is not None
+                        }
                         # Load clients + profiles once (simple approach: all clients)
                         clients = db.execute(select(Client)).scalars().all()
                         profiles_map: dict[int, ClientProfile | None] = {}
@@ -905,7 +1018,9 @@ def import_units(
                                 continue
                             # For alerting, we don't care which exact event, we just use latest.
                             latest_event = unit_events[0]
-                            project = project_key_to_project[project_key(unit)]
+                            project = project_id_to_project.get(unit.project_id)
+                            if project is None:
+                                continue
                             for client in clients:
                                 profile = profiles_map.get(client.id)
                                 score, _parts = _compute_unit_match_score(unit, project, profile)

@@ -99,7 +99,7 @@ export default function DebugComparePage() {
             Použijte odkaz z tabulky jednotek (klik na procento odchylky).
           </p>
           <Link
-            href="/units"
+            href="/explorer/units"
             className="mt-4 inline-block text-sm font-medium text-blue-600 hover:underline"
           >
             ← Zpět na jednotky
@@ -123,7 +123,7 @@ export default function DebugComparePage() {
               )}
             </h1>
             <Link
-              href="/units"
+              href="/explorer/units"
               className="text-sm font-medium text-blue-600 hover:underline"
             >
               ← Zpět na jednotky

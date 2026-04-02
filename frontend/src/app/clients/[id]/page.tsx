@@ -697,7 +697,7 @@ export default function ClientDetailPage() {
       polygonGeoJson: profile.polygon_geojson ?? null,
     });
     const qs = filtersToSearchParams(derivedFilters).toString();
-    router.push(`/units${qs ? `?${qs}` : ""}`);
+    router.push(`/explorer/units${qs ? `?${qs}` : ""}`);
   }, [client, profile, activate, router]);
 
   const mustHaveSummary: string[] = [];
@@ -929,7 +929,7 @@ export default function ClientDetailPage() {
                 <div className="flex flex-wrap items-start justify-between gap-4">
                   <div>
                     <nav className="text-sm text-slate-500 mb-0.5">
-                      <Link href="/clients" className="hover:underline">Klienti</Link>{" / "}
+                      <Link href="/cases" className="hover:underline">Klienti</Link>{" / "}
                       <span className="font-semibold text-slate-900">{client.name}</span>
                     </nav>
                     <p className="text-xs text-slate-500">
@@ -950,7 +950,7 @@ export default function ClientDetailPage() {
                         const filters = profileToFilters(profile);
                         const params = filtersToSearchParams(filters);
                         activate({ clientId: client.id, clientName: client.name, derivedFilters: filters });
-                        router.push(`/units?${params.toString()}`);
+                        router.push(`/explorer/units?${params.toString()}`);
                       }}>
                         Hledat jednotky
                       </ReamarButton>
@@ -1182,7 +1182,7 @@ export default function ClientDetailPage() {
                   <div className="mb-4 flex items-center justify-between gap-4">
                     <div className="min-w-0">
                       <nav className="text-sm text-slate-500">
-                        <Link href="/clients" className="hover:underline">
+                        <Link href="/cases" className="hover:underline">
                           Klienti
                         </Link>{" / "}
                         <span className="font-semibold text-slate-900">{client.name}</span>

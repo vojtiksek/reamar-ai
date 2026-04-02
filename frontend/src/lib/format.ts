@@ -44,7 +44,7 @@ export function formatMinutes(value: number | null | undefined): string {
  * Formát pro počet dní (např. „Dní na trhu“).
  */
 export function formatDays(value: number | null | undefined): string {
-  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+  if (value == null || Number.isNaN(Number(value))) return "—";
   return `${Math.round(Number(value))} dní`;
 }
 
@@ -60,7 +60,7 @@ export function formatPercent(
   fractionDigits?: number,
   treatZeroAsEmpty?: boolean
 ): string {
-  if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+  if (value == null || Number.isNaN(Number(value))) return "—";
   const n = Number(value);
   if (treatZeroAsEmpty && n === 0) return "—";
   const pct = n > 1 ? n : n * 100;
@@ -150,7 +150,7 @@ export function formatByDisplayFormat(
     "distance_to_airport_m",
   ];
   if (catalogKey != null && distanceKeys.includes(catalogKey)) {
-    if (value == null || value === "" || Number.isNaN(Number(value))) return "—";
+    if (value == null || Number.isNaN(Number(value))) return "—";
     const m = Number(value);
     if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
     return `${Math.round(m)} m`;

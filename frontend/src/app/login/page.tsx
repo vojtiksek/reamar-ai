@@ -41,9 +41,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
-      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-lg">
-        <h1 className="mb-4 text-lg font-semibold text-slate-900">Přihlášení makléře</h1>
+    <div className="flex min-h-screen items-center justify-center bg-[#F8F9FA]">
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200">
+        <h1 className="mb-6 text-xl font-semibold text-[#1E3A5F]">Přihlášení makléře</h1>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-slate-600">Email</label>
@@ -69,7 +69,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="w-full rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800 disabled:opacity-50"
+            className="w-full rounded-full bg-[#1E3A5F] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0F2B46] disabled:opacity-50"
           >
             {loading ? "Přihlašuji…" : "Přihlásit se"}
           </button>

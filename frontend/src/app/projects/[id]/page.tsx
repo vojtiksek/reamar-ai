@@ -48,14 +48,25 @@ const STANDARD_LABELS_CZ: Record<string, Record<string, string>> = {
     wood: "Dřevo",
     aluminum: "Hliník",
     plastic: "Plast",
+    "aluminum-wood": "Hliník / dřevo",
+    "aluminium-wood": "Hliník / dřevo",
+    "aluminum-pvc": "Hliník / PVC",
+    "aluminium-pvc": "Hliník / PVC",
   },
   partition_walls: {
     brick: "Cihla",
     drywall: "Sádrokarton",
+    sdk: "Sádrokarton",
+    concrete: "Beton",
+    beton: "Beton",
     none: "Bez příček",
   },
   heating: {
     underfloor: "Podlahové",
+    radiators: "Radiátory",
+    ceiling: "Stropní",
+    central: "Centrální",
+    conventional: "Konvenční",
     gas: "Plyn",
     electric: "Elektřina",
     district: "Dálkové",
@@ -70,6 +81,7 @@ const STANDARD_LABELS_CZ: Record<string, Record<string, string>> = {
     vinyl: "Vinyl",
     pvc: "PVC",
     wood: "Dřevo",
+    hardwood: "Dřevěná podlaha",
     laminate: "Laminát",
     tile: "Dlažba",
     carpet: "Koberec",
@@ -81,12 +93,25 @@ const STANDARD_LABELS_CZ: Record<string, Record<string, string>> = {
 function standardLabelToCzech(field: string, value: string): string {
   if (!value || value === "") return "—";
   const map = STANDARD_LABELS_CZ[field];
+  const raw = String(value).trim();
   if (map) {
-    const lower = value.toLowerCase().trim();
-    const translated = map[lower] ?? map[value];
+    const lower = raw.toLowerCase();
+    const translated = map[lower] ?? map[raw];
     if (translated) return translated;
+
+    if (raw.includes(",")) {
+      const parts = raw
+        .split(",")
+        .map((part) => part.trim())
+        .filter(Boolean)
+        .map((part) => {
+          const pLower = part.toLowerCase();
+          return map[pLower] ?? map[part] ?? (part.charAt(0).toUpperCase() + part.slice(1).toLowerCase());
+        });
+      if (parts.length > 0) return parts.join(", ");
+    }
   }
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
 function formatBoolOrDash(value: unknown): string {
@@ -568,9 +593,7 @@ export default function ProjectDetailPage() {
         key === "air_conditioning" ||
         key === "cooling_ceilings" ||
         key === "exterior_blinds" ||
-        key === "smart_home" ||
-        key === "recuperation" ||
-        key === "cooling"
+        key === "smart_home"
       ) {
         if (v === null || v === undefined || v === "") {
           draft[key] = "";
@@ -912,14 +935,14 @@ export default function ProjectDetailPage() {
     { key: "partition_walls", label: "Příčky", type: "enum" },
     { key: "heating", label: "Topení", type: "enum" },
     { key: "category", label: "Kategorie", type: "enum" },
-    { key: "floors", label: "Podlaha", type: "enum" },
+    { key: "floors", label: "Podlahový materiál", type: "enum" },
     { key: "air_conditioning", label: "Klimatizace", type: "bool" },
     { key: "cooling_ceilings", label: "Chlazení stropem", type: "bool" },
     { key: "exterior_blinds", label: "Žaluzie", type: "blinds" },
     { key: "smart_home", label: "Smart home", type: "bool" },
     { key: "ceiling_height", label: "Výška stropů", type: "text" },
-    { key: "recuperation", label: "Rekuperace", type: "bool" },
-    { key: "cooling", label: "Chlazení podlahou", type: "bool" },
+    { key: "recuperation", label: "Rekuperace", type: "enum" },
+    { key: "cooling", label: "Chlazení podlahou", type: "enum" },
   ] as const;
 
   const filledStandards = STANDARDS_FIELDS.filter((f) => hasValue(f.key) && !isFalseValue(project[f.key]));
@@ -1060,6 +1083,9 @@ export default function ProjectDetailPage() {
             )}
             {hasValue("project_first_seen") && (
               <span className="text-xs text-slate-500">Od: {project["project_first_seen"] as string}</span>
+            )}
+            {hasValue("construction_completion") && (
+              <span className="text-xs text-slate-500">Dokončení: {project["construction_completion"] as string}</span>
             )}
           </div>
         </section>

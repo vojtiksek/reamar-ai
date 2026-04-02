@@ -9,6 +9,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .models import Project, Unit
+from .import_semantics import (
+    CANONICAL_WINDOWS_OPTIONS,
+    CANONICAL_HEATING_OPTIONS,
+    CANONICAL_PARTITION_WALLS_OPTIONS,
+    CANONICAL_RECUPERATION_OPTIONS,
+)
 
 # Module-level cache for parsed CSV rows (filterable only).
 _cached_specs: list[dict] | None = None
@@ -44,10 +50,14 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "terrace_area": ("Unit", "terrace_area_m2"),
     "garden_area": ("Unit", "garden_area_m2"),
     "floor": ("Unit", "floor"),
-    "floors": ("Unit", "floors"),
+    "floors": ("Project", "floors"),
     "orientation": ("Unit", "orientation"),
     "category": ("Unit", "category"),
     "availability": ("Unit", "availability_status"),
+    "use_type": ("Unit", "use_type"),
+    "reserved_date": ("Unit", "reserved_date"),
+    "reservation_duration_days": ("Unit", "reservation_duration_days"),
+    "is_stale_reservation": ("Unit", "is_stale_reservation"),
     "unit_name": ("Unit", "unit_name"),
     "external_id": ("Unit", "external_id"),
     "postal_code": ("Unit", "postal_code"),
@@ -142,6 +152,7 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "local_price_diff_2000m": ("Unit", "local_price_diff_2000m"),
     # Nová pole (Sprint C)
     "completion_date": ("Project", "completion_date"),
+    "construction_completion": ("Project", "construction_completion"),
     "floors_above_ground": ("Project", "floors_above_ground"),
     "energy_class": ("Project", "energy_class"),
 }
@@ -284,10 +295,18 @@ def get_filter_groups(db: Session) -> dict:
         if filter_type == "boolean":
             out["options"] = [True, False]
         elif filter_type in ("enum", "enum_search"):
-            # Pro enum i enum_search vracíme seznam možných hodnot,
-            # aby UI mohlo nabídnout našeptávání i vícenásobný výběr.
-            entity_db, attr = CATALOG_TO_DB[key]
-            out["options"] = _get_enum_options(db, entity_db, attr)
+            # Pro kanonizované fieldy vracíme statické kanonické hodnoty místo raw DB stringů.
+            canonical_overrides = {
+                "windows": CANONICAL_WINDOWS_OPTIONS,
+                "heating": CANONICAL_HEATING_OPTIONS,
+                "partition_walls": CANONICAL_PARTITION_WALLS_OPTIONS,
+                "recuperation": CANONICAL_RECUPERATION_OPTIONS,
+            }
+            if key in canonical_overrides:
+                out["options"] = canonical_overrides[key]
+            else:
+                entity_db, attr = CATALOG_TO_DB[key]
+                out["options"] = _get_enum_options(db, entity_db, attr)
         groups[group_name].append(out)
 
     def _group_sort_key(item: tuple[str, list[dict]]) -> tuple[int, str]:

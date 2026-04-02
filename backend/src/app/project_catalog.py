@@ -40,7 +40,7 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "distance_to_airport_m": "distance_to_airport_m",
     "micro_location_score": "micro_location_score",
     "micro_location_label": "micro_location_label",
-    "project_url": "project_url",  # from overrides when set
+    "project_url": "project_url",
     "project": "name",  # alias for name
     # Financing fields are computed/project-level values living on the overview item dict.
     # We map catalog keys to the same item keys so overrides can apply in both list + detail views.
@@ -56,9 +56,13 @@ PROJECT_CATALOG_TO_ATTR: dict[str, str] = {
     "walkability_family_score": "walkability_family_score",
     # Sprint C: nová pole
     "completion_date": "completion_date",
+    "construction_completion": "construction_completion",
     "image_url": "image_url",
     "floors_above_ground": "floors_above_ground",
     "energy_class": "energy_class",
+    # Project-level standards
+    "recuperation": "recuperation",
+    "cooling": "cooling",
 }
 
 # Computed column keys (kind="computed") in display order.
@@ -221,5 +225,4 @@ def get_projects_columns_with_computed() -> list[dict]:
 def get_allowed_sort_keys() -> set[str]:
     """Keys that are valid for sort_by (catalog + computed)."""
     catalog_keys = {c["key"] for c in get_project_columns()}
-    # project_url odvozený z jednotek; name = accessor sloupce „Projekt“, řazení stejné jako project
     return catalog_keys | set(COMPUTED_COLUMN_KEYS) | {"project_url", "name"}

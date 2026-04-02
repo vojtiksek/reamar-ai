@@ -1,4 +1,4 @@
-"""UnitOverride parsing and application logic."""
+"UnitOverride parsing and application logic."
 
 from __future__ import annotations
 
@@ -7,10 +7,34 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from .filter_catalog import CATALOG_TO_DB
+from .import_semantics import (
+    canonicalize_floor_materials,
+    canonicalize_heating,
+    canonicalize_partition_walls,
+    canonicalize_windows,
+)
 from .models import Project, Unit, UnitOverride, ProjectOverride
 from .project_catalog import get_project_columns, get_project_overrideable_fields
 
 logger = logging.getLogger(__name__)
+
+
+def _canonicalize_display_value(field: str, value: Any) -> Any:
+    if value is None:
+        return None
+    if field == "windows":
+        vals = canonicalize_windows(str(value))
+        return ", ".join(vals) if vals else value
+    if field == "partition_walls":
+        vals = canonicalize_partition_walls(str(value))
+        return ", ".join(vals) if vals else value
+    if field == "heating":
+        vals = canonicalize_heating(str(value))
+        return ", ".join(vals) if vals else value
+    if field == "floors":
+        vals = canonicalize_floor_materials(str(value))
+        return ", ".join(vals) if vals else value
+    return value
 
 
 def weighted_exterior_m2(exterior_area: float | None) -> float:
@@ -99,8 +123,8 @@ _PROJECT_OVERRIDE_TYPE_FALLBACK: dict[str, str] = {
     "smart_home": "bool",
     # Projektové standardy & amenities (manual-first, import jen do Project.*, nikdy do overrides)
     "ceiling_height": "text",
-    "recuperation": "bool",
-    "cooling": "bool",
+    "recuperation": "text",
+    "cooling": "text",
     "concierge": "bool",
     "reception": "bool",
     "bike_room": "bool",
@@ -312,9 +336,9 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
         "permit_regular": base.project.permit_regular,
         "renovation": base.project.renovation,
         "overall_quality": base.project.overall_quality,
-        "windows": base.project.windows,
-        "heating": base.project.heating,
-        "partition_walls": base.project.partition_walls,
+        "windows": _canonicalize_display_value("windows", base.project.windows),
+        "heating": _canonicalize_display_value("heating", base.project.heating),
+        "partition_walls": _canonicalize_display_value("partition_walls", base.project.partition_walls),
         "amenities": base.project.amenities,
     }
 
@@ -339,6 +363,8 @@ def unit_to_response_dict(unit: Unit, override_map: dict[int, dict[str, str]]) -
             proj: Project | None = base.project
             value = getattr(proj, attr, None) if proj is not None else None
             value = _dec(value)
+        if column in {"windows", "heating", "partition_walls", "floors"}:
+            value = _canonicalize_display_value(column, value)
         data[column] = value
 
     return {

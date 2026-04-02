@@ -50,13 +50,13 @@ export default function DemandAnalyticsPage() {
           <h1 className="text-lg font-semibold tracking-tight text-slate-900 shrink-0">Reamar</h1>
           <div className="flex items-center rounded-full border border-white/40 bg-white/40 p-0.5 shadow-sm backdrop-blur shrink-0">
             <Link
-              href="/units"
+              href="/explorer/units"
               className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Jednotky
             </Link>
             <Link
-              href="/projects"
+              href="/explorer/projects"
               className="rounded-full px-3.5 py-1.5 text-sm font-medium text-slate-700 hover:bg-white hover:text-slate-900"
             >
               Projekty

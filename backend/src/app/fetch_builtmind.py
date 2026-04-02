@@ -13,9 +13,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import logging
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +28,22 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
+logger = logging.getLogger(__name__)
+
 # Base URL from API docs (BuiltMind Data API - Reamar)
 BUILTMIND_API_URL = "https://1ki66xm0jc.execute-api.eu-central-1.amazonaws.com/Prod/api"
 
 # Map BuiltMind API field names to our import JSON keys (import_units expects these).
 # Keys not listed are passed through as-is (import uses _key_to_attr for DB columns).
+# March 2026: project_id -> builtmind_project_id (avoids collision with our internal FK),
+#             developer_id -> builtmind_developer_id, use_type replaces usage.
 BUILTMIND_TO_IMPORT: dict[str, str] = {
+    # March 2026 API key remaps
+    "project_id": "builtmind_project_id",       # avoid collision with internal project FK
+    "developer_id": "builtmind_developer_id",
+    "use_type": "use_type",                      # renamed from usage in March 2026
+
+    # Old-name fallbacks (API no longer sends these; kept for safety with older exports)
     "unit_id": "unique_id",
     "project_name": "project",
     "current_price": "price",
@@ -79,6 +91,50 @@ def _unwrap_units(data: Any) -> list[dict[str, Any]]:
     raise ValueError(f"JSON must be a list or object, got: {type(data)}")
 
 
+def _api_get_with_retry(url: str, params: dict, headers: dict, timeout: int = 60) -> "requests.Response":
+    """GET with retry for 429 (rate-limit) and 504 (gateway timeout).
+
+    - 429: waits Retry-After seconds (default 60) then retries up to 3 times.
+    - 504: waits 30 s then retries up to 2 times (use city= instead of country= for large exports).
+    - 403: raises immediately with a clear message (bad key / no access).
+    - Other 4xx/5xx: raises immediately.
+    """
+    max_retries = 3
+    for attempt in range(max_retries):
+        resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("Retry-After", 60))
+            logger.warning("BuiltMind API: rate-limited (429). Waiting %s s (attempt %d/%d).", wait, attempt + 1, max_retries)
+            time.sleep(wait)
+            continue
+
+        if resp.status_code == 504:
+            if attempt < max_retries - 1:
+                logger.warning("BuiltMind API: gateway timeout (504). Waiting 30 s (attempt %d/%d).", attempt + 1, max_retries)
+                time.sleep(30)
+                continue
+            raise RuntimeError(
+                "BuiltMind API: gateway timeout (504) after retries. "
+                "Try using city= instead of country= for large exports."
+            )
+
+        if resp.status_code == 403:
+            raise RuntimeError(
+                "BuiltMind API: access denied (403). Check BUILTMIND_API_KEY and city/country subscription."
+            )
+
+        if resp.status_code == 404:
+            raise RuntimeError(
+                f"BuiltMind API: not found (404). City/country not found or no data available. params={params}"
+            )
+
+        resp.raise_for_status()
+        return resp
+
+    raise RuntimeError(f"BuiltMind API: max retries ({max_retries}) exceeded.")
+
+
 def fetch_from_api(api_key: str) -> list[dict[str, Any]]:
     """Call BuiltMind API, follow presigned URL, return list of units (mapped to import format)."""
     if not HAS_REQUESTS:
@@ -92,18 +148,20 @@ def fetch_from_api(api_key: str) -> list[dict[str, Any]]:
     headers = {"Authorization": f"Bearer {api_key}"}
 
     # 1) Get presigned download URL
-    resp = requests.get(BUILTMIND_API_URL, params=params, headers=headers, timeout=60)
-    resp.raise_for_status()
+    logger.info("BuiltMind API: requesting export (params=%s)", params)
+    resp = _api_get_with_retry(BUILTMIND_API_URL, params=params, headers=headers, timeout=60)
     download_url = resp.text.strip().strip('"')
     if not download_url.startswith("http"):
         raise ValueError(f"Expected presigned URL, got: {download_url[:200]}")
 
-    # 2) Download actual JSON
+    # 2) Download actual JSON from presigned S3 URL (valid 1 hour)
+    logger.info("BuiltMind API: downloading data from presigned URL.")
     data_resp = requests.get(download_url, timeout=300)
     data_resp.raise_for_status()
     raw = data_resp.json()
 
     units = _unwrap_units(raw)
+    logger.info("BuiltMind API: %d units fetched.", len(units))
     return [_map_unit(u) for u in units]
 
 
