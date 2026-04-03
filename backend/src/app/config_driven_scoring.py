@@ -597,6 +597,31 @@ def config_driven_compute_match(
         if not rule.get("include_in_score", False):
             continue
 
+        # --- client_mode filtering ---
+        client_mode = rule.get("client_mode", "auto")
+        if client_mode == "hidden":
+            continue  # hidden fields never participate in scoring
+
+        if client_mode == "wizard" and profile is not None:
+            # Check client's scoring preferences for this field
+            scoring_prefs = (
+                getattr(profile, "scoring_preferences_json", None) or {}
+            )
+            field_pref = scoring_prefs.get(field_key)
+            if field_pref is None:
+                # Also check filter_json.wizard for legacy compat
+                filter_json = getattr(profile, "filter_json", None) or {}
+                wizard_prefs = filter_json.get("wizard", {}).get("scoring_preferences", {})
+                field_pref = wizard_prefs.get(field_key)
+
+            if field_pref == "must_have":
+                # must_have is handled by eligibility, skip scoring
+                continue
+            elif field_pref == "dont_care":
+                # Client doesn't care, skip this field
+                continue
+            # "prefer" or None/missing → include in score normally (fall through)
+
         group_key = rule.get("group_key", "other")
         field_weight = float(rule.get("weight", 1.0))
         label = rule.get("label", field_key)

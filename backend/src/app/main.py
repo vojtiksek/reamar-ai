@@ -6132,30 +6132,221 @@ def update_scoring_studio_config(payload: dict[str, Any], db: DbSession) -> dict
 
 @app.post("/admin/scoring-studio/preview")
 def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, Any]:
-    """Dry run scoring for a selected client with draft config."""
+    """Dry-run scoring comparison: active config vs draft config for a client."""
     client_id = payload.get("client_id")
-    draft_config = payload.get("draft_config")
-    profile = db.execute(
-        select(ClientProfile).where(ClientProfile.id == client_id)
-    ).scalars().first()
-    if not profile:
+    draft_config = payload.get("draft_config") or {}
+    if not client_id:
+        raise HTTPException(status_code=400, detail="client_id is required")
+
+    # 1. Load client + profile
+    client = db.execute(select(Client).where(Client.id == client_id)).scalars().first()
+    if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-    current_recs = db.execute(
-        select(ClientRecommendation).where(
-            ClientRecommendation.client_id == client_id
-        ).order_by(ClientRecommendation.score.desc()).limit(20)
-    ).scalars().all()
-    current_top = [
-        {
-            "unit_id": r.unit_id,
-            "score": r.score,
-            "eligibility": r.reason_json.get("eligibility") if r.reason_json else None,
-        }
-        for r in current_recs
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client_id)
+    ).scalars().first()
+
+    # 2. Load active scoring config from DB
+    active_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+
+    active_weights = resolve_weights(
+        active_cfg.config_json if active_cfg else None,
+        profile.scoring_weights_json if profile else None,
+    )
+    active_thresholds = resolve_thresholds(
+        active_cfg.thresholds_json if active_cfg else None
+    )
+    active_scoring_config = {
+        "groups": active_cfg.groups_json if active_cfg else None,
+        "field_rules": active_cfg.field_rules_json if active_cfg else None,
+    }
+
+    # 3. Build draft scoring config
+    draft_weights = resolve_weights(
+        draft_config.get("weights", active_cfg.config_json if active_cfg else None),
+        profile.scoring_weights_json if profile else None,
+    )
+    draft_thresholds_raw = draft_config.get(
+        "thresholds", active_cfg.thresholds_json if active_cfg else None
+    )
+    draft_thresholds = resolve_thresholds(draft_thresholds_raw)
+    draft_scoring_config = {
+        "groups": draft_config.get("groups", active_cfg.groups_json if active_cfg else None),
+        "field_rules": draft_config.get("field_rules", active_cfg.field_rules_json if active_cfg else None),
+    }
+
+    # 4. Get all candidate units (same query as recompute)
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+    )
+    if profile:
+        if profile.budget_min is not None:
+            q = q.where(Unit.price_czk >= profile.budget_min)
+        if profile.budget_max is not None:
+            q = q.where(Unit.price_czk <= profile.budget_max)
+        if profile.area_min is not None:
+            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+        if profile.area_max is not None:
+            q = q.where(Unit.floor_area_m2 <= profile.area_max)
+        prop_type = profile.property_type
+        if prop_type == "flat":
+            q = q.where(func.lower(Unit.category).notin_(["house", "dům", "rodinný dům", "řadový dům"]))
+        elif prop_type == "house":
+            q = q.where(func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"]))
+
+    rows = db.execute(q.order_by(Unit.id).limit(500)).all()
+
+    # Layout filter
+    pref_layout_buckets: list[str] = []
+    if profile and profile.layouts and "values" in profile.layouts:
+        pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
+
+    # Thresholds
+    active_hide = float(active_thresholds["hide_below_score"])
+    active_strong = float(active_thresholds["strong_pick_min_score"])
+    active_review = float(active_thresholds["review_pick_min_score"])
+    active_limit = int(active_thresholds["default_visible_limit"]) or 100
+
+    draft_hide = float(draft_thresholds["hide_below_score"])
+    draft_strong = float(draft_thresholds["strong_pick_min_score"])
+    draft_review = float(draft_thresholds["review_pick_min_score"])
+    draft_limit = int(draft_thresholds["default_visible_limit"]) or 100
+
+    def _bucket(score: float, strong: float, review: float, hide: float) -> str:
+        if score < hide:
+            return "hidden"
+        if score >= strong:
+            return "strong"
+        if score >= review:
+            return "review"
+        return "fallback"
+
+    # 5. Score all units with both configs
+    active_scored: list[tuple[float, int, str, str, str]] = []  # (score, unit_id, project_name, unit_name, bucket)
+    draft_scored: list[tuple[float, int, str, str, str]] = []
+
+    for unit, project in rows:
+        if pref_layout_buckets:
+            if unit.layout is None:
+                continue
+            unit_bucket = str(unit.layout).strip().lower()
+            if unit_bucket not in pref_layout_buckets:
+                continue
+
+        # Active score
+        active_result = compute_full_score(
+            unit, project, profile, weights=active_weights, db=db,
+            scoring_config=active_scoring_config,
+        )
+        active_score = active_result["score"]
+
+        # Draft score
+        draft_result = compute_full_score(
+            unit, project, profile, weights=draft_weights, db=db,
+            scoring_config=draft_scoring_config,
+        )
+        draft_score = draft_result["score"]
+
+        unit_name = unit.name or f"#{unit.id}"
+        project_name = project.name or f"P#{project.id}"
+
+        ab = _bucket(active_score, active_strong, active_review, active_hide)
+        db_ = _bucket(draft_score, draft_strong, draft_review, draft_hide)
+
+        active_scored.append((active_score, unit.id, project_name, unit_name, ab))
+        draft_scored.append((draft_score, unit.id, project_name, unit_name, db_))
+
+    # Build lookup maps
+    active_map: dict[int, tuple[float, str, str, str]] = {}
+    for s, uid, pn, un, b in active_scored:
+        active_map[uid] = (s, pn, un, b)
+
+    draft_map: dict[int, tuple[float, str, str, str]] = {}
+    for s, uid, pn, un, b in draft_scored:
+        draft_map[uid] = (s, pn, un, b)
+
+    # Active visible = score >= hide, sorted, limited
+    active_visible_ids = set()
+    active_sorted = sorted(active_scored, key=lambda t: t[0], reverse=True)
+    active_eligible = [(s, uid, pn, un, b) for s, uid, pn, un, b in active_sorted if b != "hidden"]
+    for i, (s, uid, pn, un, b) in enumerate(active_eligible[:active_limit]):
+        active_visible_ids.add(uid)
+
+    draft_visible_ids = set()
+    draft_sorted = sorted(draft_scored, key=lambda t: t[0], reverse=True)
+    draft_eligible = [(s, uid, pn, un, b) for s, uid, pn, un, b in draft_sorted if b != "hidden"]
+    for i, (s, uid, pn, un, b) in enumerate(draft_eligible[:draft_limit]):
+        draft_visible_ids.add(uid)
+
+    # Summaries
+    def _summary(eligible_list):
+        counts = {"strong": 0, "review": 0, "fallback": 0}
+        for s, uid, pn, un, b in eligible_list:
+            if b in counts:
+                counts[b] += 1
+        return {"total": len(eligible_list), **counts}
+
+    active_summary = _summary(active_eligible[:active_limit])
+    draft_summary = _summary(draft_eligible[:draft_limit])
+
+    # 6. Build comparison for all units in either visible set
+    all_unit_ids = active_visible_ids | draft_visible_ids
+    comparison = []
+    for uid in all_unit_ids:
+        a = active_map.get(uid)
+        d = draft_map.get(uid)
+        old_score = round(a[0], 1) if a else 0
+        new_score = round(d[0], 1) if d else 0
+        project_name = (a or d)[1]
+        unit_name = (a or d)[2]
+        old_bucket = a[3] if a else "hidden"
+        new_bucket = d[3] if d else "hidden"
+        delta = round(new_score - old_score, 1)
+        comparison.append({
+            "unit_id": uid,
+            "project_name": project_name,
+            "unit_name": unit_name,
+            "old_score": old_score,
+            "new_score": new_score,
+            "old_bucket": old_bucket,
+            "new_bucket": new_bucket,
+            "delta": delta,
+        })
+
+    # Sort by absolute delta descending
+    comparison.sort(key=lambda x: abs(x["delta"]), reverse=True)
+
+    # Top movers
+    top_movers_up = sorted(
+        [c for c in comparison if c["delta"] > 0],
+        key=lambda x: x["delta"], reverse=True,
+    )[:10]
+    top_movers_down = sorted(
+        [c for c in comparison if c["delta"] < 0],
+        key=lambda x: x["delta"],
+    )[:10]
+
+    # Newly visible / hidden
+    newly_visible = [
+        c for c in comparison
+        if c["unit_id"] in draft_visible_ids and c["unit_id"] not in active_visible_ids
     ]
+    newly_hidden = [
+        c for c in comparison
+        if c["unit_id"] in active_visible_ids and c["unit_id"] not in draft_visible_ids
+    ]
+
     return {
         "client_id": client_id,
-        "current_top": current_top,
-        "draft_config": draft_config,
-        "note": "Full preview recompute available in next phase",
+        "active_summary": active_summary,
+        "draft_summary": draft_summary,
+        "comparison": comparison[:50],  # limit response size
+        "top_movers_up": top_movers_up,
+        "top_movers_down": top_movers_down,
+        "newly_visible": newly_visible,
+        "newly_hidden": newly_hidden,
     }

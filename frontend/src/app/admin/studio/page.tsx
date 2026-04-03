@@ -26,6 +26,7 @@ type FieldRule = {
   rule_config: Record<string, any>;
   missing_value_policy: string;
   explanation_template: string;
+  client_mode?: "auto" | "wizard" | "hidden";
 };
 
 type EligibilityRule = {
@@ -69,7 +70,7 @@ type StudioConfig = {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const TABS = ["Skupiny", "Pravidla", "Eligibilita", "Viditelnost", "Váhy"] as const;
+const TABS = ["Skupiny", "Pravidla", "Eligibilita", "Viditelnost", "Váhy", "Preview"] as const;
 type Tab = (typeof TABS)[number];
 
 const WEIGHT_LABELS: Record<string, string> = {
@@ -214,6 +215,310 @@ function Toast({
 }
 
 // ─── Main Component ──────────────────────────────────────────────────────────
+
+// ─── Preview Tab Component ───────────────────────────────────────────────────
+
+type PreviewComparison = {
+  unit_id: number;
+  project_name: string;
+  unit_name: string;
+  old_score: number;
+  new_score: number;
+  old_bucket: string;
+  new_bucket: string;
+  delta: number;
+};
+
+type PreviewSummary = {
+  total: number;
+  strong: number;
+  review: number;
+  fallback: number;
+};
+
+type PreviewResult = {
+  client_id: number;
+  active_summary: PreviewSummary;
+  draft_summary: PreviewSummary;
+  comparison: PreviewComparison[];
+  top_movers_up: PreviewComparison[];
+  top_movers_down: PreviewComparison[];
+  newly_visible: PreviewComparison[];
+  newly_hidden: PreviewComparison[];
+};
+
+type SimpleClient = { id: number; name: string };
+
+function PreviewTab({
+  token,
+  weights,
+  thresholds,
+  groups,
+  fieldRules,
+  eligibilityRules,
+}: {
+  token: string | null;
+  weights: Weights;
+  thresholds: Thresholds;
+  groups: Record<string, Group>;
+  fieldRules: FieldRule[];
+  eligibilityRules: EligibilityRule[];
+}) {
+  const [clients, setClients] = useState<SimpleClient[]>([]);
+  const [selectedClient, setSelectedClient] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [loadingClients, setLoadingClients] = useState(false);
+  const [result, setResult] = useState<PreviewResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Load clients on mount
+  useEffect(() => {
+    if (!token) return;
+    setLoadingClients(true);
+    fetch(`${API_BASE}/clients`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data: any[]) => {
+        setClients(
+          data.map((c) => ({ id: c.id, name: c.name || `Klient #${c.id}` }))
+        );
+      })
+      .finally(() => setLoadingClients(false));
+  }, [token]);
+
+  const handleCompare = async () => {
+    if (!token || !selectedClient) return;
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch(`${API_BASE}/admin/scoring-studio/preview`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          client_id: selectedClient,
+          draft_config: {
+            weights,
+            thresholds,
+            groups,
+            field_rules: fieldRules,
+            eligibility_rules: eligibilityRules,
+          },
+        }),
+      });
+      if (!res.ok) {
+        const txt = await res.text();
+        throw new Error(txt);
+      }
+      const data: PreviewResult = await res.json();
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Chyba při načítání preview");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const bucketLabel = (b: string) => {
+    switch (b) {
+      case "strong": return "Silný";
+      case "review": return "Review";
+      case "fallback": return "Fallback";
+      case "hidden": return "Skrytý";
+      default: return b;
+    }
+  };
+
+  const bucketColor = (b: string) => {
+    switch (b) {
+      case "strong": return "bg-emerald-100 text-emerald-800";
+      case "review": return "bg-amber-100 text-amber-800";
+      case "fallback": return "bg-slate-100 text-slate-600";
+      case "hidden": return "bg-red-100 text-red-700";
+      default: return "bg-slate-100 text-slate-600";
+    }
+  };
+
+  const deltaColor = (d: number) => {
+    if (d > 0) return "text-emerald-600 font-semibold";
+    if (d < 0) return "text-red-600 font-semibold";
+    return "text-slate-400";
+  };
+
+  const renderComparisonRow = (c: PreviewComparison) => (
+    <tr key={c.unit_id} className="border-b border-slate-100 hover:bg-slate-50">
+      <td className="py-2 px-3 text-sm">{c.project_name}</td>
+      <td className="py-2 px-3 text-sm">{c.unit_name}</td>
+      <td className="py-2 px-3 text-sm text-right">{c.old_score}</td>
+      <td className="py-2 px-3 text-sm text-right">{c.new_score}</td>
+      <td className={`py-2 px-3 text-sm text-right ${deltaColor(c.delta)}`}>
+        {c.delta > 0 ? "+" : ""}{c.delta}
+      </td>
+      <td className="py-2 px-3">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${bucketColor(c.old_bucket)}`}>
+          {bucketLabel(c.old_bucket)}
+        </span>
+      </td>
+      <td className="py-2 px-3">
+        <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${bucketColor(c.new_bucket)}`}>
+          {bucketLabel(c.new_bucket)}
+        </span>
+      </td>
+    </tr>
+  );
+
+  const renderSummaryCard = (title: string, summary: PreviewSummary, accent: string) => (
+    <ReamarCard className="flex-1 min-w-[200px]">
+      <h3 className={`text-sm font-semibold mb-3 ${accent}`}>{title}</h3>
+      <div className="text-2xl font-bold text-slate-800 mb-2">{summary.total} bytů</div>
+      <div className="flex flex-wrap gap-2 text-xs">
+        <span className="rounded-full bg-emerald-100 text-emerald-800 px-2 py-0.5">
+          Silný: {summary.strong}
+        </span>
+        <span className="rounded-full bg-amber-100 text-amber-800 px-2 py-0.5">
+          Review: {summary.review}
+        </span>
+        <span className="rounded-full bg-slate-100 text-slate-600 px-2 py-0.5">
+          Fallback: {summary.fallback}
+        </span>
+      </div>
+    </ReamarCard>
+  );
+
+  const renderSection = (title: string, items: PreviewComparison[], emptyMsg: string) => {
+    if (!items.length) return (
+      <p className="text-sm text-slate-400 italic">{emptyMsg}</p>
+    );
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-slate-200 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <th className="py-2 px-3">Projekt</th>
+              <th className="py-2 px-3">Byt</th>
+              <th className="py-2 px-3 text-right">Starý</th>
+              <th className="py-2 px-3 text-right">Nový</th>
+              <th className="py-2 px-3 text-right">Delta</th>
+              <th className="py-2 px-3">Starý bucket</th>
+              <th className="py-2 px-3">Nový bucket</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map(renderComparisonRow)}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      {/* Client selector + compare button */}
+      <ReamarCard>
+        <div className="flex flex-wrap items-end gap-4">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-sm font-medium text-slate-700 mb-1">
+              Klient
+            </label>
+            <select
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-800 focus:border-[#1E3A5F] focus:outline-none focus:ring-1 focus:ring-[#1E3A5F]"
+              value={selectedClient ?? ""}
+              onChange={(e) => setSelectedClient(e.target.value ? Number(e.target.value) : null)}
+              disabled={loadingClients}
+            >
+              <option value="">
+                {loadingClients ? "Načítám klienty…" : "— Vyberte klienta —"}
+              </option>
+              {clients.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <ReamarButton
+            size="sm"
+            variant="primary"
+            onClick={handleCompare}
+            disabled={!selectedClient || loading}
+          >
+            {loading ? "Počítám…" : "Porovnat"}
+          </ReamarButton>
+        </div>
+        <p className="mt-2 text-xs text-slate-400">
+          Porovná aktuální (uloženou) konfiguraci s vaším rozpracovaným draftem.
+        </p>
+      </ReamarCard>
+
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <>
+          {/* Summary cards */}
+          <div className="flex flex-wrap gap-4">
+            {renderSummaryCard("Aktivní konfigurace", result.active_summary, "text-slate-600")}
+            {renderSummaryCard("Draft konfigurace", result.draft_summary, "text-[#1E3A5F]")}
+          </div>
+
+          {/* Main comparison table */}
+          <ReamarCard>
+            <h3 className="text-sm font-semibold text-slate-700 mb-3">
+              Porovnání ({result.comparison.length} bytů)
+            </h3>
+            {renderSection("", result.comparison, "Žádné byty k porovnání.")}
+          </ReamarCard>
+
+          {/* Top movers up */}
+          {result.top_movers_up.length > 0 && (
+            <ReamarCard>
+              <h3 className="text-sm font-semibold text-emerald-700 mb-3">
+                📈 Největší zlepšení
+              </h3>
+              {renderSection("", result.top_movers_up, "")}
+            </ReamarCard>
+          )}
+
+          {/* Top movers down */}
+          {result.top_movers_down.length > 0 && (
+            <ReamarCard>
+              <h3 className="text-sm font-semibold text-red-700 mb-3">
+                📉 Největší zhoršení
+              </h3>
+              {renderSection("", result.top_movers_down, "")}
+            </ReamarCard>
+          )}
+
+          {/* Newly visible */}
+          {result.newly_visible.length > 0 && (
+            <ReamarCard>
+              <h3 className="text-sm font-semibold text-emerald-700 mb-3">
+                ✨ Nově viditelné byty ({result.newly_visible.length})
+              </h3>
+              {renderSection("", result.newly_visible, "")}
+            </ReamarCard>
+          )}
+
+          {/* Newly hidden */}
+          {result.newly_hidden.length > 0 && (
+            <ReamarCard>
+              <h3 className="text-sm font-semibold text-red-700 mb-3">
+                🚫 Nově skryté byty ({result.newly_hidden.length})
+              </h3>
+              {renderSection("", result.newly_hidden, "")}
+            </ReamarCard>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 
 export default function ScoringStudioPage() {
   const [token, setToken] = useState<string | null>(null);
@@ -554,6 +859,7 @@ export default function ScoringStudioPage() {
                   <th className="px-3 py-2">Skupina</th>
                   <th className="px-3 py-2">Váha</th>
                   <th className="px-3 py-2">Typ</th>
+                  <th className="px-3 py-2">Režim klienta</th>
                 </tr>
               </thead>
               <tbody>
@@ -661,12 +967,30 @@ export default function ScoringStudioPage() {
                       <td className="px-3 py-2 text-xs text-slate-500">
                         {rule.rule_type}
                       </td>
+                      <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                        <select
+                          value={rule.client_mode || "auto"}
+                          onChange={(e) => {
+                            const updated = [...fieldRules];
+                            updated[idx] = {
+                              ...updated[idx],
+                              client_mode: e.target.value as "auto" | "wizard" | "hidden",
+                            };
+                            setFieldRules(updated);
+                          }}
+                          className="rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                        >
+                          <option value="auto">Auto</option>
+                          <option value="wizard">Wizard</option>
+                          <option value="hidden">Skryté</option>
+                        </select>
+                      </td>
                     </tr>
 
                     {/* Expanded detail */}
                     {expandedField === rule.field_key && (
                       <tr>
-                        <td colSpan={6} className="bg-slate-50 px-6 py-4">
+                        <td colSpan={7} className="bg-slate-50 px-6 py-4">
                           <div className="grid gap-4 md:grid-cols-2">
                             <div>
                               <label className="block text-xs font-medium text-slate-500 mb-1">
@@ -1163,6 +1487,18 @@ export default function ScoringStudioPage() {
             </ReamarButton>
           </div>
         </div>
+      )}
+
+      {/* ═══════════════════ TAB 6: Preview ═══════════════════ */}
+      {activeTab === "Preview" && (
+        <PreviewTab
+          token={token}
+          weights={weights}
+          thresholds={thresholds}
+          groups={groups}
+          fieldRules={fieldRules}
+          eligibilityRules={eligibilityRules}
+        />
       )}
 
       {/* Toast */}

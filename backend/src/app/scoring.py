@@ -662,7 +662,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_target",
         "rule_config": {"tolerance_pct": 0.5, "decay": "linear"},
         "missing_value_policy": "neutral",
-        "explanation_template": "Jak dobře cena odpovídá rozpočtu klienta."
+        "explanation_template": "Jak dobře cena odpovídá rozpočtu klienta.",
+        "client_mode": "auto",
     },
     {
         "field_key": "location_fit",
@@ -676,7 +677,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_thresholds",
         "rule_config": {"inside_polygon": 100, "outside_polygon": 60, "no_polygon": 70},
         "missing_value_policy": "neutral",
-        "explanation_template": "Zda byt leží v preferované lokalitě klienta."
+        "explanation_template": "Zda byt leží v preferované lokalitě klienta.",
+        "client_mode": "auto",
     },
     {
         "field_key": "layout_fit",
@@ -690,7 +692,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "enum_map",
         "rule_config": {"match": 100, "no_match": 50},
         "missing_value_policy": "neutral",
-        "explanation_template": "Shoda dispozice s požadavkem klienta."
+        "explanation_template": "Shoda dispozice s požadavkem klienta.",
+        "client_mode": "wizard",
     },
     {
         "field_key": "area_fit",
@@ -704,7 +707,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_target",
         "rule_config": {"tolerance_pct": 0.5, "decay": "linear"},
         "missing_value_policy": "neutral",
-        "explanation_template": "Jak dobře plocha odpovídá požadavku."
+        "explanation_template": "Jak dobře plocha odpovídá požadavku.",
+        "client_mode": "wizard",
     },
     {
         "field_key": "walkability",
@@ -718,7 +722,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_linear",
         "rule_config": {"higher_is_better": True, "fallback": 50},
         "missing_value_policy": "neutral",
-        "explanation_template": "Kvalita občanské vybavenosti v okolí."
+        "explanation_template": "Kvalita občanské vybavenosti v okolí.",
+        "client_mode": "auto",
     },
     {
         "field_key": "outdoor_space",
@@ -732,7 +737,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_linear",
         "rule_config": {"higher_is_better": True},
         "missing_value_policy": "neutral",
-        "explanation_template": "Dostupnost venkovního prostoru (terasa, balkón, zahrada)."
+        "explanation_template": "Dostupnost venkovního prostoru (terasa, balkón, zahrada).",
+        "client_mode": "wizard",
     },
     {
         "field_key": "commute_fit",
@@ -746,7 +752,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "numeric_linear",
         "rule_config": {"higher_is_better": True},
         "missing_value_policy": "neutral",
-        "explanation_template": "Dojezdová vzdálenost na klíčová místa."
+        "explanation_template": "Dojezdová vzdálenost na klíčová místa.",
+        "client_mode": "wizard",
     },
     {
         "field_key": "floor_heating",
@@ -760,7 +767,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "boolean_bonus",
         "rule_config": {"true_score": 8, "false_score": 0},
         "missing_value_policy": "neutral",
-        "explanation_template": "Podlahové vytápění zvyšuje komfort."
+        "explanation_template": "Podlahové vytápění zvyšuje komfort.",
+        "client_mode": "wizard",
     },
     {
         "field_key": "orientation",
@@ -774,7 +782,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "enum_map",
         "rule_config": {"south": 10, "west": 6, "east": 2, "north": -6},
         "missing_value_policy": "neutral",
-        "explanation_template": "Orientace bytu ovlivňuje světelnost."
+        "explanation_template": "Orientace bytu ovlivňuje světelnost.",
+        "client_mode": "wizard",
     },
     {
         "field_key": "energy_class",
@@ -788,7 +797,8 @@ DEFAULT_FIELD_RULES = [
         "rule_type": "enum_map",
         "rule_config": {"A": 10, "B": 7, "C": 4, "D": 0, "E": -5},
         "missing_value_policy": "neutral",
-        "explanation_template": "Energetická třída budovy."
+        "explanation_template": "Energetická třída budovy.",
+        "client_mode": "wizard",
     }
 ]
 
@@ -1058,6 +1068,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 5, "max": 40, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Dojezd autem do centra: {value} min",
+        "client_mode": "auto",
     },
     {
         "field_key": "public_transport_to_center_min",
@@ -1072,6 +1083,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 10, "max": 60, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "MHD do centra: {value} min",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1091,6 +1103,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má řádné stavební povolení",
+        "client_mode": "auto",
     },
     {
         "field_key": "renovation_project",
@@ -1105,6 +1118,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt je rekonstrukce: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "overall_quality_project",
@@ -1127,6 +1141,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Kvalita projektu: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "windows_project",
@@ -1147,6 +1162,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Okna projektu: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "heating_project",
@@ -1169,6 +1185,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Vytápění projektu: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "partition_walls_project",
@@ -1191,6 +1208,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Příčky projektu: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "ceiling_height",
@@ -1212,6 +1230,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Výška stropů: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "recuperation",
@@ -1233,6 +1252,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Rekuperace: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "cooling_project",
@@ -1254,6 +1274,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Chlazení projektu: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "floors_above_ground",
@@ -1268,6 +1289,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Počet nadzemních podlaží: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "completion_date",
@@ -1282,6 +1304,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Plánované dokončení: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "construction_completion",
@@ -1296,6 +1319,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Stav výstavby: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "developer",
@@ -1310,6 +1334,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Developer: {value}",
+        "client_mode": "hidden",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1329,6 +1354,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má concierge službu",
+        "client_mode": "wizard",
     },
     {
         "field_key": "reception",
@@ -1343,6 +1369,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má recepci",
+        "client_mode": "wizard",
     },
     {
         "field_key": "bike_room",
@@ -1357,6 +1384,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má kolárnu",
+        "client_mode": "wizard",
     },
     {
         "field_key": "stroller_room",
@@ -1371,6 +1399,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má kočárkárnu",
+        "client_mode": "wizard",
     },
     {
         "field_key": "fitness_project",
@@ -1385,6 +1414,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má vlastní fitness",
+        "client_mode": "wizard",
     },
     {
         "field_key": "courtyard_garden",
@@ -1399,6 +1429,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt má vnitroblok nebo zahradu",
+        "client_mode": "wizard",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1418,6 +1449,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 40, "max": 75, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Denní hluk: {value} dB",
+        "client_mode": "auto",
     },
     {
         "field_key": "noise_night_db",
@@ -1432,6 +1464,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 30, "max": 65, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Noční hluk: {value} dB",
+        "client_mode": "auto",
     },
     {
         "field_key": "noise_label",
@@ -1454,6 +1487,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Hluková kategorie: {value}",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1473,6 +1507,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 20, "max": 500, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Vzdálenost od hlavní silnice: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_tram_tracks_m",
@@ -1487,6 +1522,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 10, "max": 300, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Vzdálenost od tramvajových kolejí: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_railway_m",
@@ -1501,6 +1537,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Vzdálenost od železnice: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_airport_m",
@@ -1515,6 +1552,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 1000, "max": 15000, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Vzdálenost od letiště: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "micro_location_score",
@@ -1529,6 +1567,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Skóre mikro-lokality: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "micro_location_label",
@@ -1551,6 +1590,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Mikro-lokalita: {value}",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1570,6 +1610,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Supermarket: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_drugstore_m",
@@ -1584,6 +1625,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Drogerie: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_pharmacy_m",
@@ -1598,6 +1640,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1500, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Lékárna: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_atm_m",
@@ -1612,6 +1655,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Bankomat: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_post_office_m",
@@ -1626,6 +1670,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 2000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Pošta: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_tram_stop_m",
@@ -1640,6 +1685,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 800, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Tramvajová zastávka: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_bus_stop_m",
@@ -1654,6 +1700,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 800, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Autobusová zastávka: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_metro_station_m",
@@ -1668,6 +1715,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 2000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Stanice metra: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_train_station_m",
@@ -1682,6 +1730,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 200, "max": 3000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Vlaková stanice: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_restaurant_m",
@@ -1696,6 +1745,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 800, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Restaurace: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_cafe_m",
@@ -1710,6 +1760,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 800, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Kavárna: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_park_m",
@@ -1724,6 +1775,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Park: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_fitness_m",
@@ -1738,6 +1790,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Fitness: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_playground_m",
@@ -1752,6 +1805,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 800, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Hřiště: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_kindergarten_m",
@@ -1766,6 +1820,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 1500, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Školka: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_primary_school_m",
@@ -1780,6 +1835,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 2000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Základní škola: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "distance_to_pediatrician_m",
@@ -1794,6 +1850,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 2000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Pediatr: {value} m",
+        "client_mode": "auto",
     },
 
     # Walking distances (pěší vzdálenosti k MHD)
@@ -1810,6 +1867,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Pěšky k tramvaji: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "walking_distance_to_bus_stop_m",
@@ -1824,6 +1882,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 50, "max": 1000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Pěšky k autobusu: {value} m",
+        "client_mode": "auto",
     },
     {
         "field_key": "walking_distance_to_metro_station_m",
@@ -1838,6 +1897,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 100, "max": 2500, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Pěšky k metru: {value} m",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -1857,6 +1917,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 5, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Supermarkety do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_drugstore_500m",
@@ -1871,6 +1932,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 3, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Drogerie do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_pharmacy_500m",
@@ -1885,6 +1947,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 3, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Lékárny do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_atm_500m",
@@ -1899,6 +1962,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 5, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Bankomaty do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_post_office_500m",
@@ -1913,6 +1977,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 2, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Pošty do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_restaurant_500m",
@@ -1927,6 +1992,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 15, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Restaurace do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_cafe_500m",
@@ -1941,6 +2007,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 10, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Kavárny do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_park_500m",
@@ -1955,6 +2022,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 5, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Parky do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_fitness_500m",
@@ -1969,6 +2037,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 5, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Fitness do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_playground_500m",
@@ -1983,6 +2052,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 5, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Hřiště do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_kindergarten_500m",
@@ -1997,6 +2067,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 3, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Školky do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_primary_school_500m",
@@ -2011,6 +2082,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 3, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Základní školy do 500 m: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "count_pediatrician_500m",
@@ -2025,6 +2097,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 3, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Pediatři do 500 m: {value}",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2044,6 +2117,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability denní potřeby: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "walkability_transport_score",
@@ -2058,6 +2132,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability doprava: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "walkability_leisure_score",
@@ -2072,6 +2147,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability volný čas: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "walkability_family_score",
@@ -2086,6 +2162,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability rodina: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "walkability_score",
@@ -2100,6 +2177,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability celkové: {value}/100",
+        "client_mode": "auto",
     },
     {
         "field_key": "walkability_label",
@@ -2122,6 +2200,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Walkability: {value}",
+        "client_mode": "auto",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2141,6 +2220,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 20, "max": 200, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Celková plocha: {value} m²",
+        "client_mode": "hidden",
     },
     {
         "field_key": "equivalent_area_m2",
@@ -2155,6 +2235,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 20, "max": 200, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Ekvivalentní plocha: {value} m²",
+        "client_mode": "hidden",
     },
     {
         "field_key": "exterior_area_m2",
@@ -2169,6 +2250,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 100, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Venkovní plocha: {value} m²",
+        "client_mode": "wizard",
     },
     {
         "field_key": "balcony_area_m2",
@@ -2183,6 +2265,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 30, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Balkón: {value} m²",
+        "client_mode": "wizard",
     },
     {
         "field_key": "terrace_area_m2",
@@ -2197,6 +2280,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 60, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Terasa: {value} m²",
+        "client_mode": "wizard",
     },
     {
         "field_key": "garden_area_m2",
@@ -2211,6 +2295,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 200, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Zahrada: {value} m²",
+        "client_mode": "wizard",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2230,6 +2315,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0, "max": 15, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Patro: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "category",
@@ -2244,6 +2330,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Kategorie: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "use_type",
@@ -2258,6 +2345,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Typ užití: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "building_use",
@@ -2272,6 +2360,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Využití budovy: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "sale_type",
@@ -2286,6 +2375,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Typ prodeje: {value}",
+        "client_mode": "hidden",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2313,6 +2403,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Kvalita jednotky: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "windows_unit",
@@ -2333,6 +2424,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Okna jednotky: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "heating_unit",
@@ -2355,6 +2447,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Vytápění jednotky: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "partition_walls_unit",
@@ -2377,6 +2470,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Příčky jednotky: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "permit_regular_unit",
@@ -2391,6 +2485,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka má řádné stavební povolení",
+        "client_mode": "auto",
     },
     {
         "field_key": "renovation_unit",
@@ -2405,6 +2500,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka je rekonstrukce: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "air_conditioning",
@@ -2419,6 +2515,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka má klimatizaci",
+        "client_mode": "wizard",
     },
     {
         "field_key": "cooling_ceilings",
@@ -2433,6 +2530,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka má chladicí stropy",
+        "client_mode": "wizard",
     },
     {
         "field_key": "exterior_blinds",
@@ -2453,6 +2551,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Venkovní žaluzie: {value}",
+        "client_mode": "wizard",
     },
     {
         "field_key": "smart_home",
@@ -2467,6 +2566,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"bonus": 1.0},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka má smart home",
+        "client_mode": "wizard",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2486,6 +2586,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Cena: {value} Kč",
+        "client_mode": "auto",
     },
     {
         "field_key": "price_per_m2_czk",
@@ -2500,6 +2601,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 60000, "max": 200000, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Cena za m²: {value} Kč",
+        "client_mode": "auto",
     },
     {
         "field_key": "price_change",
@@ -2514,6 +2616,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": -0.2, "max": 0.2, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Změna ceny: {value}",
+        "client_mode": "auto",
     },
     {
         "field_key": "original_price_czk",
@@ -2528,6 +2631,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Původní cena: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "original_price_per_m2_czk",
@@ -2542,6 +2646,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Původní cena za m²: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "parking_indoor_price_czk",
@@ -2556,6 +2661,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Vnitřní parkování: {value} Kč",
+        "client_mode": "wizard",
     },
     {
         "field_key": "parking_outdoor_price_czk",
@@ -2570,6 +2676,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Venkovní parkování: {value} Kč",
+        "client_mode": "wizard",
     },
     {
         "field_key": "local_price_diff_500m",
@@ -2584,6 +2691,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": -30, "max": 30, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Cenová odchylka vs. okolí 500 m: {value} %",
+        "client_mode": "auto",
     },
     {
         "field_key": "local_price_diff_1000m",
@@ -2598,6 +2706,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": -30, "max": 30, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Cenová odchylka vs. okolí 1 km: {value} %",
+        "client_mode": "auto",
     },
     {
         "field_key": "local_price_diff_2000m",
@@ -2612,6 +2721,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": -30, "max": 30, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Cenová odchylka vs. okolí 2 km: {value} %",
+        "client_mode": "auto",
     },
 
     # Platební podmínky
@@ -2628,6 +2738,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0.0, "max": 0.5, "higher_is_better": False},
         "missing_value_policy": "neutral",
         "explanation_template": "Platba při smlouvě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "payment_construction",
@@ -2642,6 +2753,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Platba při výstavbě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "payment_occupancy",
@@ -2656,6 +2768,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"min": 0.0, "max": 1.0, "higher_is_better": True},
         "missing_value_policy": "neutral",
         "explanation_template": "Platba při kolaudaci: {value:.0%}",
+        "client_mode": "hidden",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2683,6 +2796,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Na trhu: {value} dní",
+        "client_mode": "auto",
     },
     {
         "field_key": "reservation_duration_days",
@@ -2697,6 +2811,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Délka rezervace: {value} dní",
+        "client_mode": "hidden",
     },
     {
         "field_key": "is_stale_reservation",
@@ -2711,6 +2826,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {"penalty": -0.5},
         "missing_value_policy": "neutral",
         "explanation_template": "Jednotka má zastaralou/podezřelou rezervaci",
+        "client_mode": "hidden",
     },
 
     # ═══════════════════════════════════════════════════════════════════
@@ -2730,6 +2846,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Celkem jednotek: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "available_units",
@@ -2744,6 +2861,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Dostupných jednotek: {value}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "availability_ratio",
@@ -2766,6 +2884,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Dostupnost projektu: {value:.0%}",
+        "client_mode": "auto",
     },
     {
         "field_key": "avg_price_czk",
@@ -2780,6 +2899,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Průměrná cena v projektu: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_price_czk",
@@ -2794,6 +2914,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Nejnižší cena: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_price_czk",
@@ -2808,6 +2929,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Nejvyšší cena: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "avg_price_per_m2_czk",
@@ -2822,6 +2944,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Průměrná cena/m² v projektu: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "avg_floor_area_m2",
@@ -2836,6 +2959,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Průměrná plocha v projektu: {value} m²",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_parking_indoor_price_czk",
@@ -2850,6 +2974,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Min. vnitřní parkování: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_parking_indoor_price_czk",
@@ -2864,6 +2989,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Max. vnitřní parkování: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_parking_outdoor_price_czk",
@@ -2878,6 +3004,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Min. venkovní parkování: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_parking_outdoor_price_czk",
@@ -2892,6 +3019,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Max. venkovní parkování: {value} Kč",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_days_on_market",
@@ -2913,6 +3041,7 @@ ADDITIONAL_FIELD_RULES = [
         },
         "missing_value_policy": "neutral",
         "explanation_template": "Nejdéle na trhu v projektu: {value} dní",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_payment_contract",
@@ -2927,6 +3056,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Min. platba při smlouvě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_payment_contract",
@@ -2941,6 +3071,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Max. platba při smlouvě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_payment_construction",
@@ -2955,6 +3086,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Min. platba při výstavbě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_payment_construction",
@@ -2969,6 +3101,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Max. platba při výstavbě: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "min_payment_occupancy",
@@ -2983,6 +3116,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Min. platba při kolaudaci: {value:.0%}",
+        "client_mode": "hidden",
     },
     {
         "field_key": "max_payment_occupancy",
@@ -2997,6 +3131,7 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Max. platba při kolaudaci: {value:.0%}",
+        "client_mode": "hidden",
     },
 ]
 
