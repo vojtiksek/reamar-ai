@@ -35,6 +35,17 @@ type EligibilityRule = {
   rule_type: string;
   config: Record<string, any>;
   on_fail: "reject" | "review";
+  ui_type?: "simple_toggle" | "slider" | "range";
+  ui_description?: string;
+  ui_config?: {
+    param?: string;
+    label?: string;
+    min?: number;
+    max?: number;
+    step?: number;
+    unit?: string;
+    params?: Array<{ key: string; label: string; min: number; max: number; step: number; unit?: string }>;
+  };
 };
 
 type Weights = Record<string, number>;
@@ -774,70 +785,167 @@ export default function ScoringStudioPage() {
       {/* ═══════════════════ TAB 3: Eligibility ═══════════════════ */}
       {activeTab === "Eligibilita" && (
         <div className="space-y-4">
-          {eligibilityRules.map((rule, idx) => (
-            <ReamarCard key={rule.field} className="p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-                <div className="flex items-center gap-3">
-                  <Toggle
-                    checked={rule.enabled}
-                    onChange={(v) => {
-                      const updated = [...eligibilityRules];
-                      updated[idx] = { ...updated[idx], enabled: v };
-                      setEligibilityRules(updated);
-                    }}
-                  />
+          {eligibilityRules.map((rule, idx) => {
+            const uiType = rule.ui_type;
+            const uiDesc = rule.ui_description;
+            const uiConfig = rule.ui_config;
+
+            return (
+              <ReamarCard key={rule.field} className="p-4">
+                {/* ── Header: toggle + label + on_fail ── */}
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+                  <div className="flex items-center gap-3">
+                    <Toggle
+                      checked={rule.enabled}
+                      onChange={(v) => {
+                        const updated = [...eligibilityRules];
+                        updated[idx] = { ...updated[idx], enabled: v };
+                        setEligibilityRules(updated);
+                      }}
+                    />
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">
+                        {rule.label}
+                      </h3>
+                      {uiDesc && (
+                        <p className="text-xs text-slate-400 mt-0.5">
+                          {uiDesc}
+                        </p>
+                      )}
+                    </div>
+                  </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-slate-900">
-                      {rule.label}
-                    </h3>
-                    <p className="text-[11px] text-slate-400 font-mono">
-                      {rule.field} · {rule.rule_type}
-                    </p>
+                    <label className="block text-xs font-medium text-slate-500 mb-1">
+                      Při nesplnění
+                    </label>
+                    <select
+                      value={rule.on_fail}
+                      onChange={(e) => {
+                        const updated = [...eligibilityRules];
+                        updated[idx] = {
+                          ...updated[idx],
+                          on_fail: e.target.value as "reject" | "review",
+                        };
+                        setEligibilityRules(updated);
+                      }}
+                      className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
+                    >
+                      <option value="reject">Zamítnout</option>
+                      <option value="review">Ke kontrole</option>
+                    </select>
                   </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-500 mb-1">
-                    Při nesplnění
-                  </label>
-                  <select
-                    value={rule.on_fail}
-                    onChange={(e) => {
-                      const updated = [...eligibilityRules];
-                      updated[idx] = {
-                        ...updated[idx],
-                        on_fail: e.target.value as "reject" | "review",
-                      };
-                      setEligibilityRules(updated);
-                    }}
-                    className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-                  >
-                    <option value="reject">Zamítnout (reject)</option>
-                    <option value="review">Ke kontrole (review)</option>
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-500 mb-1">
-                  Konfigurace pravidla (JSON)
-                </label>
-                <textarea
-                  value={JSON.stringify(rule.config, null, 2)}
-                  onChange={(e) => {
-                    try {
-                      const parsed = JSON.parse(e.target.value);
-                      const updated = [...eligibilityRules];
-                      updated[idx] = { ...updated[idx], config: parsed };
-                      setEligibilityRules(updated);
-                    } catch {
-                      // allow invalid JSON while typing
-                    }
-                  }}
-                  rows={3}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono"
-                />
-              </div>
-            </ReamarCard>
-          ))}
+
+                {/* ── Parameters by ui_type ── */}
+                {rule.enabled && (
+                  <>
+                    {/* === slider === */}
+                    {uiType === "slider" && uiConfig && (
+                      <div className="mt-3 pl-10">
+                        <label className="block text-xs font-medium text-slate-600 mb-1">
+                          {uiConfig.label}
+                        </label>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="range"
+                            min={uiConfig.min}
+                            max={uiConfig.max}
+                            step={uiConfig.step}
+                            value={rule.config[uiConfig.param] ?? uiConfig.min}
+                            onChange={(e) => {
+                              const updated = [...eligibilityRules];
+                              updated[idx] = {
+                                ...updated[idx],
+                                config: {
+                                  ...updated[idx].config,
+                                  [uiConfig.param]: Number(e.target.value),
+                                },
+                              };
+                              setEligibilityRules(updated);
+                            }}
+                            className="flex-1 accent-blue-600"
+                          />
+                          <span className="text-sm font-medium text-slate-700 min-w-[3.5rem] text-right">
+                            {rule.config[uiConfig.param] ?? uiConfig.min}
+                            {uiConfig.unit ? ` ${uiConfig.unit}` : ""}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* === range (multiple params) === */}
+                    {uiType === "range" && uiConfig?.params && (
+                      <div className="mt-3 pl-10 space-y-3">
+                        {uiConfig.params?.map(
+                          (p) => (
+                            <div key={p.key}>
+                              <label className="block text-xs font-medium text-slate-600 mb-1">
+                                {p.label}
+                              </label>
+                              <div className="flex items-center gap-3">
+                                <input
+                                  type="range"
+                                  min={p.min}
+                                  max={p.max}
+                                  step={p.step}
+                                  value={rule.config[p.key] ?? p.min}
+                                  onChange={(e) => {
+                                    const updated = [...eligibilityRules];
+                                    updated[idx] = {
+                                      ...updated[idx],
+                                      config: {
+                                        ...updated[idx].config,
+                                        [p.key]: Number(e.target.value),
+                                      },
+                                    };
+                                    setEligibilityRules(updated);
+                                  }}
+                                  className="flex-1 accent-blue-600"
+                                />
+                                <span className="text-sm font-medium text-slate-700 min-w-[3.5rem] text-right">
+                                  {rule.config[p.key] ?? p.min}
+                                  {p.unit ? ` ${p.unit}` : ""}
+                                </span>
+                              </div>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    )}
+
+                    {/* === simple_toggle — no extra params === */}
+                    {uiType === "simple_toggle" && null}
+
+                    {/* === fallback: JSON textarea for unknown/missing ui_type === */}
+                    {uiType !== "simple_toggle" &&
+                      uiType !== "slider" &&
+                      uiType !== "range" && (
+                        <div className="mt-3 pl-10">
+                          <label className="block text-xs font-medium text-slate-500 mb-1">
+                            Konfigurace pravidla (JSON)
+                          </label>
+                          <textarea
+                            value={JSON.stringify(rule.config, null, 2)}
+                            onChange={(e) => {
+                              try {
+                                const parsed = JSON.parse(e.target.value);
+                                const updated = [...eligibilityRules];
+                                updated[idx] = { ...updated[idx], config: parsed };
+                                setEligibilityRules(updated);
+                              } catch {
+                                // allow invalid JSON while typing
+                              }
+                            }}
+                            rows={3}
+                            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono"
+                          />
+                        </div>
+                      )}
+                  </>
+                )}
+              </ReamarCard>
+            );
+          })}
 
           <div className="flex justify-end">
             <ReamarButton

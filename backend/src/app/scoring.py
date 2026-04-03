@@ -266,7 +266,7 @@ def compute_eligibility(
 # Soft scoring (match)
 # ---------------------------------------------------------------------------
 
-def compute_match(
+def _legacy_compute_match(
     unit: Unit,
     project: Project,
     profile: ClientProfile | None,
@@ -574,6 +574,8 @@ def compute_full_score(
     profile: ClientProfile | None,
     weights: dict[str, float] | None = None,
     db: Session | None = None,
+    scoring_config: dict | None = None,
+    aggregates=None,
 ) -> dict[str, Any]:
     """Orchestrate eligibility → match → confidence.
 
@@ -607,13 +609,13 @@ def compute_full_score(
         }
 
     # 2. Match
-    score, fits = compute_match(unit, project, profile, w, db)
+    score, fits = compute_match(unit, project, profile, w, db, scoring_config=scoring_config, aggregates=aggregates)
 
     # 3. Confidence
     conf = compute_confidence(unit, project, profile, fits)
 
     # 4. Strengths / compromises
-    strengths, compromises = _top_strengths_and_compromises(fits, profile)
+    strengths, compromises = config_driven_strengths_compromises(fits, profile)
 
     return {
         "score": score,
@@ -819,7 +821,160 @@ DEFAULT_ELIGIBILITY_RULES = [
         "rule_type": "budget_range",
         "config": {"hard_max_over_pct": 1.0},
         "on_fail": "reject"
-    }
+    },
+    {
+        "field": "layout",
+        "label": "Dispozice",
+        "enabled": True,
+        "rule_type": "layout_match",
+        "config": {},
+        "on_fail": "reject",
+        "ui_type": "simple_toggle",
+        "ui_description": "Byt musí odpovídat požadované dispozici klienta."
+    },
+    {
+        "field": "min_area",
+        "label": "Minimální plocha",
+        "enabled": True,
+        "rule_type": "min_value",
+        "config": {"tolerance_pct": 10},
+        "on_fail": "review",
+        "ui_type": "slider",
+        "ui_description": "Byt nesmí být menší než požadovaná minimální plocha.",
+        "ui_config": {"param": "tolerance_pct", "label": "Tolerance pod minimum (%)", "min": 0, "max": 30, "step": 1, "unit": "%"}
+    },
+    {
+        "field": "max_area",
+        "label": "Maximální plocha",
+        "enabled": False,
+        "rule_type": "max_value",
+        "config": {"tolerance_pct": 20},
+        "on_fail": "review",
+        "ui_type": "slider",
+        "ui_description": "Byt by neměl být výrazně větší než požadovaná maximální plocha.",
+        "ui_config": {"param": "tolerance_pct", "label": "Tolerance nad maximum (%)", "min": 0, "max": 50, "step": 5, "unit": "%"}
+    },
+    {
+        "field": "location_polygon",
+        "label": "Lokalita (polygon)",
+        "enabled": True,
+        "rule_type": "inside_polygon",
+        "config": {},
+        "on_fail": "review",
+        "ui_type": "simple_toggle",
+        "ui_description": "Byt musí ležet v preferované lokalitě klienta."
+    },
+    {
+        "field": "availability",
+        "label": "Dostupnost bytu",
+        "enabled": True,
+        "rule_type": "must_be_available",
+        "config": {},
+        "on_fail": "reject",
+        "ui_type": "simple_toggle",
+        "ui_description": "Byt musí být aktuálně v prodeji (ne prodaný/rezervovaný)."
+    },
+    {
+        "field": "terrace_required",
+        "label": "Terasa požadována",
+        "enabled": False,
+        "rule_type": "must_have_outdoor",
+        "config": {"outdoor_type": "terrace"},
+        "on_fail": "review",
+        "ui_type": "simple_toggle",
+        "ui_description": "Pokud klient vyžaduje terasu, byt ji musí mít."
+    },
+    {
+        "field": "balcony_required",
+        "label": "Balkón požadován",
+        "enabled": False,
+        "rule_type": "must_have_outdoor",
+        "config": {"outdoor_type": "balcony"},
+        "on_fail": "review",
+        "ui_type": "simple_toggle",
+        "ui_description": "Pokud klient vyžaduje balkón, byt ho musí mít."
+    },
+    {
+        "field": "parking_required",
+        "label": "Parkování požadováno",
+        "enabled": False,
+        "rule_type": "must_have_parking",
+        "config": {},
+        "on_fail": "review",
+        "ui_type": "simple_toggle",
+        "ui_description": "Pokud klient vyžaduje parkování, projekt ho musí nabízet."
+    },
+    {
+        "field": "floor_preference",
+        "label": "Preferované patro",
+        "enabled": False,
+        "rule_type": "floor_range",
+        "config": {"min_floor": 2, "max_floor": 99, "ground_floor_action": "review"},
+        "on_fail": "review",
+        "ui_type": "range",
+        "ui_description": "Byt by měl být v preferovaném rozmezí pater.",
+        "ui_config": {"params": [
+            {"key": "min_floor", "label": "Min. patro", "min": 0, "max": 30, "step": 1},
+            {"key": "max_floor", "label": "Max. patro", "min": 1, "max": 30, "step": 1}
+        ]}
+    },
+    {
+        "field": "completion_deadline",
+        "label": "Termín dokončení",
+        "enabled": False,
+        "rule_type": "completion_before",
+        "config": {"max_years_from_now": 3},
+        "on_fail": "review",
+        "ui_type": "slider",
+        "ui_description": "Projekt musí být dokončen do X let od teď.",
+        "ui_config": {"param": "max_years_from_now", "label": "Max. let do dokončení", "min": 1, "max": 10, "step": 1, "unit": "let"}
+    },
+    {
+        "field": "max_noise",
+        "label": "Maximální hluk (dB)",
+        "enabled": False,
+        "rule_type": "max_value",
+        "config": {"max_day_db": 65, "max_night_db": 55},
+        "on_fail": "review",
+        "ui_type": "range",
+        "ui_description": "Projekt by neměl překročit maximální hladinu hluku.",
+        "ui_config": {"params": [
+            {"key": "max_day_db", "label": "Max. denní hluk (dB)", "min": 40, "max": 80, "step": 1},
+            {"key": "max_night_db", "label": "Max. noční hluk (dB)", "min": 30, "max": 70, "step": 1}
+        ]}
+    },
+    {
+        "field": "min_walkability",
+        "label": "Minimální walkability",
+        "enabled": False,
+        "rule_type": "min_value",
+        "config": {"min_score": 40},
+        "on_fail": "review",
+        "ui_type": "slider",
+        "ui_description": "Projekt musí mít alespoň minimální walkability skóre.",
+        "ui_config": {"param": "min_score", "label": "Min. walkability skóre", "min": 0, "max": 100, "step": 5, "unit": "bodů"}
+    },
+    {
+        "field": "max_commute",
+        "label": "Maximální dojezd MHD do centra",
+        "enabled": False,
+        "rule_type": "max_value",
+        "config": {"max_minutes": 45},
+        "on_fail": "review",
+        "ui_type": "slider",
+        "ui_description": "MHD do centra nesmí trvat déle než nastavený limit.",
+        "ui_config": {"param": "max_minutes", "label": "Max. minut MHD do centra", "min": 10, "max": 90, "step": 5, "unit": "min"}
+    },
+    {
+        "field": "recuperation_required",
+        "label": "Rekuperace požadována",
+        "enabled": False,
+        "rule_type": "must_have_feature",
+        "config": {"field": "recuperation", "expected": "ANO"},
+        "on_fail": "review",
+        "ui_type": "simple_toggle",
+        "ui_description": "Projekt musí mít rekuperaci."
+    },
 ]
 
 
@@ -2851,3 +3006,48 @@ ADDITIONAL_FIELD_RULES = [
 print(f"Celkem přidaných polí: {len(ADDITIONAL_FIELD_RULES)}")
 
 DEFAULT_FIELD_RULES.extend(ADDITIONAL_FIELD_RULES)
+
+
+# ---------------------------------------------------------------------------
+# Config-driven scoring integration (auto-applied)
+# ---------------------------------------------------------------------------
+
+from .config_driven_scoring import (
+    config_driven_compute_match,
+    config_driven_strengths_compromises,
+    config_driven_compute_confidence,
+    get_field_value,
+    compute_field_score,
+)
+
+
+def compute_match(
+    unit: Unit,
+    project: Project,
+    profile: ClientProfile | None,
+    weights: dict[str, float],
+    db: Session | None = None,
+    scoring_config: dict | None = None,
+    aggregates=None,
+) -> tuple[float, dict[str, Any]]:
+    """Config-driven match scoring.
+
+    Delegates to config_driven_compute_match which reads field_rules and groups.
+    Falls back to legacy defaults if no config provided.
+
+    The scoring_config dict should have:
+        - 'groups': dict overrides for DEFAULT_GROUPS
+        - 'field_rules': list overrides for DEFAULT_FIELD_RULES
+
+    For backward compatibility, if called without scoring_config,
+    it uses the default field rules and groups.
+    """
+    return config_driven_compute_match(
+        unit=unit,
+        project=project,
+        profile=profile,
+        weights=weights,
+        db=db,
+        scoring_config=scoring_config,
+        aggregates=aggregates,
+    )
