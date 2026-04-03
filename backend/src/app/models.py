@@ -432,6 +432,9 @@ class ScoringConfig(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     config_json: Mapped[dict] = mapped_column(JSONB, nullable=False)
     thresholds_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    groups_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    field_rules_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    eligibility_rules_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

@@ -75,7 +75,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
-from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS
+from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_groups, resolve_field_rules, resolve_eligibility_rules
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -1688,6 +1688,24 @@ def recompute_client_recommendations(
     for score, unit, project, result in top:
         if unit.id in hidden_unit_ids:
             continue
+        # Assign recommendation bucket
+        bucket = "hidden"
+        if score >= strong_min:
+            bucket = "strong"
+        elif score >= float(thresholds["review_pick_min_score"]):
+            bucket = "review"
+        else:
+            bucket = "fallback"
+        result["recommendation_bucket"] = bucket
+        # Assign recommendation bucket
+        bucket = "hidden"
+        if score >= strong_min:
+            bucket = "strong"
+        elif score >= float(thresholds["review_pick_min_score"]):
+            bucket = "review"
+        else:
+            bucket = "fallback"
+        result["recommendation_bucket"] = bucket
         rec = ClientRecommendation(
             client_id=client.id,
             unit_id=unit.id,
@@ -6069,280 +6087,75 @@ def set_scoring_thresholds(body: dict[str, Any], db: DbSession) -> dict[str, Any
     return {"thresholds": resolve_thresholds(row.thresholds_json)}
 
 
-@app.post("/admin/imports/builtmind/run")
-def admin_builtmind_import() -> dict[str, Any]:
-    """
-    Fetch fresh data from the BuiltMind API and run a full import into DB.
-    Reads BUILTMIND_API_KEY from environment. Synchronous — blocks until complete.
-    Returns structured summary: units fetched, created/updated, projects touched.
-    """
-    import contextlib
-    import io
-    import json as _json
-    import os
-    import re
-    import tempfile
-    from datetime import datetime, timezone
-    from pathlib import Path
+# ---------------------------------------------------------------------------
+# Scoring Studio — unified config API
+# ---------------------------------------------------------------------------
 
-    from .fetch_builtmind import fetch_from_api
-    from .import_units import import_units as _import_units
-    from .settings import settings as _settings
-
-    api_key = (_settings.builtmind_api_key or os.environ.get("BUILTMIND_API_KEY", "")).strip()
-    if not api_key:
-        raise HTTPException(
-            status_code=503,
-            detail="BUILTMIND_API_KEY is not set in the server environment. Add it to .env and restart the backend.",
-        )
-
-    started_at = datetime.now(timezone.utc)
-    notes: list[str] = []
-
-    # 1) Fetch from API (no DB, pure HTTP)
-    try:
-        units = fetch_from_api(api_key)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"BuiltMind fetch failed: {exc}")
-    notes.append(f"Fetched {len(units)} units from BuiltMind API.")
-
-    # 2) Write to temp file, run import, capture stdout
-    fd, tmp_path_str = tempfile.mkstemp(suffix=".json", prefix="builtmind_")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            _json.dump(units, f, ensure_ascii=False)
-
-        buf = io.StringIO()
-        with contextlib.redirect_stdout(buf):
-            _import_units(Path(tmp_path_str), source="api", dry_run=False, chunk_size=2000)
-        import_log = buf.getvalue()
-    except Exception as exc:
-        import logging as _logging
-        _logging.exception("BuiltMind import failed")
-        raise HTTPException(status_code=500, detail=f"Import failed: {exc}")
-    finally:
-        Path(tmp_path_str).unlink(missing_ok=True)
-
-    # 3) Parse summary numbers from import stdout
-    def _parse(pattern: str, default: int = 0) -> int:
-        m = re.search(pattern, import_log)
-        return int(m.group(1)) if m else default
-
-    projects_created = _parse(r"Projects created: (\d+)")
-    projects_reused  = _parse(r"Projects reused: (\d+)")
-    units_created    = _parse(r"Units created: (\d+)")
-    units_updated    = _parse(r"Units updated: (\d+)")
-    history_inserted = _parse(r"Price history rows inserted: (\d+)")
-
-    notes.append(import_log.strip())
-    finished_at = datetime.now(timezone.utc)
-
+@app.get("/admin/scoring-studio")
+def get_scoring_studio_config(db: DbSession) -> dict[str, Any]:
+    """Return the complete resolved scoring studio config."""
+    config = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
     return {
-        "ok": True,
-        "total_fetched": len(units),
-        "units_created": units_created,
-        "units_updated": units_updated,
-        "imported_units": units_created + units_updated,
-        "projects_created": projects_created,
-        "projects_reused": projects_reused,
-        "history_rows": history_inserted,
-        "started_at": started_at.isoformat(),
-        "finished_at": finished_at.isoformat(),
-        "elapsed_seconds": round((finished_at - started_at).total_seconds(), 1),
-        "notes": notes,
+        "weights": resolve_weights(config.config_json if config else None, None),
+        "thresholds": resolve_thresholds(config.thresholds_json if config else None),
+        "groups": resolve_groups(config.groups_json if config else None),
+        "field_rules": resolve_field_rules(config.field_rules_json if config else None),
+        "eligibility_rules": resolve_eligibility_rules(config.eligibility_rules_json if config else None),
     }
 
 
-# ── Share-link models ────────────────────────────────────────────────────────
-
-class ShareLinkResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    url: str
-    expires_at: datetime
-
-
-class ShareUnitItem(BaseModel):
-    """Sanitised unit record for client-facing share view. No broker internals."""
-    model_config = ConfigDict(from_attributes=True)
-    project_name: str
-    developer: str | None
-    layout: str | None
-    floor_area_m2: float | None
-    exterior_area_m2: float | None
-    floor: int | None
-    price_czk: int | None
-    price_per_m2_czk: int | None
-    original_price_czk: int | None
-    availability_status: str | None
-    ride_to_center_min: float | None
-    public_transport_to_center_min: float | None
-    gps_latitude: float | None
-    gps_longitude: float | None
-    url: str | None
-    broker_note: str | None = None
-
-
-class SharePayload(BaseModel):
-    """Public payload returned by GET /share/{token}."""
-    model_config = ConfigDict(from_attributes=True)
-    client_name: str
-    broker_name: str | None = None
-    broker_phone: str | None = None
-    broker_email: str | None = None
-    units: list[ShareUnitItem]
-    expires_at: datetime
-
-
-_SHARE_LINK_TTL_DAYS = 30
-
-
-@app.post("/clients/{client_id}/share-link", response_model=ShareLinkResponse)
-def create_share_link(
-    client_id: int,
-    db: DbSession,
-    broker: Broker = Depends(get_current_broker),
-) -> ShareLinkResponse:
-    """Create or replace the share link for this client+broker pair."""
-    import secrets as _secrets
-    _get_client_for_broker(db, client_id, broker)
-
-    now = datetime.utcnow().replace(tzinfo=None)
-    expires = now + timedelta(days=_SHARE_LINK_TTL_DAYS)
-    token = _secrets.token_urlsafe(32)
-
-    # Delete any existing link for this client+broker (replace semantics)
-    db.execute(
-        sa.delete(ClientShareLink).where(
-            ClientShareLink.client_id == client_id,
-            ClientShareLink.broker_id == broker.id,
-        )
-    )
-    link = ClientShareLink(
-        client_id=client_id,
-        broker_id=broker.id,
-        token=token,
-        expires_at=expires,
-    )
-    db.add(link)
+@app.put("/admin/scoring-studio")
+def update_scoring_studio_config(payload: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Save the complete scoring studio config."""
+    config = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    if not config:
+        config = ScoringConfig(config_json=DEFAULT_WEIGHTS)
+        db.add(config)
+    if "weights" in payload:
+        config.config_json = payload["weights"]
+    if "thresholds" in payload:
+        config.thresholds_json = payload["thresholds"]
+    if "groups" in payload:
+        config.groups_json = payload["groups"]
+    if "field_rules" in payload:
+        config.field_rules_json = payload["field_rules"]
+    if "eligibility_rules" in payload:
+        config.eligibility_rules_json = payload["eligibility_rules"]
     db.commit()
-
-    from .settings import settings
-    base_url = settings.frontend_url
-    return ShareLinkResponse(url=f"{base_url}/share/{token}", expires_at=expires)
+    db.refresh(config)
+    return {"status": "ok", "updated_at": str(config.updated_at)}
 
 
-@app.get("/share/{token}", response_model=SharePayload)
-def get_share_payload(token: str, db: DbSession) -> SharePayload:
-    """Public endpoint — no broker auth. Validates token and returns sanitised shortlist."""
-    link = db.execute(
-        select(ClientShareLink).where(ClientShareLink.token == token)
-    ).scalar_one_or_none()
-
-    if link is None:
-        raise HTTPException(status_code=404, detail="Link not found")
-
-    now = datetime.utcnow().replace(tzinfo=None)
-    # expires_at may be tz-aware from DB; strip tz for comparison
-    exp = link.expires_at.replace(tzinfo=None) if link.expires_at.tzinfo else link.expires_at
-    if now > exp:
-        raise HTTPException(status_code=410, detail="Link expired")
-
-    client = db.get(Client, link.client_id)
-    if client is None:
-        raise HTTPException(status_code=404, detail="Link not found")
-
-    # Fetch pinned recs with unit+project
-    recs = db.execute(
-        select(ClientRecommendation, Unit, Project)
-        .join(Unit, ClientRecommendation.unit_id == Unit.id)
-        .join(Project, Unit.project_id == Project.id)
-        .where(
-            ClientRecommendation.client_id == link.client_id,
-            ClientRecommendation.pinned_by_broker.is_(True),
-            ClientRecommendation.hidden_by_broker.is_(False),
-        )
-        .order_by(ClientRecommendation.id)
-    ).all()
-
-    # Get broker info for contact details
-    broker = db.get(Broker, link.broker_id)
-
-    units: list[ShareUnitItem] = []
-    for _rec, unit, project in recs:
-        developer = unit.developer or project.developer
-        # Effective GPS: unit-level first, fall back to project
-        lat = float(unit.gps_latitude) if unit.gps_latitude is not None else (
-            float(project.gps_latitude) if project.gps_latitude is not None else None
-        )
-        lng = float(unit.gps_longitude) if unit.gps_longitude is not None else (
-            float(project.gps_longitude) if project.gps_longitude is not None else None
-        )
-        ride = float(unit.ride_to_center_min) if unit.ride_to_center_min is not None else (
-            float(project.ride_to_center_min) if project.ride_to_center_min is not None else None
-        )
-        pt = float(unit.public_transport_to_center_min) if unit.public_transport_to_center_min is not None else (
-            float(project.public_transport_to_center_min) if project.public_transport_to_center_min is not None else None
-        )
-        units.append(ShareUnitItem(
-            project_name=project.name,
-            developer=developer,
-            layout=unit.layout,
-            floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
-            exterior_area_m2=float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
-            floor=unit.floor,
-            price_czk=unit.price_czk,
-            price_per_m2_czk=unit.price_per_m2_czk,
-            original_price_czk=int(unit.original_price_czk) if unit.original_price_czk is not None else None,
-            availability_status=unit.availability_status,
-            ride_to_center_min=ride,
-            public_transport_to_center_min=pt,
-            gps_latitude=lat,
-            gps_longitude=lng,
-            url=unit.url,
-            broker_note=_rec.broker_note,
-        ))
-
-    return SharePayload(
-        client_name=client.name,
-        broker_name=broker.name if broker else None,
-        broker_phone=None,  # TODO: add phone to Broker model
-        broker_email=broker.email if broker else None,
-        units=units,
-        expires_at=link.expires_at,
-    )
-
-
-class ShareFeedbackBody(BaseModel):
-    unit_index: int
-    feedback: str  # 'interested' | 'not_interested'
-
-
-@app.post("/share/{token}/feedback", status_code=204)
-def share_feedback(token: str, body: ShareFeedbackBody, db: DbSession) -> None:
-    """Public endpoint — client submits feedback on a shared unit."""
-    link = db.execute(
-        select(ClientShareLink).where(ClientShareLink.token == token)
-    ).scalar_one_or_none()
-    if link is None:
-        raise HTTPException(status_code=404, detail="Link not found")
-
-    # Find the rec by index
-    recs = db.execute(
-        select(ClientRecommendation)
-        .where(
-            ClientRecommendation.client_id == link.client_id,
-            ClientRecommendation.pinned_by_broker.is_(True),
-            ClientRecommendation.hidden_by_broker.is_(False),
-        )
-        .order_by(ClientRecommendation.id)
+@app.post("/admin/scoring-studio/preview")
+def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Dry run scoring for a selected client with draft config."""
+    client_id = payload.get("client_id")
+    draft_config = payload.get("draft_config")
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.id == client_id)
+    ).scalars().first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Client not found")
+    current_recs = db.execute(
+        select(ClientRecommendation).where(
+            ClientRecommendation.client_id == client_id
+        ).order_by(ClientRecommendation.score.desc()).limit(20)
     ).scalars().all()
-
-    if body.unit_index < 0 or body.unit_index >= len(recs):
-        raise HTTPException(status_code=422, detail="Invalid unit index")
-
-    rec = recs[body.unit_index]
-    # Store feedback in status field
-    rec.status = body.feedback  # 'interested' | 'not_interested'
-    db.add(rec)
-    db.commit()
-
+    current_top = [
+        {
+            "unit_id": r.unit_id,
+            "score": r.score,
+            "eligibility": r.reason_json.get("eligibility") if r.reason_json else None,
+        }
+        for r in current_recs
+    ]
+    return {
+        "client_id": client_id,
+        "current_top": current_top,
+        "draft_config": draft_config,
+        "note": "Full preview recompute available in next phase",
+    }

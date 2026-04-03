@@ -627,3 +627,235 @@ def compute_full_score(
         "top_compromises": compromises,
         **fits,
     }
+
+
+# ---------------------------------------------------------------------------
+# Scoring Studio — config defaults and resolution
+# ---------------------------------------------------------------------------
+
+import copy
+from typing import Optional
+
+DEFAULT_GROUPS = {
+    "finance": {"label": "Finance", "enabled": True, "weight": 1.2, "order": 1},
+    "location": {"label": "Lokalita", "enabled": True, "weight": 1.2, "order": 2},
+    "layout": {"label": "Dispozice a prostor", "enabled": True, "weight": 1.0, "order": 3},
+    "unit_quality": {"label": "Kvalita bytu", "enabled": True, "weight": 1.0, "order": 4},
+    "project_quality": {"label": "Kvalita projektu", "enabled": True, "weight": 0.9, "order": 5},
+    "comfort": {"label": "Komfort", "enabled": True, "weight": 0.8, "order": 6},
+    "commute": {"label": "Dojezd", "enabled": True, "weight": 0.7, "order": 7},
+    "risk": {"label": "Rizika", "enabled": True, "weight": 0.6, "order": 8},
+}
+
+DEFAULT_FIELD_RULES = [
+    {
+        "field_key": "budget_fit",
+        "label": "Rozpočet",
+        "entity_type": "finance",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "finance",
+        "weight": 1.0,
+        "rule_type": "numeric_target",
+        "rule_config": {"tolerance_pct": 0.5, "decay": "linear"},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Jak dobře cena odpovídá rozpočtu klienta."
+    },
+    {
+        "field_key": "location_fit",
+        "label": "Lokalita",
+        "entity_type": "location",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "location",
+        "weight": 1.0,
+        "rule_type": "numeric_thresholds",
+        "rule_config": {"inside_polygon": 100, "outside_polygon": 60, "no_polygon": 70},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Zda byt leží v preferované lokalitě klienta."
+    },
+    {
+        "field_key": "layout_fit",
+        "label": "Dispozice",
+        "entity_type": "unit",
+        "data_type": "enum",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "layout",
+        "weight": 1.0,
+        "rule_type": "enum_map",
+        "rule_config": {"match": 100, "no_match": 50},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Shoda dispozice s požadavkem klienta."
+    },
+    {
+        "field_key": "area_fit",
+        "label": "Plocha",
+        "entity_type": "unit",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "layout",
+        "weight": 0.8,
+        "rule_type": "numeric_target",
+        "rule_config": {"tolerance_pct": 0.5, "decay": "linear"},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Jak dobře plocha odpovídá požadavku."
+    },
+    {
+        "field_key": "walkability",
+        "label": "Občanská vybavenost",
+        "entity_type": "location",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "location",
+        "weight": 0.9,
+        "rule_type": "numeric_linear",
+        "rule_config": {"higher_is_better": True, "fallback": 50},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Kvalita občanské vybavenosti v okolí."
+    },
+    {
+        "field_key": "outdoor_space",
+        "label": "Venkovní prostor",
+        "entity_type": "unit",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "comfort",
+        "weight": 0.7,
+        "rule_type": "numeric_linear",
+        "rule_config": {"higher_is_better": True},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Dostupnost venkovního prostoru (terasa, balkón, zahrada)."
+    },
+    {
+        "field_key": "commute_fit",
+        "label": "Dojezd",
+        "entity_type": "location",
+        "data_type": "number",
+        "enabled": True,
+        "include_in_score": True,
+        "group_key": "commute",
+        "weight": 1.0,
+        "rule_type": "numeric_linear",
+        "rule_config": {"higher_is_better": True},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Dojezdová vzdálenost na klíčová místa."
+    },
+    {
+        "field_key": "floor_heating",
+        "label": "Podlahové vytápění",
+        "entity_type": "unit",
+        "data_type": "boolean",
+        "enabled": False,
+        "include_in_score": False,
+        "group_key": "comfort",
+        "weight": 0.5,
+        "rule_type": "boolean_bonus",
+        "rule_config": {"true_score": 8, "false_score": 0},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Podlahové vytápění zvyšuje komfort."
+    },
+    {
+        "field_key": "orientation",
+        "label": "Orientace",
+        "entity_type": "unit",
+        "data_type": "enum",
+        "enabled": False,
+        "include_in_score": False,
+        "group_key": "unit_quality",
+        "weight": 0.8,
+        "rule_type": "enum_map",
+        "rule_config": {"south": 10, "west": 6, "east": 2, "north": -6},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Orientace bytu ovlivňuje světelnost."
+    },
+    {
+        "field_key": "energy_class",
+        "label": "Energetická třída",
+        "entity_type": "unit",
+        "data_type": "enum",
+        "enabled": False,
+        "include_in_score": False,
+        "group_key": "unit_quality",
+        "weight": 0.4,
+        "rule_type": "enum_map",
+        "rule_config": {"A": 10, "B": 7, "C": 4, "D": 0, "E": -5},
+        "missing_value_policy": "neutral",
+        "explanation_template": "Energetická třída budovy."
+    }
+]
+
+DEFAULT_ELIGIBILITY_RULES = [
+    {
+        "field": "noise_distance",
+        "label": "Hluk",
+        "enabled": True,
+        "rule_type": "noise_proximity",
+        "config": {
+            "main_road_m": 150,
+            "tram_m": 100,
+            "railway_m": 300,
+            "airport_m": 5000
+        },
+        "on_fail": "review"
+    },
+    {
+        "field": "energy_class",
+        "label": "Energetická třída",
+        "enabled": True,
+        "rule_type": "max_deviation",
+        "config": {"max_classes_below": 1},
+        "on_fail": "review"
+    },
+    {
+        "field": "budget",
+        "label": "Rozpočet",
+        "enabled": True,
+        "rule_type": "budget_range",
+        "config": {"hard_max_over_pct": 1.0},
+        "on_fail": "reject"
+    }
+]
+
+
+def resolve_groups(db_config: Optional[dict]) -> dict:
+    """Merge DB groups config over defaults."""
+    result = copy.deepcopy(DEFAULT_GROUPS)
+    if db_config:
+        for key, overrides in db_config.items():
+            if key in result:
+                result[key].update(overrides)
+            else:
+                result[key] = overrides
+    return result
+
+
+def resolve_field_rules(db_config: Optional[list]) -> list:
+    """Merge DB field rules over defaults. DB can override by field_key or add new."""
+    defaults_by_key = {r["field_key"]: copy.deepcopy(r) for r in DEFAULT_FIELD_RULES}
+    if db_config:
+        for rule in db_config:
+            key = rule.get("field_key")
+            if key and key in defaults_by_key:
+                defaults_by_key[key].update(rule)
+            elif key:
+                defaults_by_key[key] = rule
+    return list(defaults_by_key.values())
+
+
+def resolve_eligibility_rules(db_config: Optional[list]) -> list:
+    """Merge DB eligibility rules over defaults."""
+    defaults_by_field = {r["field"]: copy.deepcopy(r) for r in DEFAULT_ELIGIBILITY_RULES}
+    if db_config:
+        for rule in db_config:
+            field = rule.get("field")
+            if field and field in defaults_by_field:
+                defaults_by_field[field].update(rule)
+            elif field:
+                defaults_by_field[field] = rule
+    return list(defaults_by_field.values())
