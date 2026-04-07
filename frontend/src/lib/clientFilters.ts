@@ -84,9 +84,8 @@ export function profileToFilters(profile: ClientProfileForFilters): CurrentFilte
   else if (profile.property_type === "house") filters.category = ["house"];
 
   // ── Standards marked "must" → boolean hard filters ─────────────────────────
-  // Wizard key: "external_blinds" (with 'a'), filter key: "exterior_blinds" (with 'o')
   if (standards.air_conditioning === "must") filters.air_conditioning = true;
-  if (standards.external_blinds === "must") filters.exterior_blinds = true;
+  if (standards.exterior_blinds === "must") filters.exterior_blinds = true;
 
   // ── Renovation preference → hard filter (only for "only_*" options) ────────
   const renovPref = wizard.renovation_preference as string | undefined;

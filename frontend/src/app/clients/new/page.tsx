@@ -135,7 +135,7 @@ export default function NewClientPage() {
               >
                 <option value="new">Nový</option>
                 <option value="active">Aktivní</option>
-                <option value="shortlist">Shortlist</option>
+                <option value="shortlist">Užší výběr</option>
                 <option value="closed">Uzavřený</option>
               </select>
             </div>

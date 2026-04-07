@@ -5,12 +5,23 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { formatCurrencyCzk, formatAreaM2, formatLayout, formatMinutes } from "@/lib/format";
-import { API_BASE } from "@/lib/api";
+import { API_BASE, deleteRecommendationFeedback, putRecommendationFeedback } from "@/lib/api";
+import { DISLIKE_REASON_LABELS } from "@/lib/caseTypes";
 
 const PresentMap = dynamic(
   () => import("@/app/units/[external_id]/UnitDetailMap"),
   { ssr: false }
 );
+
+type RecommendationFeedbackType = "liked" | "saved" | "disliked";
+type RecommendationDislikeReason = "price" | "location" | "layout" | "small_area" | "standard_or_project" | "noise_or_surroundings" | "accessibility" | "other";
+
+type RecommendationFeedback = {
+  feedback_type: RecommendationFeedbackType;
+  dislike_reason?: RecommendationDislikeReason | null;
+  note?: string | null;
+  updated_at: string;
+};
 
 type PinnedRec = {
   rec_id: number;
@@ -21,6 +32,7 @@ type PinnedRec = {
   floor_area_m2?: number | null;
   price_czk?: number | null;
   score: number;
+  feedback?: RecommendationFeedback | null;
 };
 
 type UnitDetail = {
@@ -83,6 +95,9 @@ export default function PresentPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [unit, setUnit] = useState<UnitDetail | null>(null);
   const [unitLoading, setUnitLoading] = useState(false);
+  const [feedbackSaving, setFeedbackSaving] = useState(false);
+  const [dislikeOpen, setDislikeOpen] = useState(false);
+  const [feedbackNote, setFeedbackNote] = useState("");
 
   type ShareStatus = "idle" | "loading" | "copied" | "fallback" | "error";
   const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
@@ -193,6 +208,37 @@ export default function PresentPage() {
 
   const selectedRec = pinnedRecs.find((r) => r.unit_external_id === selectedId);
 
+  const updateSelectedFeedback = async (feedbackType: RecommendationFeedbackType, dislikeReason?: RecommendationDislikeReason | null, note?: string | null) => {
+    if (!token || !selectedRec) return;
+    setFeedbackSaving(true);
+    try {
+      const feedback = await putRecommendationFeedback({
+        token,
+        clientId,
+        recId: selectedRec.rec_id,
+        feedbackType,
+        dislikeReason: dislikeReason ?? null,
+        note: note ?? null,
+      });
+      setPinnedRecs((prev) => prev.map((r) => (r.rec_id === selectedRec.rec_id ? { ...r, feedback } : r)));
+      setDislikeOpen(false);
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
+  const clearSelectedFeedback = async () => {
+    if (!token || !selectedRec) return;
+    setFeedbackSaving(true);
+    try {
+      await deleteRecommendationFeedback({ token, clientId, recId: selectedRec.rec_id });
+      setPinnedRecs((prev) => prev.map((r) => (r.rec_id === selectedRec.rec_id ? { ...r, feedback: null } : r)));
+      setDislikeOpen(false);
+    } finally {
+      setFeedbackSaving(false);
+    }
+  };
+
   const unitCount = pinnedRecs.length;
   const unitCountLabel =
     unitCount === 1 ? "1 jednotka" : unitCount < 5 ? `${unitCount} jednotky` : `${unitCount} jednotek`;
@@ -211,7 +257,7 @@ export default function PresentPage() {
           <span className="text-slate-300">|</span>
           <span className="text-base font-semibold text-slate-900">{clientName || "…"}</span>
           <span className="rounded-full bg-violet-100 px-2.5 py-0.5 text-[11px] font-semibold text-violet-700">
-            Schůzka
+            Prezentace
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -223,7 +269,7 @@ export default function PresentPage() {
               disabled={shareStatus === "loading" || pinnedRecs.length === 0}
               className="rounded-full bg-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-50"
             >
-              {shareStatus === "loading" ? "Generuji…" : shareStatus === "copied" ? "✓ Odkaz zkopírován" : "Sdílet výběr"}
+              {shareStatus === "loading" ? "Generuji odkaz…" : shareStatus === "copied" ? "✓ Odkaz zkopírován" : "Sdílet s klientem"}
             </button>
             {shareStatus === "error" && (
               <p className="text-[11px] text-red-500">Nepodařilo se vygenerovat odkaz.</p>
@@ -261,20 +307,27 @@ export default function PresentPage() {
             <p className="px-4 py-6 text-sm text-slate-400">Načítám…</p>
           ) : pinnedRecs.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-400">
-              Žádné jednotky ve výběru.{" "}
+              Výběr je prázdný.{" "}
               <Link href={`/clients/${clientId}`} className="underline hover:text-slate-700">
-                Přidat v doporučeních.
+                Přidejte jednotky z doporučení.
               </Link>
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
               {pinnedRecs.map((rec, recIdx) => {
                 const isSelected = rec.unit_external_id === selectedId;
+                const fb = rec.feedback?.feedback_type;
                 return (
                   <li key={rec.rec_id}>
-                    <div className={`flex items-center border-l-2 transition-colors ${
+                    <div className={`flex items-center border-l-[3px] transition-colors ${
                         isSelected
                           ? "border-violet-500 bg-violet-50"
+                          : fb === "liked"
+                          ? "border-emerald-400 hover:bg-emerald-50/50"
+                          : fb === "saved"
+                          ? "border-blue-400 hover:bg-blue-50/50"
+                          : fb === "disliked"
+                          ? "border-rose-300 hover:bg-rose-50/30"
                           : "border-transparent hover:bg-slate-50"
                       }`}>
                       <div className="flex shrink-0 flex-col px-1">
@@ -306,9 +359,14 @@ export default function PresentPage() {
                         onClick={() => rec.unit_external_id && setSelectedId(rec.unit_external_id)}
                         className="min-w-0 flex-1 px-3 py-3 text-left"
                       >
-                        <p className={`truncate text-sm font-semibold ${isSelected ? "text-violet-900" : "text-slate-800"}`}>
-                          {rec.project_name ?? "—"}
-                        </p>
+                        <div className="flex items-center gap-1.5">
+                          <p className={`truncate text-sm font-semibold ${isSelected ? "text-violet-900" : "text-slate-800"}`}>
+                            {rec.project_name ?? "—"}
+                          </p>
+                          {fb === "liked" && <span className="text-emerald-500 text-[11px]" title="Líbí se">&#9829;</span>}
+                          {fb === "saved" && <span className="text-blue-500 text-[11px]" title="Uloženo">&#9733;</span>}
+                          {fb === "disliked" && <span className="text-rose-400 text-[11px]" title="Nechci">&#10005;</span>}
+                        </div>
                         <p className="mt-0.5 truncate text-xs text-slate-500">
                           {rec.layout_label ?? "—"}
                           {rec.floor_area_m2 != null ? ` · ${rec.floor_area_m2.toFixed(0)} m²` : ""}
@@ -323,6 +381,11 @@ export default function PresentPage() {
                             </span>
                           )}
                         </div>
+                        {fb === "disliked" && rec.feedback?.dislike_reason && (
+                          <p className="mt-1 truncate text-[10px] text-rose-500">
+                            {DISLIKE_REASON_LABELS[rec.feedback.dislike_reason as keyof typeof DISLIKE_REASON_LABELS] ?? rec.feedback.note ?? "Jiný důvod"}
+                          </p>
+                        )}
                       </button>
                       <button
                         type="button"
@@ -423,6 +486,133 @@ export default function PresentPage() {
                   </div>
                 )}
               </div>
+
+              {/* Feedback actions */}
+              {selectedRec && (
+                <div className="space-y-3">
+                  {/* Current feedback state banner */}
+                  {selectedRec.feedback && (
+                    <div className={`rounded-xl px-4 py-3 ${
+                      selectedRec.feedback.feedback_type === "liked" ? "bg-emerald-50 border border-emerald-200" :
+                      selectedRec.feedback.feedback_type === "saved" ? "bg-blue-50 border border-blue-200" :
+                      "bg-rose-50 border border-rose-200"
+                    }`}>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className={`text-sm font-semibold ${
+                            selectedRec.feedback.feedback_type === "liked" ? "text-emerald-800" :
+                            selectedRec.feedback.feedback_type === "saved" ? "text-blue-800" :
+                            "text-rose-800"
+                          }`}>
+                            {selectedRec.feedback.feedback_type === "liked" ? "Klientovi se líbí" :
+                             selectedRec.feedback.feedback_type === "saved" ? "Uloženo na později" :
+                             "Klient nechce"}
+                          </p>
+                          {selectedRec.feedback.feedback_type === "disliked" && selectedRec.feedback.dislike_reason && (
+                            <p className="mt-0.5 text-xs text-rose-600">
+                              Důvod: {DISLIKE_REASON_LABELS[selectedRec.feedback.dislike_reason as keyof typeof DISLIKE_REASON_LABELS] ?? selectedRec.feedback.note ?? "Jiný důvod"}
+                            </p>
+                          )}
+                          {selectedRec.feedback.note && selectedRec.feedback.dislike_reason !== "other" && (
+                            <p className="mt-0.5 text-xs text-slate-600 italic">„{selectedRec.feedback.note}"</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={clearSelectedFeedback}
+                          disabled={feedbackSaving}
+                          className="rounded-full px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-white/60"
+                        >
+                          Změnit
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div className="flex items-center gap-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400 mr-1">Reakce klienta</p>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedFeedback("liked")}
+                      disabled={feedbackSaving}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${selectedRec.feedback?.feedback_type === "liked" ? "bg-emerald-600 text-white shadow-sm" : "border border-slate-200 bg-white text-slate-700 hover:border-emerald-300 hover:bg-emerald-50"}`}
+                    >
+                      Líbí se mi
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => updateSelectedFeedback("saved")}
+                      disabled={feedbackSaving}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${selectedRec.feedback?.feedback_type === "saved" ? "bg-blue-600 text-white shadow-sm" : "border border-slate-200 bg-white text-slate-700 hover:border-blue-300 hover:bg-blue-50"}`}
+                    >
+                      Uložit
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setDislikeOpen((v) => !v)}
+                      disabled={feedbackSaving}
+                      className={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${selectedRec.feedback?.feedback_type === "disliked" ? "bg-rose-600 text-white shadow-sm" : "border border-slate-200 bg-white text-slate-700 hover:border-rose-300 hover:bg-rose-50"}`}
+                    >
+                      Nechci
+                    </button>
+                  </div>
+
+                  {/* Dislike reasons */}
+                  {dislikeOpen && (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50/60 p-4 space-y-3">
+                      <div>
+                        <p className="text-sm font-medium text-slate-900">Co klientovi nesedí?</p>
+                        <p className="text-xs text-slate-500">Pomůže to zpřesnit další doporučení.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {([
+                          ["price", "Cena"],
+                          ["location", "Lokalita"],
+                          ["layout", "Dispozice"],
+                          ["small_area", "Malá plocha"],
+                          ["standard_or_project", "Standard / projekt"],
+                          ["noise_or_surroundings", "Hluk / okolí"],
+                          ["accessibility", "Dostupnost"],
+                        ] as const).map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() => updateSelectedFeedback("disliked", value as RecommendationDislikeReason, null)}
+                            disabled={feedbackSaving}
+                            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                              selectedRec.feedback?.dislike_reason === value
+                                ? "border-rose-400 bg-rose-100 text-rose-800"
+                                : "border-rose-200 bg-white text-slate-700 hover:border-rose-300 hover:bg-rose-50"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="flex gap-2">
+                        <input
+                          value={feedbackNote}
+                          onChange={(e) => setFeedbackNote(e.target.value)}
+                          placeholder="Jiné – upřesnění"
+                          className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            updateSelectedFeedback("disliked", "other", feedbackNote || null);
+                            setDislikeOpen(false);
+                          }}
+                          disabled={feedbackSaving}
+                          className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-800"
+                        >
+                          Uložit
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Price */}
               <div className="rounded-2xl border border-slate-200 bg-white p-5">

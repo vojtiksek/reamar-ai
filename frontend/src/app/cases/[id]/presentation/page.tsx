@@ -11,10 +11,10 @@ import type { RecommendationItem } from "@/lib/caseTypes";
 type ShortlistRole = "top_pick" | "alternative" | "fallback" | "wild_card";
 
 const ROLE_CONFIG: Record<ShortlistRole, { label: string; cls: string }> = {
-  top_pick:   { label: "Top pick",    cls: "bg-slate-900 text-white" },
+  top_pick:   { label: "Hlavní volba", cls: "bg-slate-900 text-white" },
   alternative:{ label: "Alternativa", cls: "bg-blue-100 text-blue-800" },
-  fallback:   { label: "Fallback",    cls: "bg-amber-100 text-amber-800" },
-  wild_card:  { label: "Wild card",   cls: "bg-purple-100 text-purple-800" },
+  fallback:   { label: "Záložní varianta", cls: "bg-amber-100 text-amber-800" },
+  wild_card:  { label: "Odvážnější tip", cls: "bg-purple-100 text-purple-800" },
 };
 
 function assignRole(index: number): ShortlistRole {
@@ -38,10 +38,10 @@ function eligibilityHuman(elig?: string): { text: string; cls: string } {
 }
 
 function readinessState(pinned: RecommendationItem[], notesCount: number, reviewCount: number, hasShare: boolean): { text: string; cls: string } {
-  if (pinned.length === 0) return { text: "Prázdný shortlist", cls: "text-slate-500" };
-  if (reviewCount > 0) return { text: "Needs verification", cls: "text-amber-700" };
-  if (notesCount < pinned.length || !hasShare) return { text: "Draft", cls: "text-slate-600" };
-  return { text: "Ready for meeting", cls: "text-emerald-700" };
+  if (pinned.length === 0) return { text: "Výběr je prázdný", cls: "text-slate-500" };
+  if (reviewCount > 0) return { text: "Je potřeba něco ověřit", cls: "text-amber-700" };
+  if (notesCount < pinned.length || !hasShare) return { text: "Rozpracováno", cls: "text-slate-600" };
+  return { text: "Připraveno na schůzku", cls: "text-emerald-700" };
 }
 
 function buildMeetingStrategy(pinned: RecommendationItem[], roles: Record<number, ShortlistRole>): string[] {
@@ -51,15 +51,15 @@ function buildMeetingStrategy(pinned: RecommendationItem[], roles: Record<number
   const fallbacks = pinned.filter((r) => roles[r.rec_id] === "fallback");
   const wildcards = pinned.filter((r) => roles[r.rec_id] === "wild_card");
 
-  if (topPicks.length > 0) steps.push(`Začít Top pickem — ${topPicks[0].project_name || "hlavní doporučení"}. Představit jako nejsilnější volbu.`);
-  if (alternatives.length > 0) steps.push(`Ukázat alternativu — ${alternatives[0].project_name || "další možnost"}. Bezpečná varianta pro porovnání.`);
-  if (fallbacks.length > 0) steps.push(`Zmínit fallback — ${fallbacks[0].project_name || "záložní volba"}. Jen pokud klient chce širší výběr.`);
-  if (wildcards.length > 0) steps.push(`Wild card — ${wildcards[0].project_name || "překvapení"}. Použít, pokud klient hledá něco neočekávaného.`);
+  if (topPicks.length > 0) steps.push(`Začít hlavní volbou — ${topPicks[0].project_name || "hlavní doporučení"}. Představit jako nejsilnější variantu.`);
+  if (alternatives.length > 0) steps.push(`Pak ukázat alternativu — ${alternatives[0].project_name || "další možnost"}. Bezpečná varianta pro porovnání.`);
+  if (fallbacks.length > 0) steps.push(`Záložní variantu zmínit jen pokud klient chce širší výběr — ${fallbacks[0].project_name || "záložní volba"}.`);
+  if (wildcards.length > 0) steps.push(`Odvážnější tip použít jen pokud klient hledá něco nečekaného — ${wildcards[0].project_name || "překvapení"}.`);
 
   const reviewItems = pinned.filter((r) => r.eligibility === "review");
   if (reviewItems.length > 0) steps.push(`Upozornění: ${reviewItems.length} položk${reviewItems.length === 1 ? "a" : "y"} vyžaduj${reviewItems.length === 1 ? "e" : "í"} ověření před schůzkou.`);
 
-  if (steps.length === 0) steps.push("Přiřaďte role položkám shortlistu pro doporučenou strategii.");
+  if (steps.length === 0) steps.push("Přiřaďte role položkám výběru pro doporučenou strategii.");
 
   return steps;
 }
@@ -125,18 +125,18 @@ export default function PresentationPage() {
       {/* 1. Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">Presentation prep</h2>
-          <p className="text-sm text-slate-500">Interní preview pro klientskou schůzku — zkontroluj, co bereš na stůl.</p>
+          <h2 className="text-xl font-semibold text-slate-900">Příprava prezentace</h2>
+          <p className="text-sm text-slate-500">Interní příprava na klientskou schůzku — zkontrolujte výběr, poznámky a sdílený odkaz.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>
-            {shareLoading ? "Vytvářím…" : shareUrl ? "Znovu vytvořit link" : "Vytvořit share link"}
+            {shareLoading ? "Vytvářím…" : shareUrl ? "Obnovit sdílený odkaz" : "Vytvořit sdílený odkaz"}
           </ReamarButton>
           <Link href={`/clients/${clientId}/present`} target="_blank">
-            <ReamarButton variant="primary" size="sm">Fullscreen prezentace</ReamarButton>
+            <ReamarButton variant="primary" size="sm">Otevřít klientskou prezentaci</ReamarButton>
           </Link>
           <Link href={`/clients/${clientId}/report`} target="_blank">
-            <ReamarButton variant="ghost" size="sm">PDF report</ReamarButton>
+            <ReamarButton variant="ghost" size="sm">Otevřít report</ReamarButton>
           </Link>
         </div>
       </div>
@@ -144,11 +144,11 @@ export default function PresentationPage() {
       {/* 2. Readiness panel */}
       <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
         <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Shortlist</p>
+          <p className="text-[11px] uppercase tracking-wide text-slate-500">Výběr</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">{pinned.length}</p>
         </ReamarCard>
         <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Broker notes</p>
+          <p className="text-[11px] uppercase tracking-wide text-slate-500">Poznámky makléře</p>
           <p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount} / {pinned.length}</p>
         </ReamarCard>
         <ReamarCard className="p-4">
@@ -156,7 +156,7 @@ export default function PresentationPage() {
           <p className={`mt-1 text-2xl font-semibold ${reviewCount > 0 ? "text-amber-700" : "text-emerald-700"}`}>{reviewCount}</p>
         </ReamarCard>
         <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Share link</p>
+          <p className="text-[11px] uppercase tracking-wide text-slate-500">Sdílený odkaz</p>
           <p className={`mt-1 text-sm font-medium ${shareUrl ? "text-emerald-700" : "text-slate-500"}`}>{shareUrl ? "Připravený" : "Nevytvořen"}</p>
         </ReamarCard>
         <ReamarCard className="p-4">
@@ -168,7 +168,7 @@ export default function PresentationPage() {
       {/* Share link block */}
       {shareUrl ? (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
-          <span className="text-emerald-700 font-medium">Share link:</span>
+          <span className="text-emerald-700 font-medium">Sdílený odkaz:</span>
           <code className="flex-1 truncate text-emerald-900">{shareUrl}</code>
           <button
             className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
@@ -179,7 +179,7 @@ export default function PresentationPage() {
         </div>
       ) : (
         <ReamarSubtleCard className="flex items-center justify-between px-4 py-3">
-          <p className="text-sm text-slate-600">Share link zatím nevytvořen — klient ho potřebuje pro přístup k prezentaci.</p>
+          <p className="text-sm text-slate-600">Sdílený odkaz zatím není vytvořený — klient ho potřebuje pro přístup k prezentaci.</p>
           <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>
             {shareLoading ? "Vytvářím…" : "Vytvořit"}
           </ReamarButton>
@@ -190,10 +190,10 @@ export default function PresentationPage() {
       {pinned.length === 0 ? (
         <ReamarCard className="p-8 text-center">
           <div className="mx-auto max-w-md space-y-3">
-            <h3 className="text-lg font-semibold text-slate-900">Shortlist je prázdný</h3>
-            <p className="text-sm text-slate-600">Nejdřív přidej jednotky z Recommendations do shortlistu.</p>
+            <h3 className="text-lg font-semibold text-slate-900">Výběr je prázdný</h3>
+            <p className="text-sm text-slate-600">Nejdřív přidejte jednotky do výběru z doporučení.</p>
             <Link href={`/cases/${clientId}/recommendations`}>
-              <ReamarButton variant="primary">Přejít na Recommendations</ReamarButton>
+              <ReamarButton variant="primary">Přejít na doporučení</ReamarButton>
             </Link>
           </div>
         </ReamarCard>

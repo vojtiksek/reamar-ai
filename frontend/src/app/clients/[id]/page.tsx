@@ -248,9 +248,9 @@ export default function ClientDetailPage() {
       max_days_on_market?: number | null;
     };
     standards?: {
-      rekuperace?: Priority;
+      recuperation?: Priority;
       floor_heating?: Priority;
-      external_blinds?: Priority;
+      exterior_blinds?: Priority;
       air_conditioning?: Priority;
       cellar?: Priority;
       parking?: Priority;
@@ -284,7 +284,7 @@ export default function ClientDetailPage() {
       bike_room?: Priority;
       stroller_room?: Priority;
       fitness?: Priority;
-      shared_garden?: Priority;
+      courtyard_garden?: Priority;
       concierge?: Priority;
     };
     character?: {
@@ -704,9 +704,9 @@ export default function ClientDetailPage() {
   const preferSummary: string[] = [];
 
   const standardLabels: Record<string, string> = {
-    rekuperace: "Rekuperace",
+    recuperation: "Rekuperace",
     floor_heating: "Podlahové vytápění",
-    external_blinds: "Předokenní žaluzie",
+    exterior_blinds: "Předokenní žaluzie",
     air_conditioning: "Klimatizace",
     cellar: "Sklep",
     parking: "Parkování",
@@ -807,7 +807,7 @@ export default function ClientDetailPage() {
     bike_room: "Kolárna",
     stroller_room: "Kočárkárna",
     fitness: "Fitness v projektu",
-    shared_garden: "Společná zahrada / vnitroblok",
+    courtyard_garden: "Společná zahrada / vnitroblok",
     concierge: "Recepce / concierge",
   };
 
@@ -2136,9 +2136,9 @@ export default function ClientDetailPage() {
                     <div className="space-y-4">
                       <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
                         {[
-                          { key: "rekuperace",     label: "Rekuperace",           desc: "Řízené větrání s rekuperací tepla – komfort vzduchu bez průvanu." },
+                          { key: "recuperation",   label: "Rekuperace",           desc: "Řízené větrání s rekuperací tepla – komfort vzduchu bez průvanu." },
                           { key: "floor_heating",  label: "Podlahové vytápění",   desc: "Rovnoměrné teplo od podlahy, příjemné zejména v zimě." },
-                          { key: "external_blinds",label: "Předokenní žaluzie",   desc: "Efektivní stínění a ochrana soukromí bez závislosti na klimatizaci." },
+                          { key: "exterior_blinds",label: "Předokenní žaluzie",   desc: "Efektivní stínění a ochrana soukromí bez závislosti na klimatizaci." },
                           { key: "air_conditioning",label: "Klimatizace",         desc: "Možnost chlazení v létě – klíčové pro orientaci na jih nebo západ." },
                         ].map(({ key, label, desc }) => (
                           <div key={key} className="px-4 py-3">
@@ -2303,7 +2303,7 @@ export default function ClientDetailPage() {
                             ["bike_room", "Kolárna"],
                             ["stroller_room", "Kočárkárna"],
                             ["fitness", "Fitness v projektu"],
-                            ["shared_garden", "Společná zahrada / vnitroblok"],
+                            ["courtyard_garden", "Společná zahrada / vnitroblok"],
                             ["concierge", "Recepce / concierge"],
                           ].map(([key, label]) => (
                             <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">

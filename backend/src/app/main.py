@@ -36,6 +36,7 @@ from .models import (
     Client,
     ClientProfile,
     ClientRecommendation,
+    ClientRecommendationFeedback,
     ClientUnitMatch,
     ClientShareLink,
     ClientNote,
@@ -75,7 +76,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
-from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_groups, resolve_field_rules, resolve_eligibility_rules
+from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -95,6 +96,7 @@ app.add_middleware(
         "http://localhost:3002",
         "http://127.0.0.1:3002",
         "http://192.168.0.96:3002",
+        "http://192.168.1.204:3001",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -289,6 +291,7 @@ class ClientSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     recommendations_count: int = 0
+    notes: str | None = None
 
 
 class ClientCreateBody(BaseModel):
@@ -356,6 +359,27 @@ class ClientRecommendationItem(BaseModel):
     distance_to_bus_stop_m: float | None = None
     reason: dict[str, Any] | None = None
     broker_note: str | None = None
+    feedback: "RecommendationFeedbackOut | None" = None
+
+
+ALLOWED_FEEDBACK_TYPES = {"liked", "saved", "disliked"}
+ALLOWED_DISLIKE_REASONS = {
+    "price", "location", "layout", "small_area",
+    "standard_or_project", "noise_or_surroundings", "accessibility", "other",
+}
+
+
+class RecommendationFeedbackOut(BaseModel):
+    feedback_type: str
+    dislike_reason: str | None = None
+    note: str | None = None
+    updated_at: datetime
+
+
+class RecommendationFeedbackIn(BaseModel):
+    feedback_type: str
+    dislike_reason: str | None = None
+    note: str | None = None
 
 
 class BrokerMatchItem(BaseModel):
@@ -625,6 +649,7 @@ def list_clients(
                 created_at=client.created_at,
                 updated_at=client.updated_at,
                 recommendations_count=int(rec_count or 0),
+                notes=client.notes,
             )
         )
     return out
@@ -783,6 +808,7 @@ def create_client(
         created_at=client.created_at,
         updated_at=client.updated_at,
         recommendations_count=0,
+        notes=client.notes,
     )
 
 
@@ -813,6 +839,7 @@ def get_client(
         created_at=client.created_at,
         updated_at=client.updated_at,
         recommendations_count=int(rec_count or 0),
+        notes=client.notes,
     )
 
 
@@ -850,6 +877,7 @@ def update_client(
         created_at=client.created_at,
         updated_at=client.updated_at,
         recommendations_count=int(rec_count or 0),
+        notes=client.notes,
     )
 
 
@@ -938,6 +966,52 @@ def delete_client_note(
         raise HTTPException(status_code=404, detail="Note not found")
     db.delete(note)
     db.commit()
+
+
+# ── Share links ──────────────────────────────────────────────────────
+
+
+class ShareLinkResponse(BaseModel):
+    url: str
+    expires_at: datetime
+
+
+@app.post("/clients/{client_id}/share-link", response_model=ShareLinkResponse)
+def create_or_refresh_share_link(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ShareLinkResponse:
+    import secrets
+    from .settings import settings
+
+    _get_client_for_broker(db, client_id, broker)
+    expires_at = datetime.utcnow() + timedelta(days=30)
+
+    link = db.execute(
+        select(ClientShareLink).where(
+            ClientShareLink.client_id == client_id,
+            ClientShareLink.broker_id == broker.id,
+        )
+    ).scalars().first()
+
+    if link:
+        link.token = secrets.token_urlsafe(32)
+        link.expires_at = expires_at
+    else:
+        link = ClientShareLink(
+            client_id=client_id,
+            broker_id=broker.id,
+            token=secrets.token_urlsafe(32),
+            expires_at=expires_at,
+        )
+        db.add(link)
+
+    db.commit()
+    db.refresh(link)
+
+    base = settings.frontend_url.rstrip("/")
+    return ShareLinkResponse(url=f"{base}/share/{link.token}", expires_at=link.expires_at)
 
 
 @app.get("/clients/{client_id}/profile", response_model=ClientProfileBody | None)
@@ -1223,20 +1297,20 @@ def _compute_unit_match_score(
     if profile and profile.filter_json:
         wizard = (profile.filter_json or {}).get("wizard") or {}
 
-        # Standards: rekuperace, air_conditioning, floor_heating, external_blinds
+        # Standards: recuperation, air_conditioning, floor_heating, exterior_blinds
         standards = wizard.get("standards") or {}
-        if standards.get("rekuperace") == "must" and getattr(project, "recuperation", None) != "true":
-            return 0.0, {"hard_filter": "rekuperace"}
+        if standards.get("recuperation") == "must" and getattr(project, "recuperation", None) != "true":
+            return 0.0, {"hard_filter": "recuperation"}
         if standards.get("air_conditioning") == "must" and not getattr(unit, "air_conditioning", None):
             return 0.0, {"hard_filter": "air_conditioning"}
         if standards.get("floor_heating") == "must":
             h = getattr(unit, "heating", None) or getattr(project, "heating", None) or ""
             if "podlah" not in str(h).lower():
                 return 0.0, {"hard_filter": "floor_heating"}
-        if standards.get("external_blinds") == "must":
+        if standards.get("exterior_blinds") == "must":
             eb = getattr(unit, "exterior_blinds", None)
             if eb is None or str(eb).lower() in ("false", "0", ""):
-                return 0.0, {"hard_filter": "external_blinds"}
+                return 0.0, {"hard_filter": "exterior_blinds"}
 
         # Building amenities: parking, cellar, bike_room, stroller_room, fitness, courtyard_garden, reception
         amenities = wizard.get("house_amenities") or {}
@@ -1624,6 +1698,9 @@ def recompute_client_recommendations(
     client_w = profile.scoring_weights_json if profile else None
     weights = resolve_weights(global_w, client_w)
 
+    # Resolve flat scoring weights from wizard + broker overrides
+    flat_w = resolve_flat_weights(profile)
+
     # Resolve recommendation visibility thresholds
     thresholds = resolve_thresholds(global_cfg.thresholds_json if global_cfg else None)
     hide_below = float(thresholds["hide_below_score"])
@@ -1639,7 +1716,12 @@ def recompute_client_recommendations(
             unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
             if unit_bucket not in pref_layout_buckets:
                 continue
-        result = compute_full_score(unit, project, profile, weights=weights, db=db)
+        scoring_config = {
+                "groups": global_cfg.groups_json if global_cfg else None,
+                "field_rules": global_cfg.field_rules_json if global_cfg else None,
+                "eligibility_rules": global_cfg.eligibility_rules_json if global_cfg else None,
+            }
+        result = compute_full_score(unit, project, profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w)
         score = result["score"]
         if score <= 0:
             continue
@@ -1743,7 +1825,19 @@ def market_fit_analysis(
         .join(Project, Unit.project_id == Project.id)
         .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
     )
-    rows = db.execute(q.limit(1000)).all()
+    rows_all = db.execute(q.limit(5000)).all()
+
+    # Pre-filter by polygon when available so "Na trhu" reflects the client's area
+    poly_prefilter = _parse_polygon_geojson(profile.polygon_geojson) if profile else None
+    if poly_prefilter:
+        rows = [
+            (u, p) for u, p in rows_all
+            if p.gps_latitude is not None and p.gps_longitude is not None
+            and _point_in_polygon(float(p.gps_latitude), float(p.gps_longitude), poly_prefilter)
+        ]
+    else:
+        rows = rows_all
+
     available_units_count = len(rows)
 
     if not profile or available_units_count == 0:
@@ -2225,6 +2319,8 @@ def list_client_recommendations(
             select(ClientRecommendation, Unit, Project)
             .join(Unit, ClientRecommendation.unit_id == Unit.id)
             .join(Project, ClientRecommendation.project_id == Project.id)
+            .outerjoin(ClientRecommendationFeedback)
+            .options(selectinload(ClientRecommendation.feedback))
             .where(
                 ClientRecommendation.client_id == client.id,
                 ClientRecommendation.hidden_by_broker.is_(False),
@@ -2273,6 +2369,12 @@ def list_client_recommendations(
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
                 reason=reason,
                 broker_note=rec.broker_note,
+                feedback=RecommendationFeedbackOut(
+                    feedback_type=rec.feedback.feedback_type,
+                    dislike_reason=rec.feedback.dislike_reason,
+                    note=rec.feedback.note,
+                    updated_at=rec.feedback.updated_at,
+                ) if rec.feedback else None,
             )
         )
     return items
@@ -2451,6 +2553,75 @@ def delete_recommendation(
         raise HTTPException(status_code=404, detail="Recommendation not found")
     db.delete(rec)
     db.commit()
+
+
+@app.put(
+    "/clients/{client_id}/recommendations/{rec_id}/feedback",
+    response_model=RecommendationFeedbackOut,
+)
+def upsert_recommendation_feedback(
+    client_id: int,
+    rec_id: int,
+    body: RecommendationFeedbackIn,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> RecommendationFeedbackOut:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if body.feedback_type not in ALLOWED_FEEDBACK_TYPES:
+        raise HTTPException(status_code=422, detail=f"feedback_type must be one of {sorted(ALLOWED_FEEDBACK_TYPES)}")
+    if body.feedback_type == "disliked" and body.dislike_reason and body.dislike_reason not in ALLOWED_DISLIKE_REASONS:
+        raise HTTPException(status_code=422, detail=f"dislike_reason must be one of {sorted(ALLOWED_DISLIKE_REASONS)}")
+    if body.feedback_type != "disliked":
+        body.dislike_reason = None
+    fb = db.execute(
+        select(ClientRecommendationFeedback).where(
+            ClientRecommendationFeedback.recommendation_id == rec_id
+        )
+    ).scalar_one_or_none()
+    if fb:
+        fb.feedback_type = body.feedback_type
+        fb.dislike_reason = body.dislike_reason
+        fb.note = body.note
+    else:
+        fb = ClientRecommendationFeedback(
+            recommendation_id=rec_id,
+            feedback_type=body.feedback_type,
+            dislike_reason=body.dislike_reason,
+            note=body.note,
+        )
+    db.add(fb)
+    db.commit()
+    db.refresh(fb)
+    return RecommendationFeedbackOut(
+        feedback_type=fb.feedback_type,
+        dislike_reason=fb.dislike_reason,
+        note=fb.note,
+        updated_at=fb.updated_at,
+    )
+
+
+@app.delete("/clients/{client_id}/recommendations/{rec_id}/feedback", status_code=204)
+def delete_recommendation_feedback(
+    client_id: int,
+    rec_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    fb = db.execute(
+        select(ClientRecommendationFeedback).where(
+            ClientRecommendationFeedback.recommendation_id == rec_id
+        )
+    ).scalar_one_or_none()
+    if fb:
+        db.delete(fb)
+        db.commit()
 
 
 @app.get("/brokers/match-feed", response_model=dict[int, list[BrokerMatchItem]])
@@ -5035,6 +5206,7 @@ def _has_unit_filters(
     category,
     overall_quality,
     partition_walls,
+    recuperation,
     city,
     cadastral_area_iga,
     municipal_district_iga,
@@ -5118,6 +5290,8 @@ def _has_unit_filters(
     if overall_quality and len(overall_quality) > 0:
         return True
     if partition_walls and len(partition_walls) > 0:
+        return True
+    if recuperation and len(recuperation) > 0:
         return True
     if city and len(city) > 0:
         return True
@@ -6048,6 +6222,105 @@ def delete_client_scoring_weights(
     ).scalars().first()
     if profile and profile.scoring_weights_json is not None:
         profile.scoring_weights_json = None
+        db.commit()
+    return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Flat scoring weights — wizard-derived + broker overrides
+# ---------------------------------------------------------------------------
+
+@app.get("/clients/{client_id}/flat-weights")
+def get_client_flat_weights(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Return effective flat weights for a client.
+
+    Shows wizard-derived weights, broker overrides, and final effective weights.
+    """
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+
+    wizard = {}
+    if profile and profile.filter_json:
+        wizard = (profile.filter_json or {}).get("wizard") or {}
+
+    wizard_weights = derive_flat_weights_from_wizard(wizard)
+    broker_overrides = profile.broker_weight_overrides_json if profile else None
+    effective = merge_broker_weight_overrides(wizard_weights, broker_overrides)
+    skip_categories = (wizard.get("skip_categories") or {}) if wizard else {}
+
+    return {
+        "wizard_weights": wizard_weights,
+        "broker_overrides": broker_overrides,
+        "effective_weights": effective,
+        "skip_categories": skip_categories,
+        "defaults": FLAT_WEIGHT_DEFAULTS,
+        "labels": FLAT_WEIGHT_LABELS,
+        "categories": FLAT_WEIGHT_CATEGORIES,
+    }
+
+
+@app.put("/clients/{client_id}/flat-weights/broker-overrides")
+def set_client_broker_weight_overrides(
+    client_id: int,
+    body: dict[str, Any],
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Set broker's manual weight overrides for a client.
+
+    Body: {"price_distance": 20, "walkability": 5, ...}
+    Only include keys you want to override.
+    """
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        profile = ClientProfile(client_id=client.id)
+        db.add(profile)
+
+    # Validate: only accept known flat weight keys, numeric values
+    clean: dict[str, float] = {}
+    for k, v in body.items():
+        if k in FLAT_WEIGHT_DEFAULTS and v is not None:
+            clean[k] = float(v)
+
+    profile.broker_weight_overrides_json = clean if clean else None
+    db.commit()
+    db.refresh(profile)
+
+    # Return effective weights
+    wizard = {}
+    if profile.filter_json:
+        wizard = (profile.filter_json or {}).get("wizard") or {}
+    wizard_weights = derive_flat_weights_from_wizard(wizard)
+    effective = merge_broker_weight_overrides(wizard_weights, profile.broker_weight_overrides_json)
+
+    return {
+        "broker_overrides": profile.broker_weight_overrides_json,
+        "effective_weights": effective,
+    }
+
+
+@app.delete("/clients/{client_id}/flat-weights/broker-overrides")
+def delete_client_broker_weight_overrides(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Remove broker's weight overrides, reverting to wizard-derived weights."""
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if profile and profile.broker_weight_overrides_json is not None:
+        profile.broker_weight_overrides_json = None
         db.commit()
     return {"status": "ok"}
 

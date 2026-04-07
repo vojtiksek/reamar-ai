@@ -31,18 +31,19 @@ const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
 /* ─── Constants ─── */
 
-const TOTAL_WIZARD_STEPS = 9;
+const TOTAL_WIZARD_STEPS = 10;
 
 const STEP_LABELS: Record<number, string> = {
   1: "Klient",
-  2: "Kdy",
-  3: "Rozpočet",
-  4: "Financování",
-  5: "Lokalita",
-  6: "Standardy",
-  7: "Lifestyle",
-  8: "Trade-offs",
-  9: "Shrnutí",
+  2: "Cena a financování",
+  3: "Lokalita",
+  4: "Okolí projektu",
+  5: "Standardy",
+  6: "Vybavení projektu",
+  7: "Dispozice a prostor",
+  8: "Dokončení",
+  9: "Novostavba vs rekonstrukce",
+  10: "Shrnutí",
 };
 
 const CLIENT_TYPE_CARDS = [
@@ -52,21 +53,6 @@ const CLIENT_TYPE_CARDS = [
   { key: "downsizing", label: "Downsizing", icon: "🏡", desc: "Zmenšení, stěhování do menšího" },
 ] as const;
 
-const PURCHASE_TIMELINE_OPTIONS = [
-  { key: "now", label: "Hned" },
-  { key: "3m", label: "Do 3 měsíců" },
-  { key: "6m", label: "Do 6 měsíců" },
-  { key: "1y", label: "Do 1 roku" },
-  { key: "2y+", label: "2 roky+" },
-  { key: "mapping", label: "Jen mapují" },
-] as const;
-
-const MOVE_IN_TIMELINE_OPTIONS = [
-  { key: "asap", label: "Co nejdřív" },
-  { key: "by_date", label: "Do konkrétního data" },
-  { key: "flexible", label: "Flexibilní" },
-] as const;
-
 const FINANCING_TYPE_OPTIONS = [
   { key: "cash", label: "Hotovost", desc: "Platba celé částky z vlastních zdrojů" },
   { key: "mortgage", label: "Hypotéka", desc: "Financování hypotečním úvěrem" },
@@ -74,45 +60,71 @@ const FINANCING_TYPE_OPTIONS = [
   { key: "unknown", label: "Neví", desc: "Klient ještě nemá jasno" },
 ] as const;
 
-const ASSIGNMENT_OPTIONS = [
-  { key: "yes", label: "Ano, řeší" },
-  { key: "no", label: "Ne" },
-  { key: "irrelevant", label: "Neřeší" },
+const NOISE_SOURCES = [
+  { key: "main_road", label: "Hlavní silnice" },
+  { key: "tram", label: "Tramvaj" },
+  { key: "railway", label: "Železnice" },
+  { key: "airport", label: "Letiště" },
 ] as const;
 
-type StandardChipDef = {
-  key: string;
-  label: string;
-  section: "standards" | "outdoor";
-};
+const HEATING_OPTIONS = [
+  { value: "floor_heating", label: "Podlahové vytápění" },
+  { value: "radiators", label: "Radiátory" },
+  { value: "ceiling", label: "Stropní" },
+] as const;
 
-const STANDARD_CHIPS: StandardChipDef[] = [
-  { key: "parking", label: "Parkování", section: "standards" },
-  { key: "outdoor_space", label: "Venkovní prostor", section: "outdoor" },
-  { key: "rekuperace", label: "Rekuperace", section: "standards" },
-  { key: "floor_heating", label: "Podlahové topení", section: "standards" },
-  { key: "air_conditioning", label: "Klimatizace", section: "standards" },
-  { key: "external_blinds", label: "Žaluzie", section: "standards" },
-  { key: "cellar", label: "Sklep", section: "standards" },
-  { key: "smart_home", label: "Smart home", section: "standards" },
-  { key: "high_standard", label: "Vyšší kvalita standardu", section: "standards" },
-  { key: "elevator", label: "Výtah", section: "standards" },
-];
+const HEATING_SOURCE_OPTIONS = [
+  { value: "Plynový kotel",    label: "Plynový kotel" },
+  { value: "Tepelné čerpadlo", label: "Tepelné čerpadlo" },
+  { value: "Teplovod",         label: "Teplovod" },
+] as const;
 
-const ADVANCED_STANDARD_FIELDS = [
-  { key: "window_type", label: "Typ oken", placeholder: "Např. trojsklo, dřevěná…" },
-  { key: "heating_type", label: "Typ topení", placeholder: "Např. podlahové, radiátory…" },
-  { key: "partitions", label: "Příčky", placeholder: "Např. zděné, sádrokarton…" },
-  { key: "materials", label: "Materiály", placeholder: "Např. dřevo, vinyl…" },
-];
+const AC_OPTIONS = [
+  { value: "preparation_ac", label: "Příprava pro AC" },
+  { value: "complete_ac", label: "Kompletní AC" },
+  { value: "cooling_ceilings", label: "Chladicí stropy" },
+  { value: "partially_ac", label: "Částečná AC" },
+  { value: "cooling_floor", label: "Chladicí podlaha" },
+] as const;
 
-const TRADE_OFF_ITEMS = [
-  { key: "location", label: "Lokalita" },
-  { key: "price", label: "Cena" },
-  { key: "size", label: "Velikost" },
-  { key: "standard", label: "Standard" },
-  { key: "outdoor", label: "Venkovní prostor" },
-];
+const FLOORING_OPTIONS = [
+  { value: "hardwood", label: "Dřevo (masiv)" },
+  { value: "laminate", label: "Laminát" },
+  { value: "vinyl", label: "Vinyl" },
+  { value: "tile", label: "Dlažba" },
+] as const;
+
+const CEILING_HEIGHT_OPTIONS = [
+  { value: "normal", label: "Normální (2.6–2.7 m)" },
+  { value: "higher", label: "Vyšší (2.8+ m)" },
+  { value: "loft", label: "Loft" },
+] as const;
+
+const WINDOW_OPTIONS = [
+  { value: "pvc", label: "PVC" },
+  { value: "aluminium", label: "Hliníková" },
+  { value: "wooden", label: "Dřevěná" },
+] as const;
+
+const PROJECT_AMENITY_ITEMS = [
+  { key: "reception", label: "Recepce" },
+  { key: "fitness", label: "Fitness" },
+  { key: "ev_charger", label: "Elektro nabíječka" },
+  { key: "courtyard_garden", label: "Vnitroblok" },
+] as const;
+
+const FLOOR_RULE_OPTIONS = [
+  { value: "ignore", label: "Je mi to jedno" },
+  { value: "no_ground", label: "Nechci přízemí" },
+  { value: "top_3", label: "Chci poslední 3 patra" },
+  { value: "top_1", label: "Chci poslední patro" },
+] as const;
+
+const COMPLETION_STANDARD_OPTIONS = [
+  { value: "shell_and_core", label: "Shell & Core" },
+  { value: "white_wall", label: "White Wall (bílé stěny)" },
+  { value: "fit_out", label: "Fit Out (kompletní)" },
+] as const;
 
 /* ─── Local step indicator ─── */
 
@@ -197,6 +209,33 @@ function IntensityPicker({ value, onChange }: { value: string; onChange: (v: str
   );
 }
 
+/* ─── Tri-state picker for project amenities ─── */
+
+function AmenityPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const options = [
+    { v: "prefer", label: "Preferuji", active: "border-emerald-400 bg-emerald-50 text-emerald-800" },
+    { v: "reject", label: "Nechci", active: "border-rose-400 bg-rose-50 text-rose-800" },
+    { v: "ignore", label: "Neřeším", active: "border-slate-400 bg-slate-100 text-slate-800" },
+  ];
+  return (
+    <div className="flex gap-1">
+      {options.map(({ v, label, active }) => (
+        <button
+          key={v}
+          type="button"
+          onClick={() => onChange(v)}
+          className={cn(
+            "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+            value === v ? active : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 /* ─── Main page ─── */
 
 export default function BriefPage() {
@@ -212,6 +251,7 @@ export default function BriefPage() {
     profileSaving,
     recomputing,
     profileSavedMessage,
+    autoSaveStatus,
     walkPrefsOpen, setWalkPrefsOpen,
     walkPrefs, setWalkPrefs,
     wizardExtras, setWizardExtras,
@@ -234,7 +274,6 @@ export default function BriefPage() {
 
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [showAdvancedStandards, setShowAdvancedStandards] = useState(false);
 
   /* ── Guards ── */
 
@@ -261,59 +300,16 @@ export default function BriefPage() {
   if (error) return <p className="text-sm text-rose-600">{error}</p>;
   if (!client) return <p className="text-sm text-slate-600">Klient nenalezen.</p>;
 
-  /* ── Standard chip helpers ── */
-
-  const getStdValue = (item: StandardChipDef): string => {
-    if (item.section === "outdoor") return (wizardExtras.outdoor as any)?.[item.key] ?? "ignore";
-    return (wizardExtras.standards as any)?.[item.key] ?? "ignore";
-  };
-
-  const setStdValue = (item: StandardChipDef, value: string) => {
-    if (item.section === "outdoor") {
-      setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), [item.key]: value as Priority } }));
-    } else {
-      setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), [item.key]: value as Priority } }));
-    }
-  };
-
-  const isStdSelected = (item: StandardChipDef) => {
-    const v = getStdValue(item);
-    return v !== "ignore" && v !== undefined;
-  };
-
-  const toggleStdChip = (item: StandardChipDef) => {
-    if (isStdSelected(item)) {
-      setStdValue(item, "ignore");
-    } else {
-      setStdValue(item, "prefer");
-    }
-  };
-
-  const selectedStandards = STANDARD_CHIPS.filter(isStdSelected);
-
-  /* ── Trade-off ranking helpers ── */
-
-  const ranking = wizardExtras.trade_off_ranking ?? [];
-
-  const toggleRanking = (key: string) => {
-    setWizardExtras((prev) => {
-      const current = prev.trade_off_ranking ?? [];
-      if (current.includes(key)) {
-        return { ...prev, trade_off_ranking: current.filter((k) => k !== key) };
-      }
-      return { ...prev, trade_off_ranking: [...current, key] };
-    });
-  };
-
   /* ── Summary builders ── */
 
   const mustHaveSummary: string[] = [];
   const preferSummary: string[] = [];
 
   const standardLabels: Record<string, string> = {
-    rekuperace: "Rekuperace", floor_heating: "Podlahové vytápění", external_blinds: "Předokenní žaluzie",
+    recuperation: "Rekuperace", floor_heating: "Podlahové vytápění", exterior_blinds: "Předokenní žaluzie",
     air_conditioning: "Klimatizace", cellar: "Sklep", parking: "Parkování",
     smart_home: "Smart home", high_standard: "Vyšší standard", elevator: "Výtah",
+    heating_source: "Zdroj vytápění",
   };
 
   if (wizardExtras.standards) {
@@ -332,24 +328,15 @@ export default function BriefPage() {
       if (value === "must") mustHaveSummary.push(label);
       else if (value === "prefer") preferSummary.push(label);
     });
-    if (wizardExtras.outdoor.preferred_floor && wizardExtras.outdoor.preferred_floor !== "ignore") {
-      const floorMap: Record<string, string> = { ground: "Přízemí", low: "Nižší patra", middle: "Střední patra", high: "Vyšší patra" };
-      const label = floorMap[wizardExtras.outdoor.preferred_floor];
+    const floorRule = wizardExtras.outdoor.floor_rule;
+    if (floorRule && floorRule !== "ignore") {
+      const floorRuleMap: Record<string, string> = { no_ground: "Nechci přízemí", top_3: "Poslední 3 patra", top_1: "Poslední patro" };
+      const label = floorRuleMap[floorRule];
       if (label) preferSummary.push(`Patro: ${label}`);
-    }
-    if (wizardExtras.outdoor.ground_floor_sensitive === "must") mustHaveSummary.push("Vyhnout se přízemí");
-    else if (wizardExtras.outdoor.ground_floor_sensitive === "prefer") preferSummary.push("Spíše ne přízemí");
-    if (wizardExtras.outdoor.orientation) {
-      const oLabels: Record<string, string> = { south: "Jih", west: "Západ", east: "Východ", north: "Sever" };
-      Object.entries(oLabels).forEach(([key, label]) => {
-        const value = (wizardExtras.outdoor!.orientation as any)[key] as Priority | undefined;
-        if (value === "must") mustHaveSummary.push(`Orientace ${label}`);
-        else if (value === "prefer") preferSummary.push(`Orientace ${label}`);
-      });
     }
   }
 
-  const noiseLabels: Record<string, string> = { quiet_area: "Klidná lokalita", main_road: "Hlavní silnice", tram: "Tramvaj", railway: "Železnice", airport: "Letiště" };
+  const noiseLabels: Record<string, string> = { main_road: "Hlavní silnice", tram: "Tramvaj", railway: "Železnice", airport: "Letiště" };
   if (wizardExtras.noise) {
     Object.entries(noiseLabels).forEach(([key, label]) => {
       const value = (wizardExtras.noise as any)[key] as Priority | undefined;
@@ -358,10 +345,13 @@ export default function BriefPage() {
     });
   }
 
-  if (wizardExtras.character) {
-    const { calm_vs_city, privacy_vs_services } = wizardExtras.character;
-    if (calm_vs_city && calm_vs_city !== "ignore") preferSummary.push(calm_vs_city === "calm" ? "Spíše klid" : "Spíše město");
-    if (privacy_vs_services && privacy_vs_services !== "ignore") preferSummary.push(privacy_vs_services === "privacy" ? "Více soukromí" : "Více služeb");
+  if (wizardExtras.project_amenities) {
+    const amenityLabels: Record<string, string> = { reception: "Recepce", fitness: "Fitness", ev_charger: "Elektro nabíječka", courtyard_garden: "Vnitroblok" };
+    Object.entries(wizardExtras.project_amenities).forEach(([key, value]) => {
+      const label = amenityLabels[key] ?? key;
+      if (value === "prefer") preferSummary.push(label);
+      else if (value === "reject") preferSummary.push(`${label}: nechci`);
+    });
   }
 
   /* ── Summary rail component ── */
@@ -376,6 +366,7 @@ export default function BriefPage() {
           <p className="font-semibold text-slate-700">Rozpočet</p>
           {wizardExtras.budget?.ideal_price != null && <p className="text-slate-600">Ideál: {formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>}
           {profile?.budget_max != null && <p className="text-slate-600">Max: {formatCurrencyCzk(profile.budget_max)}</p>}
+          {wizardExtras.budget?.max_price_tolerance_pct != null && <p className="text-slate-600">Tolerance: +{wizardExtras.budget.max_price_tolerance_pct}%</p>}
         </div>
       )}
 
@@ -385,6 +376,7 @@ export default function BriefPage() {
           <p className="font-semibold text-slate-700">Plocha</p>
           {wizardExtras.budget?.ideal_area != null && <p className="text-slate-600">Ideál: {formatAreaM2(wizardExtras.budget.ideal_area)}</p>}
           {profile?.area_min != null && <p className="text-slate-600">Min: {formatAreaM2(profile.area_min)}</p>}
+          {wizardExtras.budget?.max_area_tolerance_pct != null && <p className="text-slate-600">Tolerance: -{wizardExtras.budget.max_area_tolerance_pct}%</p>}
         </div>
       )}
 
@@ -437,19 +429,6 @@ export default function BriefPage() {
         </div>
       )}
 
-      {/* Trade-offs */}
-      {ranking.length > 0 && (
-        <div>
-          <p className="font-semibold text-slate-700">Trade-offs (obětujeme dřív)</p>
-          <ol className="list-decimal pl-4 text-slate-600">
-            {ranking.map((key) => {
-              const item = TRADE_OFF_ITEMS.find((t) => t.key === key);
-              return <li key={key}>{item?.label ?? key}</li>;
-            })}
-          </ol>
-        </div>
-      )}
-
       {/* Market */}
       {areaMarket && (
         <div>
@@ -462,6 +441,7 @@ export default function BriefPage() {
 
   /* ── Step content renderers ── */
 
+  /* Step 1: Klient */
   const renderStep1 = () => (
     <div className="space-y-6">
       <div>
@@ -511,53 +491,8 @@ export default function BriefPage() {
     </div>
   );
 
+  /* Step 2: Cena a financování (merged from old steps 3 + 4) */
   const renderStep2 = () => (
-    <div className="space-y-6">
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Kdy chtějí kupovat</p>
-        <div className="flex flex-wrap gap-2">
-          {PURCHASE_TIMELINE_OPTIONS.map(({ key, label }) => {
-            const active = wizardExtras.purchase_timeline === key;
-            return (
-              <button key={key} type="button"
-                onClick={() => setWizardExtras((prev) => ({ ...prev, purchase_timeline: active ? null : key }))}
-                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-                  active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Kdy chtějí bydlet</p>
-        <div className="flex flex-wrap gap-2">
-          {MOVE_IN_TIMELINE_OPTIONS.map(({ key, label }) => {
-            const active = wizardExtras.move_in_timeline === key;
-            return (
-              <button key={key} type="button"
-                onClick={() => setWizardExtras((prev) => ({ ...prev, move_in_timeline: active ? null : key }))}
-                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-                  active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div>
-        <label className={reamarLabelClass}>Datum dokončení / nastěhování do</label>
-        <input type="date" value={wizardExtras.completion_date ?? ""}
-          onChange={(e) => setWizardExtras((prev) => ({ ...prev, completion_date: e.target.value || null }))}
-          className={cn("mt-1", reamarInputClass)} />
-        <p className="mt-1 text-[11px] text-slate-500">Do kdy se chce klient nastěhovat.</p>
-      </div>
-    </div>
-  );
-
-  const renderStep3 = () => (
     <div className="space-y-6">
       <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Rozpočet</p>
       <div className="grid grid-cols-2 gap-3">
@@ -577,84 +512,14 @@ export default function BriefPage() {
         </div>
       </div>
 
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Plocha</p>
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className={reamarLabelClass}>Ideální (m²)</label>
-          <input type="number" value={wizardExtras.budget?.ideal_area ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Např. 75" />
-        </div>
-        <div>
-          <label className={reamarLabelClass}>Minimální (m²)</label>
-          <input type="number" value={profile?.area_min ?? ""}
-            onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), area_min: e.target.value ? Number(e.target.value) : null }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Absolutní minimum" />
-        </div>
-        <div>
-          <label className={reamarLabelClass}>Maximální (m²)</label>
-          <input type="number" value={profile?.area_max ?? ""}
-            onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), area_max: e.target.value ? Number(e.target.value) : null }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Horní limit" />
-        </div>
+      <div className="max-w-xs">
+        <label className={reamarLabelClass}>Max. překročení ceny (%)</label>
+        <input type="number" min={0} max={50} value={wizardExtras.budget?.max_price_tolerance_pct ?? ""}
+          onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_price_tolerance_pct: e.target.value ? Number(e.target.value) : null } }))}
+          className={cn("mt-1", reamarInputClass)} placeholder="Např. 10" />
+        <p className="mt-1 text-[11px] text-slate-500">Jednotky nad max. cenou se vyřadí, ale do tolerance se ještě ukáží s nižším skóre.</p>
       </div>
 
-      <div>
-        <label className={reamarLabelClass}>Dispozice (více možností)</label>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {LAYOUT_OPTIONS.map((opt) => {
-            const checked = selectedLayouts.includes(opt.value);
-            return (
-              <button key={opt.value} type="button"
-                onClick={() => setSelectedLayouts((prev) => checked ? prev.filter((v) => v !== opt.value) : Array.from(new Set([...prev, opt.value])))}
-                className={cn("rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                  checked ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-                {opt.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={reamarLabelClass}>Typ nemovitosti</label>
-          <select value={profile?.property_type ?? "any"}
-            onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), property_type: e.target.value }))}
-            className={cn("mt-1", reamarSelectClass)}>
-            <option value="any">Neřeším</option>
-            <option value="apartment">Byt</option>
-            <option value="house">Dům</option>
-          </select>
-        </div>
-        <div>
-          <label className={reamarLabelClass}>Novostavba vs. rekonstrukce</label>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {([
-              { value: "any", label: "Neřeším" },
-              { value: "prefer_new", label: "Spíše novostavba" },
-              { value: "only_new", label: "Jen novostavba" },
-              { value: "prefer_renovation", label: "Spíše rekonstrukce" },
-              { value: "only_renovation", label: "Jen rekonstrukce" },
-            ] as const).map(({ value, label }) => {
-              const active = (wizardExtras.renovation_preference ?? "any") === value;
-              return (
-                <button key={value} type="button"
-                  onClick={() => setWizardExtras((prev) => ({ ...prev, renovation_preference: value }))}
-                  className={cn("rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                    active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-                  {label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderStep4 = () => (
-    <div className="space-y-6">
       <div>
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Typ financování</p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -692,27 +557,13 @@ export default function BriefPage() {
         </div>
       </div>
 
-      <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-        <div className="flex items-center justify-between gap-3 px-4 py-3">
-          <div>
-            <p className="text-sm text-slate-700">Preferovaný doplatek až při dokončení</p>
-            <p className="text-[11px] text-slate-500">Klient chce zaplatit co největší část až po předání bytu.</p>
-          </div>
-          <button type="button"
-            onClick={() => setWizardExtras((prev) => ({ ...prev, prefer_payment_on_completion: !prev.prefer_payment_on_completion }))}
-            className={cn(
-              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-              wizardExtras.prefer_payment_on_completion ? "border-indigo-400 bg-indigo-50 text-indigo-800" : "border-slate-200 bg-white text-slate-600"
-            )}>
-            {wizardExtras.prefer_payment_on_completion ? "Ano" : "Ne"}
-          </button>
-        </div>
-      </div>
-
       <div>
         <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Možnost postoupení smlouvy</p>
         <div className="flex flex-wrap gap-2">
-          {ASSIGNMENT_OPTIONS.map(({ key, label }) => {
+          {([
+            { key: "yes", label: "Ano, řeší" },
+            { key: "irrelevant", label: "Neřeší" },
+          ] as const).map(({ key, label }) => {
             const active = wizardExtras.assignment_important === key;
             return (
               <button key={key} type="button"
@@ -724,12 +575,12 @@ export default function BriefPage() {
             );
           })}
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">Řeší klient možnost cese / postoupení smlouvy před kolaudací?</p>
       </div>
     </div>
   );
 
-  const renderStep5 = () => (
+  /* Step 3: Lokalita (same as old step 5) */
+  const renderStep3 = () => (
     <div className="space-y-6">
       {/* Location method selection */}
       <div className="grid gap-4 md:grid-cols-3">
@@ -907,254 +758,481 @@ export default function BriefPage() {
         <ReamarSubtleCard className="space-y-2 border-dashed p-3">
           <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Dojíždění do práce / školy</h5>
           <p className="text-xs text-slate-600">
-            V sekci Lifestyle (krok 7) máte detailní sekci pro walkability a občanskou vybavenost.
-            Dojíždění je potvrzeno jako relevantní vstup.
+            Dojezdové vzdálenosti na klíčová místa fungují jako hard filter s odchylkou 20 %.
+            Čím blíže k bodům, tím vyšší skóre.
           </p>
         </ReamarSubtleCard>
       )}
     </div>
   );
 
-  const renderStep6 = () => (
+  /* Step 4: Dispozice a prostor (NEW) */
+  const renderStep4 = () => (
     <div className="space-y-6">
-      {/* Block A — Chips selection */}
+      {/* Layout selection */}
       <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Co klient řeší?</p>
-        <p className="mb-3 text-xs text-slate-600">Označte položky, které jsou pro klienta relevantní.</p>
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dispozice</p>
         <div className="flex flex-wrap gap-2">
-          {STANDARD_CHIPS.map((item) => {
-            const selected = isStdSelected(item);
+          {LAYOUT_OPTIONS.map((opt) => {
+            const checked = selectedLayouts.includes(opt.value);
             return (
-              <button key={item.key} type="button" onClick={() => toggleStdChip(item)}
-                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-                  selected ? "border-indigo-400 bg-indigo-50 text-indigo-800" : "border-slate-200 bg-white text-slate-600 hover:border-slate-300")}>
-                {selected && <span className="mr-1.5">✓</span>}
-                {item.label}
+              <button key={opt.value} type="button"
+                onClick={() => setSelectedLayouts((prev) => checked ? prev.filter((v) => v !== opt.value) : Array.from(new Set([...prev, opt.value])))}
+                className={cn("rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                  checked ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+                {opt.label}
               </button>
             );
           })}
         </div>
       </div>
 
-      {/* Block B — Intensity for selected items */}
-      {selectedStandards.length > 0 && (
-        <div>
-          <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Jak moc?</p>
-          <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-            {selectedStandards.map((item) => (
-              <div key={item.key} className="flex items-center justify-between gap-3 px-4 py-3">
-                <span className="text-sm text-slate-700">{item.label}</span>
-                <IntensityPicker value={getStdValue(item)} onChange={(v) => setStdValue(item, v)} />
+      {/* Unit area */}
+      <div>
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Velikost bytu</p>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className={reamarLabelClass}>Ideální (m²)</label>
+            <input type="number" value={wizardExtras.budget?.ideal_area ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 75" />
+          </div>
+          <div>
+            <label className={reamarLabelClass}>Minimální (m²)</label>
+            <input type="number" value={profile?.area_min ?? ""}
+              onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), area_min: e.target.value ? Number(e.target.value) : null }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Absolutní minimum" />
+          </div>
+          <div>
+            <label className={reamarLabelClass}>Max. odchylka (%)</label>
+            <input type="number" min={0} max={50} value={wizardExtras.budget?.max_area_tolerance_pct ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_area_tolerance_pct: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 10" />
+            <p className="mt-1 text-[11px] text-slate-500">Jednotky menší než minimum - odchylka se vyřadí. Čím větší byt, tím vyšší skóre.</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Outdoor space */}
+      <div>
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Venkovní prostor</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={reamarLabelClass}>Minimální venkovní prostor (m²)</label>
+            <input type="number" value={wizardExtras.budget?.min_outdoor_area_m2 ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), min_outdoor_area_m2: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 5" />
+          </div>
+          <div>
+            <label className={reamarLabelClass}>Max. odchylka (%)</label>
+            <input type="number" min={0} max={50} value={wizardExtras.budget?.max_outdoor_tolerance_pct ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_outdoor_tolerance_pct: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 20" />
+            <p className="mt-1 text-[11px] text-slate-500">Čím větší venkovní prostor, tím vyšší skóre (max do 50 m²).</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Property type */}
+      <div>
+        <label className={reamarLabelClass}>Typ nemovitosti</label>
+        <select value={profile?.property_type ?? "any"}
+          onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), property_type: e.target.value }))}
+          className={cn("mt-1", reamarSelectClass)}>
+          <option value="any">Neřeším</option>
+          <option value="apartment">Byt</option>
+          <option value="house">Dům</option>
+        </select>
+      </div>
+
+      {/* Floor preference */}
+      <div>
+        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Preferované patro</p>
+        <div className="flex flex-wrap gap-2">
+          {FLOOR_RULE_OPTIONS.map(({ value, label }) => {
+            const active = (wizardExtras.outdoor?.floor_rule ?? "ignore") === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), floor_rule: value } }))}
+                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+                  active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">Při nesplnění podmínek se skóre bytu výrazně snižuje.</p>
+      </div>
+    </div>
+  );
+
+  /* Step 5: Okolí projektu (restructured — gate noise, gate walkability, no character/orientation) */
+  const renderStep5 = () => (
+    <div className="space-y-6">
+      {/* Gate 1: Noise */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 text-sm font-medium text-slate-800">Řešíte rušnost (klid) v lokalitě projektu?</p>
+        <div className="flex gap-2">
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, surroundings: false } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              !(wizardExtras.skip_categories?.surroundings) ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ano
+          </button>
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, surroundings: true } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              wizardExtras.skip_categories?.surroundings ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ne, přeskočit
+          </button>
+        </div>
+        {wizardExtras.skip_categories?.surroundings && (
+          <p className="mt-2 text-xs text-slate-400">Váhy hluku a walkability budou 0 — přerozděli se do ostatních aspektů.</p>
+        )}
+      </div>
+
+      {!wizardExtras.skip_categories?.surroundings && (
+        <>
+          {/* Noise sensitivity */}
+          <div className="space-y-3">
+            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Hlučnost lokality</p>
+            <p className="text-xs text-slate-600">
+              Neřeším = žádné skóre. Citlivý/á = snížení skóre. Vyloučit = projekty do 200 m od zdroje se vyřadí.
+            </p>
+            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+              {NOISE_SOURCES.map(({ key, label }) => (
+                <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
+                  <span className="text-sm text-slate-700">{label}</span>
+                  <PrefToggle hard value={(wizardExtras.noise as any)?.[key] ?? "ignore"}
+                    onChange={(v) => setWizardExtras((prev) => ({ ...prev, noise: { ...(prev.noise ?? {}), [key]: v as Priority } }))}
+                    preferLabel="Citlivý/á" mustLabel="Vyloučit" />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Walkability preferences */}
+          <div className="space-y-4 rounded-lg bg-slate-50 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí</h5>
+              <div className="flex gap-1">
+                {[
+                  { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+                  { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
+                  { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+                ].map(({ label, prefs }) => (
+                  <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
+                    className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
+                    {label}
+                  </button>
+                ))}
               </div>
-            ))}
+            </div>
+            <WalkabilityPreferencesGroup title="Služby a příroda"
+              items={[{ key: "supermarket", label: "Supermarket" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
+              prefs={walkPrefs} onChange={setWalkPrefs} />
+            <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
+              items={[{ key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
+              prefs={walkPrefs} onChange={setWalkPrefs} />
+            <WalkabilityPreferencesGroup title="Doprava"
+              items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
+              prefs={walkPrefs} onChange={setWalkPrefs} />
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  /* Step 6: Standardy (specific pickers per document) */
+  const renderStep6 = () => (
+    <div className="space-y-6">
+      {/* Gate question */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 text-sm font-medium text-slate-800">Zajímají klienta standardy a chce si nastavit preference?</p>
+        <div className="flex gap-2">
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, standards: false } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              !(wizardExtras.skip_categories?.standards) ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ano, chci nastavit
+          </button>
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, standards: true } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              wizardExtras.skip_categories?.standards ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ne, přeskočit
+          </button>
+        </div>
+        {wizardExtras.skip_categories?.standards && (
+          <p className="mt-2 text-xs text-slate-400">Váhy standardů budou 0 — přerozděli se do ostatních aspektů.</p>
+        )}
+      </div>
+
+      {!wizardExtras.skip_categories?.standards && (
+        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+          {/* Heating type */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Vytápění</p>
+              <select value={(wizardExtras.standards as any)?.heating_type ?? ""}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), heating_type: e.target.value || null } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="">Vyberte typ…</option>
+                {HEATING_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            {(wizardExtras.standards as any)?.heating_type && (
+              <IntensityPicker value={(wizardExtras.standards as any)?.floor_heating ?? "prefer"}
+                onChange={(v) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), floor_heating: v as Priority } }))} />
+            )}
+          </div>
+
+          {/* Heating source */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Zdroj vytápění</p>
+              <select value={(wizardExtras.standards as any)?.heating_source ?? ""}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), heating_source: e.target.value || null } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="">Vyberte zdroj…</option>
+                {HEATING_SOURCE_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Rekuperace */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <p className="text-sm text-slate-700">Rekuperace</p>
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                {(["yes", "no"] as const).map((v) => (
+                  <button key={v} type="button"
+                    onClick={() => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), recuperation: v === "yes" ? "prefer" : "ignore" } }))}
+                    className={cn("rounded-full border px-3 py-1 text-[11px] font-medium transition-colors",
+                      ((wizardExtras.standards as any)?.recuperation === "prefer" && v === "yes") || ((wizardExtras.standards as any)?.recuperation !== "prefer" && v === "no")
+                        ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600")}>
+                    {v === "yes" ? "Ano" : "Ne"}
+                  </button>
+                ))}
+              </div>
+              {(wizardExtras.standards as any)?.recuperation === "prefer" && (
+                <IntensityPicker value={(wizardExtras.standards as any)?.recuperation ?? "prefer"}
+                  onChange={(v) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), recuperation: v as Priority } }))} />
+              )}
+            </div>
+          </div>
+
+          {/* Žaluzie */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div>
+              <p className="text-sm text-slate-700">Žaluzie</p>
+              <p className="text-[11px] text-slate-500">Příprava se počítá jako ANO</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                {(["yes", "no"] as const).map((v) => (
+                  <button key={v} type="button"
+                    onClick={() => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), exterior_blinds: v === "yes" ? "prefer" : "ignore" } }))}
+                    className={cn("rounded-full border px-3 py-1 text-[11px] font-medium transition-colors",
+                      ((wizardExtras.standards as any)?.exterior_blinds === "prefer" || (wizardExtras.standards as any)?.exterior_blinds === "must") && v === "yes"
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : (wizardExtras.standards as any)?.exterior_blinds !== "prefer" && (wizardExtras.standards as any)?.exterior_blinds !== "must" && v === "no"
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-200 bg-white text-slate-600")}>
+                    {v === "yes" ? "Ano" : "Ne"}
+                  </button>
+                ))}
+              </div>
+              {((wizardExtras.standards as any)?.exterior_blinds === "prefer" || (wizardExtras.standards as any)?.exterior_blinds === "must") && (
+                <IntensityPicker value={(wizardExtras.standards as any)?.exterior_blinds ?? "prefer"}
+                  onChange={(v) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), exterior_blinds: v as Priority } }))} />
+              )}
+            </div>
+          </div>
+
+          {/* Klimatizace */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Klimatizace</p>
+              <select value={(wizardExtras.standards as any)?.air_conditioning ?? "ignore"}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), air_conditioning: e.target.value === "ignore" ? "ignore" : "prefer" } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="ignore">Neřeším</option>
+                {AC_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+            {(wizardExtras.standards as any)?.air_conditioning !== "ignore" && (wizardExtras.standards as any)?.air_conditioning != null && (
+              <IntensityPicker value={(wizardExtras.standards as any)?.air_conditioning ?? "prefer"}
+                onChange={(v) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), air_conditioning: v as Priority } }))} />
+            )}
+          </div>
+
+          {/* Podlaha */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Podlaha</p>
+              <select value={(wizardExtras.standards as any)?.partitions ?? ""}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), partitions: e.target.value || null } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="">Neřeším</option>
+                {FLOORING_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Výška stropu */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Výška stropu</p>
+              <select value={(wizardExtras.standards as any)?.window_type ?? ""}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), window_type: e.target.value || null } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="">Neřeším</option>
+                {CEILING_HEIGHT_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          {/* Okna */}
+          <div className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0">
+              <p className="text-sm text-slate-700">Okna</p>
+              <select value={(wizardExtras.standards as any)?.window_material ?? ""}
+                onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), window_material: e.target.value || null } }))}
+                className={cn("mt-1 text-xs", reamarSelectClass)}>
+                <option value="">Neřeším</option>
+                {WINDOW_OPTIONS.map(({ value, label }) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Block C — Advanced standards (collapsed) */}
-      <div>
-        <button type="button" onClick={() => setShowAdvancedStandards((v) => !v)}
-          className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-left hover:bg-slate-100">
-          <span className="text-xs font-semibold text-slate-700">Pokročilé standardy</span>
-          <span className="text-xs text-slate-400">{showAdvancedStandards ? "▲ Skrýt" : "▼ Zobrazit"}</span>
-        </button>
-        {showAdvancedStandards && (
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {ADVANCED_STANDARD_FIELDS.map(({ key, label, placeholder }) => (
-              <div key={key}>
-                <label className={reamarLabelClass}>{label}</label>
-                <input type="text" value={(wizardExtras.standards as any)?.[key] ?? ""}
-                  onChange={(e) => setWizardExtras((prev) => ({ ...prev, standards: { ...(prev.standards ?? {}), [key]: e.target.value || null } }))}
-                  className={cn("mt-1", reamarInputClass)} placeholder={placeholder} />
-              </div>
-            ))}
-            <div className="sm:col-span-2">
-              <label className={reamarLabelClass}>Minimální energetická třída</label>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {([
-                  { value: "ignore", label: "Neřeším" },
-                  { value: "A", label: "A" },
-                  { value: "B", label: "B" },
-                  { value: "C", label: "C" },
-                  { value: "D", label: "D" },
-                ] as const).map(({ value, label }) => {
-                  const active = (wizardExtras.energy_class ?? "ignore") === value;
-                  return (
-                    <button key={value} type="button"
-                      onClick={() => setWizardExtras((prev) => ({ ...prev, energy_class: value === "ignore" ? null : value }))}
-                      className={cn("rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                        active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
     </div>
   );
 
+  /* Step 7: Vybavení projektu (NEW) */
   const renderStep7 = () => (
     <div className="space-y-6">
-      {/* Noise sensitivity */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Hlučnost lokality</p>
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-          {(Object.entries(noiseLabels) as [string, string][]).map(([key, label]) => (
-            <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <span className="text-sm text-slate-700">{label}</span>
-              <PrefToggle hard value={(wizardExtras.noise as any)?.[key] ?? "ignore"}
-                onChange={(v) => setWizardExtras((prev) => ({ ...prev, noise: { ...(prev.noise ?? {}), [key]: v as Priority } }))}
-                preferLabel="Citlivý/á" mustLabel="Vyloučit" />
-            </div>
-          ))}
+      {/* Gate question */}
+      <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <p className="mb-3 text-sm font-medium text-slate-800">Zajímá klienta něco z vybavení projektu?</p>
+        <div className="flex gap-2">
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, amenities: false } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              !(wizardExtras.skip_categories?.amenities) ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ano
+          </button>
+          <button type="button"
+            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, amenities: true } }))}
+            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+              wizardExtras.skip_categories?.amenities ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
+            Ne, přeskočit
+          </button>
         </div>
-      </div>
-
-      {/* Walkability preferences */}
-      <div className="space-y-4 rounded-lg bg-slate-50 p-3">
-        <div className="flex items-center justify-between gap-2">
-          <h5 className="text-xs font-semibold text-slate-900">Walkability – dostupnost v okolí</h5>
-          <div className="flex gap-1">
-            {[
-              { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-              { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
-              { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-            ].map(({ label, prefs }) => (
-              <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
-                className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
-                {label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <WalkabilityPreferencesGroup title="Služby a příroda"
-          items={[{ key: "supermarket", label: "Supermarket" }, { key: "pharmacy", label: "Lékárna" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
-          prefs={walkPrefs} onChange={setWalkPrefs} />
-        <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
-          items={[{ key: "playground", label: "Hřiště" }, { key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
-          prefs={walkPrefs} onChange={setWalkPrefs} />
-        <WalkabilityPreferencesGroup title="Doprava"
-          items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
-          prefs={walkPrefs} onChange={setWalkPrefs} />
-      </div>
-
-      {/* Character */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Charakter lokality</p>
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <span className="text-sm text-slate-700">Klid vs. městský život</span>
-            <select value={wizardExtras.character?.calm_vs_city ?? "ignore"}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, character: { ...(prev.character ?? {}), calm_vs_city: e.target.value as any } }))}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
-              <option value="ignore">Neřeším</option>
-              <option value="calm">Spíše klid</option>
-              <option value="city">Spíše městský život</option>
-            </select>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <span className="text-sm text-slate-700">Soukromí vs. služby v okolí</span>
-            <select value={wizardExtras.character?.privacy_vs_services ?? "ignore"}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, character: { ...(prev.character ?? {}), privacy_vs_services: e.target.value as any } }))}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
-              <option value="ignore">Neřeším</option>
-              <option value="privacy">Více soukromí</option>
-              <option value="services">Více služeb v okolí</option>
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Orientation & floor */}
-      <div className="space-y-3">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Orientace bytu a patro</p>
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-          {[["south", "Orientace na jih"], ["west", "Orientace na západ"], ["east", "Orientace na východ"], ["north", "Orientace na sever"]].map(([key, label]) => (
-            <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
-              <span className="text-sm text-slate-700">{label}</span>
-              <PrefToggle value={(wizardExtras.outdoor?.orientation as any)?.[key] ?? "ignore"}
-                onChange={(v) => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), orientation: { ...(prev.outdoor?.orientation ?? {}), [key]: v as Priority } } }))} />
-            </div>
-          ))}
-        </div>
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <span className="text-sm text-slate-700">Preferované patro</span>
-            <select value={wizardExtras.outdoor?.preferred_floor ?? "ignore"}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), preferred_floor: e.target.value as any } }))}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700">
-              <option value="ignore">Neřeším</option>
-              <option value="ground">Přízemí</option>
-              <option value="low">Nižší patra (1–3)</option>
-              <option value="middle">Střední patra (4–7)</option>
-              <option value="high">Vyšší patra (8+)</option>
-            </select>
-          </div>
-          <div className="flex items-center justify-between gap-3 px-4 py-2.5">
-            <span className="text-sm text-slate-700">Vadí přízemí</span>
-            <PrefToggle value={wizardExtras.outdoor?.ground_floor_sensitive ?? "ignore"}
-              onChange={(v) => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), ground_floor_sensitive: v as Priority } }))}
-              preferLabel="Spíše vadí" mustLabel="Musí se vyhnout" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderStep8 = () => (
-    <div className="space-y-6">
-      <div>
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Co obětujeme dřív?</p>
-        <p className="mb-4 text-xs text-slate-600">
-          Klikněte na položky v pořadí podle toho, co je klient ochotný obětovat jako první.
-          {ranking.length > 0 && " Klikněte znovu pro odebrání z pořadí."}
-        </p>
-        <div className="flex flex-wrap gap-3">
-          {TRADE_OFF_ITEMS.map(({ key, label }) => {
-            const idx = ranking.indexOf(key);
-            const isRanked = idx >= 0;
-            return (
-              <button key={key} type="button" onClick={() => toggleRanking(key)}
-                className={cn(
-                  "relative rounded-2xl border px-5 py-3 text-sm font-medium transition-colors",
-                  isRanked ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
-                )}>
-                {isRanked && (
-                  <span className="absolute -left-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-500 text-[10px] font-bold text-white">
-                    {idx + 1}
-                  </span>
-                )}
-                {label}
-              </button>
-            );
-          })}
-        </div>
-        {ranking.length > 0 && (
-          <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3">
-            <p className="text-xs font-semibold text-slate-700">Pořadí obětování:</p>
-            <ol className="mt-1 list-decimal pl-4 text-xs text-slate-600">
-              {ranking.map((key) => {
-                const item = TRADE_OFF_ITEMS.find((t) => t.key === key);
-                return <li key={key}>{item?.label ?? key}</li>;
-              })}
-            </ol>
-          </div>
+        {wizardExtras.skip_categories?.amenities && (
+          <p className="mt-2 text-xs text-slate-400">Váhy vybavení projektu budou 0 — přerozděli se do ostatních aspektů.</p>
         )}
       </div>
 
-      <div>
-        <label className={reamarLabelClass}>Poznámky k trade-offs</label>
-        <textarea value={wizardExtras.trade_off_notes ?? ""}
-          onChange={(e) => setWizardExtras((prev) => ({ ...prev, trade_off_notes: e.target.value || null }))}
-          className={cn("mt-1 min-h-[80px]", reamarInputClass)}
-          placeholder="Volný text — cokoliv důležitého k prioritám a kompromisům klienta…" />
-      </div>
+      {!wizardExtras.skip_categories?.amenities && (
+        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+          {PROJECT_AMENITY_ITEMS.map(({ key, label }) => (
+            <div key={key} className="flex items-center justify-between gap-3 px-4 py-3">
+              <span className="text-sm text-slate-700">{label}</span>
+              <AmenityPicker
+                value={(wizardExtras.project_amenities as any)?.[key] ?? "ignore"}
+                onChange={(v) => setWizardExtras((prev) => ({
+                  ...prev,
+                  project_amenities: { ...(prev.project_amenities ?? {}), [key]: v },
+                }))}
+              />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
+  /* Step 8: Dokončení (NEW) */
+  const renderStep8 = () => (
+    <div className="space-y-6">
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Termín nastěhování</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={reamarLabelClass}>Nejdřívější nastěhování</label>
+          <input type="date" value={wizardExtras.earliest_move_in ?? ""}
+            onChange={(e) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: e.target.value || null }))}
+            className={cn("mt-1", reamarInputClass)} />
+          <p className="mt-1 text-[11px] text-slate-500">Kdy nejdříve by se klient stěhoval.</p>
+        </div>
+        <div>
+          <label className={reamarLabelClass}>Nejzazší datum nastěhování</label>
+          <input type="date" value={wizardExtras.latest_move_in ?? ""}
+            onChange={(e) => setWizardExtras((prev) => ({ ...prev, latest_move_in: e.target.value || null }))}
+            className={cn("mt-1", reamarInputClass)} />
+          <p className="mt-1 text-[11px] text-slate-500">Automatická tolerance ± 3 měsíce. Funguje jako hard filter.</p>
+        </div>
+      </div>
+
+    </div>
+  );
+
+  /* Step 9: Novostavba vs rekonstrukce (NEW separate step) */
+  const renderStepNovo = () => (
+    <div className="space-y-6">
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Novostavba vs. rekonstrukce</p>
+      <div className="flex flex-wrap gap-2">
+        {([
+          { value: "any", label: "Neřeším" },
+          { value: "prefer_new", label: "Spíše novostavba" },
+          { value: "only_new", label: "Jen novostavba" },
+          { value: "prefer_renovation", label: "Spíše rekonstrukce" },
+          { value: "only_renovation", label: "Jen rekonstrukce" },
+        ] as const).map(({ value, label }) => {
+          const active = (wizardExtras.renovation_preference ?? "any") === value;
+          return (
+            <button key={value} type="button"
+              onClick={() => setWizardExtras((prev) => ({ ...prev, renovation_preference: value }))}
+              className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+                active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Standard dokončení</p>
+      <div className="flex flex-wrap gap-2">
+        {COMPLETION_STANDARD_OPTIONS.map(({ value, label }) => {
+          const active = (wizardExtras as any).completion_standard === value;
+          return (
+            <button key={value} type="button"
+              onClick={() => setWizardExtras((prev) => ({ ...prev, completion_standard: value }))}
+              className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+                active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <p className="text-[11px] text-slate-500">Shell &amp; Core = holé stěny, White Wall = bílé stěny bez podlah, Fit Out = kompletní dokončení.</p>
+    </div>
+  );
+
+  /* Step 10: Shrnutí */
   const renderStep9 = () => (
     <div className="space-y-5">
       {/* Stat cards */}
@@ -1163,6 +1241,9 @@ export default function BriefPage() {
           <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Max. cena</p>
             <p className="mt-1 text-base font-bold text-slate-900">{formatCurrencyCzk(profile.budget_max)}</p>
+            {wizardExtras.budget?.max_price_tolerance_pct != null && (
+              <p className="text-[10px] text-slate-500">tolerance +{wizardExtras.budget.max_price_tolerance_pct}%</p>
+            )}
           </div>
         )}
         {(profile?.area_min != null || profile?.area_max != null) && (
@@ -1171,6 +1252,9 @@ export default function BriefPage() {
             <p className="mt-1 text-base font-bold text-slate-900">
               {profile?.area_min != null ? `${profile.area_min}` : "—"}&thinsp;–&thinsp;{profile?.area_max != null ? `${profile.area_max} m²` : "bez max."}
             </p>
+            {wizardExtras.budget?.max_area_tolerance_pct != null && (
+              <p className="text-[10px] text-slate-500">tolerance -{wizardExtras.budget.max_area_tolerance_pct}%</p>
+            )}
           </div>
         )}
         {selectedLayouts.length > 0 && (
@@ -1186,6 +1270,19 @@ export default function BriefPage() {
           </div>
         )}
       </div>
+
+      {/* Skipped categories */}
+      {(wizardExtras.skip_categories?.standards || wizardExtras.skip_categories?.amenities || wizardExtras.skip_categories?.surroundings) && (
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Přeskočené kategorie</p>
+          <div className="flex flex-wrap gap-2">
+            {wizardExtras.skip_categories?.standards && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Standardy</span>}
+            {wizardExtras.skip_categories?.amenities && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Vybavení projektu</span>}
+            {wizardExtras.skip_categories?.surroundings && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Okolí projektu</span>}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-500">Váhy těchto kategorií jsou 0 a přerozděly se do ostatních aspektů.</p>
+        </div>
+      )}
 
       {/* Must-haves */}
       <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
@@ -1219,19 +1316,17 @@ export default function BriefPage() {
         )}
       </div>
 
-      {/* Trade-offs */}
-      {ranking.length > 0 && (
-        <div className="rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-amber-700">Trade-offs</p>
-          <ol className="list-decimal pl-4 text-xs text-amber-900">
-            {ranking.map((key) => {
-              const item = TRADE_OFF_ITEMS.find((t) => t.key === key);
-              return <li key={key}>{item?.label ?? key}</li>;
-            })}
-          </ol>
-          {wizardExtras.trade_off_notes && (
-            <p className="mt-2 text-xs text-amber-800 italic">{wizardExtras.trade_off_notes}</p>
-          )}
+      {/* Dokončení */}
+      {(wizardExtras.earliest_move_in || wizardExtras.latest_move_in || (wizardExtras.renovation_preference && wizardExtras.renovation_preference !== "any")) && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dokončení</p>
+          <div className="space-y-1 text-xs text-slate-700">
+            {wizardExtras.earliest_move_in && <p>Nejdříve: {wizardExtras.earliest_move_in}</p>}
+            {wizardExtras.latest_move_in && <p>Nejpozději: {wizardExtras.latest_move_in}</p>}
+            {wizardExtras.renovation_preference && wizardExtras.renovation_preference !== "any" && (
+              <p>{({ prefer_new: "Spíše novostavba", only_new: "Jen novostavba", prefer_renovation: "Spíše rekonstrukce", only_renovation: "Jen rekonstrukce" } as Record<string, string>)[wizardExtras.renovation_preference]}</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -1264,14 +1359,8 @@ export default function BriefPage() {
       )}
 
       {/* CTA */}
-      <div className="flex items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <div>
-          <p className="text-xs font-semibold text-slate-900">Potvrdit brief a vygenerovat doporučení</p>
-          <p className="mt-0.5 text-[11px] text-slate-500">Uloží profil a přepočítá doporučení na základě aktuálního briefu.</p>
-        </div>
-        <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
-          {recomputing ? "Přepočítávám…" : "Potvrdit brief →"}
-        </ReamarButton>
+      <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-700">
+        Klikněte na <strong>Přepočítat doporučení →</strong> níže pro vygenerování výsledků dle aktuálního zadání.
       </div>
     </div>
   );
@@ -1279,15 +1368,16 @@ export default function BriefPage() {
   /* ── Step map ── */
 
   const stepRenderers: Record<number, () => React.JSX.Element> = {
-    1: renderStep1,
-    2: renderStep2,
-    3: renderStep3,
-    4: renderStep4,
-    5: renderStep5,
-    6: renderStep6,
-    7: renderStep7,
-    8: renderStep8,
-    9: renderStep9,
+    1: renderStep1,          // Klient
+    2: renderStep2,          // Cena a financování
+    3: renderStep3,          // Lokalita
+    4: renderStep5,          // Okolí projektu
+    5: renderStep6,          // Standardy
+    6: renderStep7,          // Vybavení projektu
+    7: renderStep4,          // Dispozice a prostor
+    8: renderStep8,          // Dokončení
+    9: renderStepNovo,       // Novostavba vs rekonstrukce
+    10: renderStep9,         // Shrnutí
   };
 
   /* ── Render ── */
@@ -1355,14 +1445,27 @@ export default function BriefPage() {
               onClick={() => setWizardStep((s) => Math.max(1, s - 1))} disabled={wizardStep === 1}>
               Zpět
             </ReamarButton>
-            <div className="flex gap-2">
-              <ReamarButton type="button" variant="primary" size="sm" onClick={handleSaveProfile} disabled={profileSaving}>
-                {profileSaving ? "Ukládám…" : "Uložit profil"}
-              </ReamarButton>
-              {wizardStep < TOTAL_WIZARD_STEPS && (
+            <div className="flex items-center gap-3">
+              {/* Auto-save indicator */}
+              <span className={cn(
+                "text-[11px] transition-opacity duration-300",
+                autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
+                autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
+                autoSaveStatus === "error" ? "text-rose-500 opacity-100" :
+                "opacity-0"
+              )}>
+                {autoSaveStatus === "saving" && "Ukládám…"}
+                {autoSaveStatus === "saved" && "✓ Uloženo"}
+                {autoSaveStatus === "error" && "Chyba ukládání"}
+              </span>
+              {wizardStep < TOTAL_WIZARD_STEPS ? (
                 <ReamarButton type="button" variant="secondary" size="sm"
                   onClick={() => handleNextStep(wizardStep, TOTAL_WIZARD_STEPS, setWizardStep)}>
-                  Další
+                  Další →
+                </ReamarButton>
+              ) : (
+                <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
+                  {recomputing ? "Přepočítávám…" : "Přepočítat doporučení →"}
                 </ReamarButton>
               )}
             </div>
@@ -1451,10 +1554,10 @@ export default function BriefPage() {
                 <span className="text-[11px] text-slate-500">{recs.length} jednotek</span>
               </div>
               {recs.length === 0 ? (
-                <p className="text-[11px] text-slate-600">Zatím žádná doporučení. Klikněte na &quot;Potvrdit brief&quot;.</p>
+                <p className="text-[11px] text-slate-600">Zatím žádná doporučení. Klikněte na &quot;Potvrdit zadání&quot;.</p>
               ) : (
                 <div className="max-h-[480px] overflow-y-auto overflow-hidden rounded-lg border border-slate-200/70">
-                  <p className="px-3 py-2 text-[11px] text-slate-500">{recs.length} jednotek — přejděte na tab Recommendations pro detail.</p>
+                  <p className="px-3 py-2 text-[11px] text-slate-500">{recs.length} jednotek — přejděte na záložku Doporučení pro detail.</p>
                 </div>
               )}
             </ReamarSubtleCard>

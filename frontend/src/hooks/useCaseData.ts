@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
-import { API_BASE } from "@/lib/api";
+import { API_BASE, deleteRecommendationFeedback, putRecommendationFeedback } from "@/lib/api";
 import { profileToFilters } from "@/lib/clientFilters";
 import { filtersToSearchParams } from "@/lib/filters";
 import { useActiveClient } from "@/contexts/ActiveClientContext";
@@ -19,6 +19,8 @@ import type {
   ClientSummary,
   ClientProfile,
   RecommendationItem,
+  RecommendationFeedbackType,
+  RecommendationDislikeReason,
   MarketFitAnalysis,
   AreaMarketAnalysis,
   NoteItem,
@@ -40,6 +42,9 @@ export function useCaseData() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
   const [profileSavedMessage, setProfileSavedMessage] = useState<string | null>(null);
+  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFirstLoad = useRef(true);
 
   const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
   const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => getDefaultPreferences());
@@ -54,6 +59,8 @@ export function useCaseData() {
   const [newNoteBody, setNewNoteBody] = useState("");
   const [newNoteType, setNewNoteType] = useState<"internal" | "meeting" | "call">("internal");
   const [notesSaving, setNotesSaving] = useState(false);
+  const [feedbackSavingId, setFeedbackSavingId] = useState<number | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   const [wizardExtras, setWizardExtras] = useState<WizardExtras>({});
   const nextStepGuard = useRef(false);
@@ -164,6 +171,14 @@ export function useCaseData() {
     }
   }, [profile]);
 
+  // Mark first load as done once loading completes so auto-save doesn't fire on initial hydration
+  useEffect(() => {
+    if (!loading && hydrated) {
+      const t = setTimeout(() => { isFirstLoad.current = false; }, 200);
+      return () => clearTimeout(t);
+    }
+  }, [loading, hydrated]);
+
   const LAYOUT_OPTIONS = useMemo(
     () => [
       { value: "1kk", label: "1kk" },
@@ -192,68 +207,70 @@ export function useCaseData() {
       return;
     }
     setLoading(true);
-    Promise.all([
-      fetch(`${API_BASE}/clients/${clientId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText)))),
-      fetch(`${API_BASE}/clients/${clientId}/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : [])),
-      fetch(`${API_BASE}/clients/${clientId}/market-fit-analysis`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_BASE}/clients/${clientId}/area-market-analysis`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : null)),
-      fetch(
-        `${API_BASE}/projects?availability=available&availability=reserved&limit=2000&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
-        {
-          headers: { Authorization: `Bearer ${token}` },
-        }
-      ).then((r) => (r.ok ? r.json() : null)),
-      fetch(`${API_BASE}/clients/${clientId}/notes`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((r) => (r.ok ? r.json() : [])),
-    ])
-      .then(
-        ([
-          clientJson,
+
+    const authHeaders = { Authorization: `Bearer ${token}` };
+    const fetchOptionalJson = async <T,>(url: string, fallback: T): Promise<T> => {
+      try {
+        const response = await fetch(url, { headers: authHeaders });
+        if (!response.ok) return fallback;
+        return (await response.json()) as T;
+      } catch {
+        return fallback;
+      }
+    };
+
+    fetch(`${API_BASE}/clients/${clientId}`, {
+      headers: authHeaders,
+    })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
+      .then(async (clientJson) => {
+        setClient(clientJson as ClientSummary);
+
+        const [
           profileJson,
           recsJson,
           marketFitJson,
           areaMarketJson,
           projectsOverviewJson,
           notesJson,
-        ]) => {
-        setClient(clientJson as ClientSummary);
+        ] = await Promise.all([
+          fetchOptionalJson<ClientProfile | null>(`${API_BASE}/clients/${clientId}/profile`, null),
+          fetchOptionalJson<RecommendationItem[]>(`${API_BASE}/clients/${clientId}/recommendations`, []),
+          fetchOptionalJson<MarketFitAnalysis | null>(`${API_BASE}/clients/${clientId}/market-fit-analysis`, null),
+          fetchOptionalJson<AreaMarketAnalysis | null>(`${API_BASE}/clients/${clientId}/area-market-analysis`, null),
+          fetchOptionalJson<{ items?: LocationProjectPoint[] } | null>(
+            `${API_BASE}/projects?availability=available&availability=reserved&limit=2000&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
+            null
+          ),
+          fetchOptionalJson<NoteItem[]>(`${API_BASE}/clients/${clientId}/notes`, []),
+        ]);
+
         setProfile((profileJson || null) as ClientProfile | null);
         setRecs((recsJson || []) as RecommendationItem[]);
         setMarketFit((marketFitJson || null) as MarketFitAnalysis | null);
         setAreaMarket((areaMarketJson || null) as AreaMarketAnalysis | null);
         setNotes((notesJson || []) as NoteItem[]);
-          const items = (projectsOverviewJson?.items ?? []) as any[];
-          const withGps: LocationProjectPoint[] = items
-            .filter(
-              (p) =>
-                typeof p.gps_latitude === "number" &&
-                typeof p.gps_longitude === "number" &&
-                Number.isFinite(p.gps_latitude) &&
-                Number.isFinite(p.gps_longitude)
-            )
-            .map((p) => ({
-              id: p.id as number,
-              project: (p.project as string) ?? null,
-              municipality: (p.municipality as string) ?? null,
-              city: (p.city as string) ?? null,
-              gps_latitude: p.gps_latitude as number,
-              gps_longitude: p.gps_longitude as number,
-              avg_price_per_m2_czk:
-                typeof p.avg_price_per_m2_czk === "number" ? (p.avg_price_per_m2_czk as number) : null,
-            }));
-          setLocationProjects(withGps);
+
+        const items = (projectsOverviewJson?.items ?? []) as any[];
+        const withGps: LocationProjectPoint[] = items
+          .filter(
+            (p) =>
+              typeof p.gps_latitude === "number" &&
+              typeof p.gps_longitude === "number" &&
+              Number.isFinite(p.gps_latitude) &&
+              Number.isFinite(p.gps_longitude)
+          )
+          .map((p) => ({
+            id: p.id as number,
+            project: (p.project as string) ?? null,
+            municipality: (p.municipality as string) ?? null,
+            city: (p.city as string) ?? null,
+            gps_latitude: p.gps_latitude as number,
+            gps_longitude: p.gps_longitude as number,
+            avg_price_per_m2_czk:
+              typeof p.avg_price_per_m2_czk === "number" ? (p.avg_price_per_m2_czk as number) : null,
+          }));
+        setLocationProjects(withGps);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
       .finally(() => setLoading(false));
@@ -359,6 +376,36 @@ export function useCaseData() {
     }
   };
 
+  // Debounced auto-save: fires 1.5 s after last change to profile/wizard state
+  useEffect(() => {
+    if (isFirstLoad.current) return;
+    if (!token || !clientId || !hydrated) return;
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
+    setAutoSaveStatus("saving");
+    autoSaveTimer.current = setTimeout(async () => {
+      try {
+        const body = buildProfileBody();
+        const res = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (res.ok) {
+          const json = (await res.json()) as ClientProfile;
+          setProfile(json);
+          setAutoSaveStatus("saved");
+          setTimeout(() => setAutoSaveStatus("idle"), 2000);
+        } else {
+          setAutoSaveStatus("error");
+        }
+      } catch {
+        setAutoSaveStatus("error");
+      }
+    }, 1500);
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wizardExtras, selectedLayouts, walkPrefs, locationPolygons]);
+
   const handleRecompute = async () => {
     if (!token || !clientId) return;
     setRecomputing(true);
@@ -400,6 +447,53 @@ export function useCaseData() {
       );
     }
   };
+
+  const handleRecommendationFeedback = useCallback(
+    async (
+      recId: number,
+      feedbackType: RecommendationFeedbackType,
+      options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }
+    ) => {
+      if (!token || !clientId) return;
+      setFeedbackSavingId(recId);
+      try {
+        const feedback = await putRecommendationFeedback({
+          token,
+          clientId,
+          recId,
+          feedbackType,
+          dislikeReason: options?.dislikeReason ?? null,
+          note: options?.note ?? null,
+        });
+        setRecs((prev) => prev.map((r) => (r.rec_id === recId ? { ...r, feedback } : r)));
+        setFeedbackMessage(
+          feedbackType === "liked"
+            ? "Uloženo mezi oblíbené"
+            : feedbackType === "saved"
+            ? "Uloženo na později"
+            : "Díky, příště budeme vybírat lépe"
+        );
+      } finally {
+        setFeedbackSavingId(null);
+      }
+    },
+    [token, clientId]
+  );
+
+  const clearRecommendationFeedback = useCallback(
+    async (recId: number) => {
+      if (!token || !clientId) return;
+      setFeedbackSavingId(recId);
+      try {
+        await deleteRecommendationFeedback({ token, clientId, recId });
+        setRecs((prev) => prev.map((r) => (r.rec_id === recId ? { ...r, feedback: null } : r)));
+        setFeedbackMessage("Názor jsme změnili");
+      } finally {
+        setFeedbackSavingId(null);
+      }
+    },
+    [token, clientId]
+  );
 
   const handleActivate = useCallback(() => {
     if (!client || !profile) return;
@@ -495,6 +589,7 @@ export function useCaseData() {
     profileSaving,
     recomputing,
     profileSavedMessage,
+    autoSaveStatus,
     walkPrefsOpen, setWalkPrefsOpen,
     walkPrefs, setWalkPrefs,
     hydrated,
@@ -521,6 +616,10 @@ export function useCaseData() {
     handleSilentSave,
     handleRecompute,
     handlePin,
+    handleRecommendationFeedback,
+    clearRecommendationFeedback,
+    feedbackSavingId,
+    feedbackMessage,
     handleActivate,
     handleNextStep,
     handleAddNote,

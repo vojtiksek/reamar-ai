@@ -57,6 +57,7 @@ class Project(Base):
     overall_quality: Mapped[str | None] = mapped_column(String(255), nullable=True)
     windows: Mapped[str | None] = mapped_column(String(255), nullable=True)
     heating: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    heating_source: Mapped[str | None] = mapped_column(String(100), nullable=True)
     partition_walls: Mapped[str | None] = mapped_column(String(255), nullable=True)
     amenities: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -410,6 +411,7 @@ class ClientProfile(Base):
     polygon_geojson: Mapped[str | None] = mapped_column(Text, nullable=True)
     commute_points_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     scoring_weights_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    broker_weight_overrides_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -469,6 +471,36 @@ class ClientRecommendation(Base):
     client: Mapped["Client"] = relationship(back_populates="recommendations")
     unit: Mapped["Unit"] = relationship()
     project: Mapped["Project"] = relationship()
+    feedback: Mapped["ClientRecommendationFeedback | None"] = relationship(
+        back_populates="recommendation", uselist=False, cascade="all, delete-orphan"
+    )
+
+
+class ClientRecommendationFeedback(Base):
+    __tablename__ = "client_recommendation_feedback"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recommendation_id: Mapped[int] = mapped_column(
+        ForeignKey("client_recommendations.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    feedback_type: Mapped[str] = mapped_column(String(16), nullable=False)  # liked, saved, disliked
+    dislike_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
+    recommendation: Mapped["ClientRecommendation"] = relationship(back_populates="feedback")
 
 
 class ClientUnitMatch(Base):

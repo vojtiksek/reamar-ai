@@ -48,7 +48,7 @@ function NavLinks() {
         <Link href={buildNavHref("/explorer/projects", searchParams)} className={navClass(!!isExplorer)}>
           Explorer
         </Link>
-        <Link href="/admin/scoring" className={navClass(!!isAdmin)}>
+        <Link href="/admin/studio" className={navClass(!!isAdmin)}>
           Admin
         </Link>
       </nav>
@@ -82,7 +82,7 @@ function NavLinksFallback() {
     <nav className="flex items-center rounded-full border border-slate-200 bg-white p-0.5 shadow-sm">
       <Link href="/cases" className={navClass(!!isCases)}>Cases</Link>
       <Link href="/explorer/projects" className={navClass(!!isExplorer)}>Explorer</Link>
-      <Link href="/admin/scoring" className={navClass(!!isAdmin)}>Admin</Link>
+      <Link href="/admin/studio" className={navClass(!!isAdmin)}>Admin</Link>
     </nav>
   );
 }

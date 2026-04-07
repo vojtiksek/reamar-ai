@@ -27,18 +27,18 @@ type Filter = "all" | "attention" | "has_recs" | "new";
 
 function stageFromClient(c: DashboardClient): { label: string; cls: string } {
   if (!c.has_profile) return { label: "Nový", cls: "bg-slate-100 text-slate-700" };
-  if (c.recommendations_count === 0) return { label: "Brief hotový", cls: "bg-blue-100 text-blue-800" };
+  if (c.recommendations_count === 0) return { label: "Zadání hotové", cls: "bg-blue-100 text-blue-800" };
   if (c.recommendations_count > 0 && c.status !== "shortlist") return { label: "Doporučení", cls: "bg-indigo-100 text-indigo-800" };
-  return { label: "Shortlist", cls: "bg-emerald-100 text-emerald-800" };
+  return { label: "Užší výběr", cls: "bg-emerald-100 text-emerald-800" };
 }
 
 function nextAction(c: DashboardClient): string {
-  if (!c.has_profile) return "Doplnit brief";
+  if (!c.has_profile) return "Doplnit zadání";
   if (c.recommendations_count === 0) return "Vygenerovat doporučení";
   if (c.unseen_matches > 0) return `${c.unseen_matches} nových shod`;
   if (c.share_link_expired) return "Obnovit sdílení";
   if (c.days_since_last_note != null && c.days_since_last_note > 14) return "Ozvat se klientovi";
-  return "Zkontrolovat shortlist";
+  return "Zkontrolovat výběr";
 }
 
 

@@ -2,7 +2,7 @@
 # Quick post-edit check — run after AI makes backend changes
 set -euo pipefail
 
-REPO="$HOME/reamar-ai"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO/backend"
 
 echo "=== dev_check ==="

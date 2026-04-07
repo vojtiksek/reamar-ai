@@ -28,6 +28,35 @@ export type ClientProfile = {
   scoring_weights_json?: Record<string, number> | null;
 };
 
+export type RecommendationFeedbackType = "liked" | "saved" | "disliked";
+export type RecommendationDislikeReason =
+  | "price"
+  | "location"
+  | "layout"
+  | "small_area"
+  | "standard_or_project"
+  | "noise_or_surroundings"
+  | "accessibility"
+  | "other";
+
+export type RecommendationFeedback = {
+  feedback_type: RecommendationFeedbackType;
+  dislike_reason?: RecommendationDislikeReason | null;
+  note?: string | null;
+  updated_at: string;
+};
+
+export const DISLIKE_REASON_LABELS: Record<RecommendationDislikeReason, string> = {
+  price: "Cena",
+  location: "Lokalita",
+  layout: "Dispozice",
+  small_area: "Malá plocha",
+  standard_or_project: "Standard / projekt",
+  noise_or_surroundings: "Hluk / okolí",
+  accessibility: "Dostupnost",
+  other: "Jiný důvod",
+};
+
 export type RecommendationItem = {
   rec_id: number;
   pinned_by_broker: boolean;
@@ -59,6 +88,7 @@ export type RecommendationItem = {
   top_compromises?: string[];
   broker_note?: string | null;
   reason?: Record<string, unknown> | null;
+  feedback?: RecommendationFeedback | null;
 };
 
 export type MarketFitBlocker = {
@@ -134,18 +164,22 @@ export type WizardExtras = {
     ideal_price?: number | null;
     max_price?: number | null;
     tolerate_plus_10?: boolean;
+    max_price_tolerance_pct?: number | null;
     ideal_area?: number | null;
     min_area?: number | null;
     tolerate_minus_10?: boolean;
+    max_area_tolerance_pct?: number | null;
+    min_outdoor_area_m2?: number | null;
+    max_outdoor_tolerance_pct?: number | null;
     payment_schedule?: "upfront" | "during_construction" | "on_completion" | "ignore";
     max_payment_contract_pct?: number | null;
     max_payment_construction_pct?: number | null;
     max_days_on_market?: number | null;
   };
   standards?: {
-    rekuperace?: Priority;
+    recuperation?: Priority;
     floor_heating?: Priority;
-    external_blinds?: Priority;
+    exterior_blinds?: Priority;
     air_conditioning?: Priority;
     cellar?: Priority;
     parking?: Priority;
@@ -155,7 +189,7 @@ export type WizardExtras = {
     window_type?: string | null;
     heating_type?: string | null;
     partitions?: string | null;
-    materials?: string | null;
+    heating_source?: string | null;
   };
   outdoor?: {
     outdoor_space?: Priority;
@@ -165,6 +199,7 @@ export type WizardExtras = {
     garden?: Priority;
     anything_ok?: Priority;
     preferred_floor?: "ground" | "low" | "middle" | "high" | "ignore";
+    floor_rule?: "no_ground" | "ignore" | "top_3" | "top_1";
     ground_floor_sensitive?: Priority;
     orientation?: {
       south?: Priority;
@@ -186,7 +221,7 @@ export type WizardExtras = {
     bike_room?: Priority;
     stroller_room?: Priority;
     fitness?: Priority;
-    shared_garden?: Priority;
+    courtyard_garden?: Priority;
     concierge?: Priority;
   };
   character?: {
@@ -194,7 +229,14 @@ export type WizardExtras = {
     calm_vs_city?: "calm" | "city" | "ignore";
     privacy_vs_services?: "privacy" | "services" | "ignore";
   };
+  project_amenities?: {
+    reception?: "prefer" | "reject" | "ignore";
+    fitness?: "prefer" | "reject" | "ignore";
+    ev_charger?: "prefer" | "reject" | "ignore";
+    courtyard_garden?: "prefer" | "reject" | "ignore";
+  };
   renovation_preference?: "any" | "prefer_new" | "only_new" | "prefer_renovation" | "only_renovation";
+  completion_standard?: "shell_and_core" | "white_wall" | "fit_out" | null;
   completion_date?: string | null;
   energy_class?: "A" | "B" | "C" | "D" | "ignore" | null;
   preferred_developer?: string | null;
@@ -212,4 +254,47 @@ export type WizardExtras = {
       place_id?: string | null;
     }[];
   };
+  skip_categories?: {
+    standards?: boolean;
+    amenities?: boolean;
+    surroundings?: boolean;
+  };
+  earliest_move_in?: string | null;
+  latest_move_in?: string | null;
+};
+
+export type FlatWeightKey =
+  | "price_distance"
+  | "price_per_m2_area"
+  | "payment_schedule"
+  | "commute_time"
+  | "walkability"
+  | "noise"
+  | "unit_area"
+  | "outdoor_area"
+  | "floor_preference"
+  | "heating"
+  | "heating_source"
+  | "recuperation"
+  | "exterior_blinds"
+  | "air_conditioning"
+  | "flooring"
+  | "ceiling_height"
+  | "windows"
+  | "reception"
+  | "fitness_project"
+  | "ev_charger"
+  | "courtyard_garden"
+  | "completion_fit";
+
+export type FlatWeights = Record<FlatWeightKey, number>;
+
+export type FlatWeightsResponse = {
+  wizard_weights: Record<string, number>;
+  broker_overrides: Record<string, number> | null;
+  effective_weights: Record<string, number>;
+  skip_categories: Record<string, boolean>;
+  defaults: Record<string, number>;
+  labels: Record<string, string>;
+  categories: Record<string, string[]>;
 };

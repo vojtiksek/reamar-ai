@@ -42,6 +42,145 @@ DEFAULT_WEIGHTS = {
     'commute': 0.05,
 }
 
+# ---------------------------------------------------------------------------
+# Flat scoring weights — individual aspects, summing to 100
+# ---------------------------------------------------------------------------
+
+FLAT_WEIGHT_DEFAULTS: dict[str, float] = {
+    # Cena a financování
+    'price_distance': 15.0,       # vzdálenost od ideální ceny
+    'price_per_m2_area': 8.0,     # odchylka ceny/m² od okolí (1km/2km)
+    'payment_schedule': 5.0,      # platební podmínky (nižší na začátku = lepší)
+    # Lokalita
+    'commute_time': 12.0,         # dojezdové vzdálenosti
+    'walkability': 10.0,          # občanská vybavenost
+    'noise': 5.0,                 # hluk / klidná lokalita
+    # Dispozice a prostor
+    'unit_area': 8.0,             # velikost bytu
+    'outdoor_area': 5.0,          # venkovní prostor
+    'floor_preference': 4.0,      # preferované patro
+    # Standardy
+    'heating': 3.0,               # vytápění (podlahové/radiátory/stropní)
+    'heating_source': 2.0,        # zdroj vytápění (tepelné čerpadlo/plyn/teplovod)
+    'recuperation': 2.0,          # rekuperace
+    'exterior_blinds': 2.0,       # žaluzie
+    'air_conditioning': 2.0,      # klimatizace
+    'flooring': 1.0,              # podlaha
+    'ceiling_height': 1.0,        # výška stropu
+    'windows': 1.0,               # okna
+    # Vybavení projektu
+    'reception': 2.0,             # recepce
+    'fitness_project': 2.0,       # fitness
+    'ev_charger': 1.0,            # elektro nabíječka
+    'courtyard_garden': 2.0,      # vnitroblok / zahrada
+    # Dokončení
+    'completion_fit': 6.0,        # jak blízko preferovanému termínu
+}
+# Total = 100.0
+
+# Grouping of flat weights for "skip category" behavior
+FLAT_WEIGHT_CATEGORIES: dict[str, list[str]] = {
+    'standards': ['heating', 'heating_source', 'recuperation', 'exterior_blinds',
+                  'air_conditioning', 'flooring', 'ceiling_height', 'windows'],
+    'amenities': ['reception', 'fitness_project', 'ev_charger', 'courtyard_garden'],
+    'surroundings': ['walkability', 'noise'],
+}
+
+# Czech labels for UI
+FLAT_WEIGHT_LABELS: dict[str, str] = {
+    'price_distance': 'Cena (vzdálenost od ideálu)',
+    'price_per_m2_area': 'Cena/m² vs. okolí',
+    'payment_schedule': 'Platební podmínky',
+    'commute_time': 'Dojezdové vzdálenosti',
+    'walkability': 'Občanská vybavenost',
+    'noise': 'Hluk / klid lokality',
+    'unit_area': 'Velikost bytu',
+    'outdoor_area': 'Venkovní prostor',
+    'floor_preference': 'Preferované patro',
+    'heating': 'Vytápění',
+    'heating_source': 'Zdroj vytápění',
+    'recuperation': 'Rekuperace',
+    'exterior_blinds': 'Žaluzie',
+    'air_conditioning': 'Klimatizace',
+    'flooring': 'Podlaha',
+    'ceiling_height': 'Výška stropu',
+    'windows': 'Okna',
+    'reception': 'Recepce',
+    'fitness_project': 'Fitness',
+    'ev_charger': 'Elektro nabíječka',
+    'courtyard_garden': 'Vnitroblok / zahrada',
+    'completion_fit': 'Termín dokončení',
+}
+
+
+def derive_flat_weights_from_wizard(wizard: dict | None) -> dict[str, float]:
+    """Derive flat scoring weights from wizard answers.
+
+    If the client skipped a category (e.g. standards_skip=True),
+    all weights in that category are zeroed and redistributed.
+    """
+    weights = dict(FLAT_WEIGHT_DEFAULTS)
+    if not wizard:
+        return weights
+
+    skip_flags = wizard.get('skip_categories') or {}
+    zeroed_total = 0.0
+
+    for category, keys in FLAT_WEIGHT_CATEGORIES.items():
+        if skip_flags.get(category):
+            for k in keys:
+                zeroed_total += weights.get(k, 0.0)
+                weights[k] = 0.0
+
+    # Redistribute zeroed weight proportionally among remaining active aspects
+    if zeroed_total > 0:
+        active_total = sum(v for v in weights.values() if v > 0)
+        if active_total > 0:
+            scale = (active_total + zeroed_total) / active_total
+            weights = {k: (v * scale if v > 0 else 0.0) for k, v in weights.items()}
+
+    return weights
+
+
+def merge_broker_weight_overrides(
+    wizard_weights: dict[str, float],
+    broker_overrides: dict[str, float] | None,
+) -> dict[str, float]:
+    """Apply broker's manual weight overrides on top of wizard-derived weights.
+
+    Broker overrides replace individual aspect weights, then the total is
+    renormalized to 100.
+    """
+    if not broker_overrides:
+        return wizard_weights
+
+    merged = dict(wizard_weights)
+    for k, v in broker_overrides.items():
+        if k in merged:
+            merged[k] = float(v)
+
+    # Renormalize to sum = 100
+    total = sum(merged.values())
+    if total > 0 and abs(total - 100.0) > 0.01:
+        merged = {k: v / total * 100.0 for k, v in merged.items()}
+
+    return merged
+
+
+def resolve_flat_weights(
+    profile: 'ClientProfile | None',
+) -> dict[str, float]:
+    """Resolve effective flat weights: wizard-derived → broker overrides → normalize."""
+    wizard = {}
+    if profile and profile.filter_json:
+        wizard = (profile.filter_json or {}).get('wizard') or {}
+
+    base = derive_flat_weights_from_wizard(wizard)
+    broker_ov = None
+    if profile and hasattr(profile, 'broker_weight_overrides_json'):
+        broker_ov = profile.broker_weight_overrides_json
+    return merge_broker_weight_overrides(base, broker_ov)
+
 DEFAULT_THRESHOLDS = {
     'strong_pick_min_score': 70,
     'review_pick_min_score': 55,
@@ -110,13 +249,13 @@ def compute_eligibility(
 
     # -- Standards --
     standards = wizard.get("standards") or {}
-    if standards.get("rekuperace") == "must":
+    if standards.get("recuperation") == "must":
         val = getattr(project, "recuperation", None)
         if val is None:
-            reasons.append("rekuperace (data missing)")
+            reasons.append("recuperation (data missing)")
             has_review = True
         elif val != "true":
-            _fail("rekuperace")
+            _fail("recuperation")
 
     if standards.get("air_conditioning") == "must":
         val = getattr(unit, "air_conditioning", None)
@@ -131,16 +270,19 @@ def compute_eligibility(
         if h is None:
             reasons.append("floor_heating (data missing)")
             has_review = True
-        elif "podlah" not in str(h).lower():
-            _fail("floor_heating")
+        else:
+            h_lower = str(h).lower()
+            has_floor = "podlah" in h_lower or "underfloor" in h_lower or "floor" in h_lower
+            if not has_floor:
+                _fail("floor_heating")
 
-    if standards.get("external_blinds") == "must":
+    if standards.get("exterior_blinds") == "must":
         eb = getattr(unit, "exterior_blinds", None)
         if eb is None:
-            reasons.append("external_blinds (data missing)")
+            reasons.append("exterior_blinds (data missing)")
             has_review = True
         elif str(eb).lower() in ("false", "0", ""):
-            _fail("external_blinds")
+            _fail("exterior_blinds")
 
     # -- Amenities --
     amenities = wizard.get("house_amenities") or {}
@@ -483,6 +625,472 @@ def _legacy_compute_match(
 
 
 # ---------------------------------------------------------------------------
+# Flat scoring — individual aspect fit computations
+# ---------------------------------------------------------------------------
+
+def _flat_price_distance_fit(unit, profile) -> float:
+    """Score: how close is the price to the client's ideal/max."""
+    price = getattr(unit, 'price_czk', None)
+    if price is None or not profile:
+        return 50.0
+    lo = getattr(profile, 'budget_min', None) or 0
+    hi = getattr(profile, 'budget_max', None) or price
+    if lo <= price <= hi:
+        return 100.0
+    center = (lo + hi) / 2 if hi > lo else hi or lo or 1
+    diff_ratio = abs(price - center) / max(center, 1)
+    return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+
+
+def _flat_price_per_m2_fit(unit) -> float:
+    """Score: price/m² deviation from local market (1km, 2km)."""
+    diff_1k = getattr(unit, 'local_price_diff_1000m', None)
+    diff_2k = getattr(unit, 'local_price_diff_2000m', None)
+    diff = None
+    if diff_1k is not None:
+        diff = float(diff_1k)
+    elif diff_2k is not None:
+        diff = float(diff_2k)
+    if diff is None:
+        return 50.0
+    # diff is percentage points: negative = cheaper than area (good), positive = expensive
+    # Map -20% → 100, 0% → 70, +20% → 0
+    score = 70.0 - diff * 3.5
+    return max(0.0, min(100.0, score))
+
+
+def _flat_payment_schedule_fit(unit) -> float:
+    """Score: lower upfront payment = better (prefer payment on completion)."""
+    contract_pct = getattr(unit, 'payment_contract', None)
+    construction_pct = getattr(unit, 'payment_construction', None)
+    completion_pct = getattr(unit, 'payment_occupancy', None)
+    if contract_pct is None and construction_pct is None:
+        return 50.0
+    cp = float(contract_pct or 0)
+    bp = float(construction_pct or 0)
+    op = float(completion_pct or 0)
+    # Normalize: if values are 0-1 range, convert to percentages
+    if cp <= 1:
+        cp *= 100
+    if bp <= 1:
+        bp *= 100
+    if op <= 1:
+        op *= 100
+    # Best: low contract+construction, high occupancy
+    # Score: 100 - (contract_weight * contract% + construction_weight * construction%)
+    upfront_cost = cp * 2.0 + bp * 1.0  # weight contract payment more
+    score = 100.0 - upfront_cost * 0.8
+    return max(0.0, min(100.0, score))
+
+
+def _flat_noise_fit(unit, project, profile) -> float:
+    """Score: noise exposure. Lower noise = better score.
+
+    Uses wizard sensitivity settings: sensitive sources get heavier penalty.
+    """
+    wizard = {}
+    if profile and getattr(profile, 'filter_json', None):
+        wizard = ((profile.filter_json or {}).get('wizard') or {}).get('noise') or {}
+
+    # If client doesn't care about noise at all, neutral
+    if not wizard:
+        return 50.0
+
+    penalty = 0.0
+    noise_checks = [
+        ('main_road', 'distance_to_primary_road_m', 200, 500),
+        ('tram', 'distance_to_tram_tracks_m', 100, 300),
+        ('railway', 'distance_to_railway_m', 300, 1000),
+        ('airport', 'distance_to_airport_m', 2000, 10000),
+    ]
+
+    for key, attr, close_m, far_m in noise_checks:
+        pref = wizard.get(key)
+        if pref == 'ignore' or pref is None:
+            continue
+        dist = getattr(project, attr, None)
+        if dist is None:
+            continue
+        dist = float(dist)
+        if pref == 'sensitive':
+            # Closer = worse: linear penalty from far_m (0 penalty) to close_m (full penalty)
+            if dist >= far_m:
+                pass
+            elif dist <= close_m:
+                penalty += 25.0
+            else:
+                ratio = (far_m - dist) / (far_m - close_m)
+                penalty += 25.0 * ratio
+
+    # Also check noise_day_db if available
+    noise_db = getattr(project, 'noise_day_db', None)
+    if noise_db is not None:
+        noise_db = float(noise_db)
+        if noise_db > 65:
+            penalty += min(20.0, (noise_db - 65) * 2.0)
+        elif noise_db < 50:
+            penalty -= 10.0  # bonus for quiet
+
+    return max(0.0, min(100.0, 80.0 - penalty))
+
+
+def _flat_unit_area_fit(unit, profile) -> float:
+    """Score: how well does unit area match preferences. Bigger = better with cap."""
+    area = float(unit.floor_area_m2) if getattr(unit, 'floor_area_m2', None) is not None else None
+    if area is None or not profile:
+        return 50.0
+    lo = getattr(profile, 'area_min', None)
+    hi = getattr(profile, 'area_max', None)
+    if lo is not None or hi is not None:
+        lo = float(lo or 0)
+        hi = float(hi or area)
+        if lo <= area <= hi:
+            # Within range, bonus for larger
+            range_size = hi - lo if hi > lo else 1.0
+            return 80.0 + 20.0 * ((area - lo) / range_size)
+        center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
+        diff_ratio = abs(area - center) / max(center, 1.0)
+        return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+    return 50.0
+
+
+def _flat_outdoor_fit(unit, profile) -> float:
+    """Score: outdoor space size. Bigger = better up to 50m²."""
+    ext = getattr(unit, 'exterior_area_m2', None)
+    if ext is not None:
+        outdoor = float(ext)
+    else:
+        outdoor = (
+            float(getattr(unit, 'balcony_area_m2', None) or 0)
+            + float(getattr(unit, 'terrace_area_m2', None) or 0)
+            + float(getattr(unit, 'garden_area_m2', None) or 0)
+        )
+
+    wizard_outdoor = {}
+    if profile and getattr(profile, 'filter_json', None):
+        wizard_outdoor = ((profile.filter_json or {}).get('wizard') or {}).get('outdoor') or {}
+
+    min_out = wizard_outdoor.get('min_outdoor_area_m2')
+    if min_out is not None:
+        min_out = float(min_out)
+        if outdoor < min_out * 0.5:
+            return 10.0
+        if outdoor < min_out:
+            return 30.0 + 40.0 * (outdoor / min_out)
+
+    # Cap scoring benefit at 50m²
+    cap = min(outdoor, 50.0)
+    if cap <= 0:
+        return 20.0
+    return min(100.0, 20.0 + cap * 1.6)
+
+
+def _flat_floor_preference_fit(unit, project, profile) -> float:
+    """Score: floor preference (no ground floor, want top floor, etc.)."""
+    floor = getattr(unit, 'floor', None)
+    if floor is None:
+        return 50.0
+
+    wizard_outdoor = {}
+    if profile and getattr(profile, 'filter_json', None):
+        wizard_outdoor = ((profile.filter_json or {}).get('wizard') or {}).get('outdoor') or {}
+
+    pref = wizard_outdoor.get('preferred_floor')
+    total_floors = getattr(project, 'floors_above_ground', None)
+    floor = int(floor)
+
+    if pref == 'no_ground' and floor == 0:
+        return 15.0
+    if pref == 'top_3' and total_floors:
+        if floor >= int(total_floors) - 2:
+            return 100.0
+        return 40.0
+    if pref == 'top_floor' and total_floors:
+        if floor >= int(total_floors):
+            return 100.0
+        return 30.0
+    # Default: slight preference for higher floors (not ground)
+    if floor == 0:
+        return 50.0
+    return min(100.0, 60.0 + floor * 3)
+
+
+def _flat_heating_source_fit(project, pref_value: str | None) -> float:
+    """Categorical match for heating_source: wizard stores preferred source label.
+
+    Reads project.heating_source (Czech label string).
+    Returns neutral when project has no value or wizard has no preference.
+    """
+    if not pref_value:
+        return 50.0
+    val = getattr(project, 'heating_source', None)
+    if not val:
+        return 50.0  # project not yet populated → neutral
+    return 85.0 if val.strip().lower() == pref_value.strip().lower() else 30.0
+
+
+def _flat_standard_fit(unit, project, pref_value: str | None, field: str) -> float:
+    """Generic standard scoring: prefer/bonus/ignore/must → score.
+
+    'must' is handled as hard filter, here we only score prefer/bonus.
+    """
+    if not pref_value or pref_value == 'ignore':
+        return 50.0  # neutral
+
+    # Get the actual value from unit or project
+    val = getattr(unit, field, None) or getattr(project, field, None)
+
+    if val is None:
+        return 50.0  # no data, neutral
+
+    has_feature = _check_standard_match(val, field)
+
+    if pref_value == 'prefer':
+        return 90.0 if has_feature else 20.0
+    if pref_value == 'bonus':
+        return 75.0 if has_feature else 45.0
+    return 50.0
+
+
+def _check_standard_match(val, field: str) -> bool:
+    """Check if a standard value matches what the client wants."""
+    if isinstance(val, bool):
+        return val
+    s = str(val).strip().lower()
+    if s in ('true', '1', 'yes', 'ano'):
+        return True
+    if field == 'heating' and 'podlah' in s:
+        return True
+    if field == 'recuperation' and s not in ('none', 'false', '0', 'ne', ''):
+        return True
+    if field == 'exterior_blinds' and s not in ('false', '0', ''):
+        return True  # "preparation" counts as having blinds
+    if field == 'air_conditioning' and s not in ('false', '0', 'none', ''):
+        return True
+    return s not in ('false', '0', 'no', 'ne', 'none', '')
+
+
+def _flat_amenity_fit(project, pref_value: str | None, field: str) -> float:
+    """Score: amenity preference (prefer/dont_want/ignore)."""
+    if not pref_value or pref_value == 'ignore':
+        return 50.0
+
+    val = getattr(project, field, None)
+    has_it = bool(val) if val is not None else False
+
+    if pref_value == 'prefer':
+        return 90.0 if has_it else 20.0
+    if pref_value == 'dont_want':
+        return 90.0 if not has_it else 20.0
+    return 50.0
+
+
+def _flat_completion_fit(project, profile) -> float:
+    """Score: how well does project completion align with client's preferred dates."""
+    from datetime import date as _date
+
+    wizard = {}
+    if profile and getattr(profile, 'filter_json', None):
+        wizard = (profile.filter_json or {}).get('wizard') or {}
+
+    earliest = wizard.get('earliest_move_in')
+    latest = wizard.get('latest_move_in') or wizard.get('completion_date')
+    proj_date = getattr(project, 'completion_date', None)
+
+    if proj_date is None:
+        return 50.0
+
+    try:
+        if isinstance(proj_date, str):
+            proj_date = _date.fromisoformat(proj_date)
+        if hasattr(proj_date, 'date'):
+            proj_date = proj_date.date()
+    except (ValueError, TypeError):
+        return 50.0
+
+    # If we have a date range, check fit
+    if latest:
+        try:
+            latest_d = _date.fromisoformat(str(latest))
+            if proj_date > latest_d:
+                # Over deadline — penalty based on how far
+                days_over = (proj_date - latest_d).days
+                return max(0.0, 70.0 - days_over * 0.3)
+        except (ValueError, TypeError):
+            pass
+
+    if earliest:
+        try:
+            earliest_d = _date.fromisoformat(str(earliest))
+            if proj_date < earliest_d:
+                # Too early — slight penalty
+                days_early = (earliest_d - proj_date).days
+                return max(40.0, 80.0 - days_early * 0.1)
+        except (ValueError, TypeError):
+            pass
+
+    return 85.0  # within range or no constraints
+
+
+def compute_flat_match(
+    unit: Unit,
+    project: Project,
+    profile: ClientProfile | None,
+    flat_weights: dict[str, float],
+    db: Session | None = None,
+) -> tuple[float, dict[str, Any]]:
+    """Compute match score using the flat weight model.
+
+    Each aspect gets a 0-100 fit score, weighted by flat_weights (sum=100),
+    producing a 0-100 final score.
+    """
+    _ensure_geo_helpers()
+
+    wizard = {}
+    if profile and getattr(profile, 'filter_json', None):
+        wizard = (profile.filter_json or {}).get('wizard') or {}
+
+    standards = wizard.get('standards') or {}
+    amenities = wizard.get('house_amenities') or {}
+
+    _proj_amenities = wizard.get('project_amenities') or {}
+    _courtyard_pref = _proj_amenities.get('courtyard_garden') or amenities.get('courtyard_garden')
+
+    # Compute all aspect fits
+    aspect_fits: dict[str, float] = {}
+
+    # --- Cena a financování ---
+    aspect_fits['price_distance'] = _flat_price_distance_fit(unit, profile)
+    aspect_fits['price_per_m2_area'] = _flat_price_per_m2_fit(unit)
+    aspect_fits['payment_schedule'] = _flat_payment_schedule_fit(unit)
+
+    # --- Lokalita ---
+    # Commute: reuse existing logic
+    commute_fit = 0.0
+    commute_details: list[dict[str, Any]] = []
+    commute_hard_fail = False
+    if (
+        profile
+        and getattr(profile, 'commute_points_json', None)
+        and getattr(project, 'gps_latitude', None) is not None
+        and getattr(project, 'gps_longitude', None) is not None
+        and db is not None
+    ):
+        from .routing_provider import get_cached_travel_time_minutes
+        points = profile.commute_points_json or []
+        if isinstance(points, dict):
+            points = points.get('points') or []
+        per_point_scores: list[float] = []
+        for cp in points:
+            try:
+                label = str(cp.get('label') or '')
+                float(cp.get('lat'))
+                float(cp.get('lng'))
+                mode = str(cp.get('mode') or 'drive')
+                max_minutes = float(cp.get('max_minutes'))
+            except Exception:
+                continue
+            priority = str(cp.get('priority') or 'ignore')
+            tol = cp.get('tolerance_minutes')
+            tolerance_minutes = float(tol) if tol is not None else 0.0
+            travel_min = get_cached_travel_time_minutes(db, project, cp)
+            if travel_min is None:
+                continue
+            limit = max_minutes + tolerance_minutes
+            if priority == 'must_have' and travel_min > limit:
+                commute_hard_fail = True
+                break
+            if priority in ('must_have', 'prefer'):
+                if travel_min <= max_minutes:
+                    s = 100.0
+                elif travel_min > limit and limit > 0:
+                    s = 0.0
+                elif limit > max_minutes:
+                    ratio = (travel_min - max_minutes) / max(1.0, limit - max_minutes)
+                    s = max(0.0, 100.0 * (1.0 - ratio))
+                else:
+                    s = 0.0
+                per_point_scores.append(s)
+                commute_details.append({
+                    'label': label, 'mode': mode, 'minutes': travel_min,
+                    'max_minutes': max_minutes, 'priority': priority,
+                    'passed': travel_min <= limit,
+                })
+        if not commute_hard_fail and per_point_scores:
+            commute_fit = min(per_point_scores)
+    aspect_fits['commute_time'] = commute_fit
+
+    # Walkability
+    try:
+        from .walkability import compute_personalized_walkability_score, project_to_raw_metrics
+        prefs = (getattr(profile, 'walkability_preferences_json', None) if profile else None) or {}
+        if prefs and any(v != 'normal' for v in prefs.values()):
+            raw = project_to_raw_metrics(project)
+            result = compute_personalized_walkability_score(raw, prefs)
+            aspect_fits['walkability'] = float(result.get('score', 50.0))
+        elif getattr(project, 'walkability_score', None) is not None:
+            aspect_fits['walkability'] = float(project.walkability_score)
+        else:
+            aspect_fits['walkability'] = 50.0
+    except Exception:
+        aspect_fits['walkability'] = 50.0
+
+    # Noise
+    aspect_fits['noise'] = _flat_noise_fit(unit, project, profile)
+
+    # --- Dispozice a prostor ---
+    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile)
+    aspect_fits['outdoor_area'] = _flat_outdoor_fit(unit, profile)
+    aspect_fits['floor_preference'] = _flat_floor_preference_fit(unit, project, profile)
+
+    # --- Standardy ---
+    aspect_fits['heating'] = _flat_standard_fit(unit, project, standards.get('floor_heating'), 'heating')
+    aspect_fits['heating_source'] = _flat_heating_source_fit(project, standards.get('heating_source'))
+    aspect_fits['recuperation'] = _flat_standard_fit(unit, project, standards.get('recuperation'), 'recuperation')
+    aspect_fits['exterior_blinds'] = _flat_standard_fit(unit, project, standards.get('exterior_blinds'), 'exterior_blinds')
+    aspect_fits['air_conditioning'] = _flat_standard_fit(unit, project, standards.get('air_conditioning'), 'air_conditioning')
+    aspect_fits['flooring'] = _flat_standard_fit(unit, project, standards.get('flooring'), 'floors')
+    aspect_fits['ceiling_height'] = _flat_standard_fit(unit, project, standards.get('ceiling_height'), 'ceiling_height')
+    aspect_fits['windows'] = _flat_standard_fit(unit, project, standards.get('window_type'), 'windows')
+
+    # --- Vybavení projektu ---
+    aspect_fits['reception'] = _flat_amenity_fit(project, amenities.get('reception'), 'reception')
+    aspect_fits['fitness_project'] = _flat_amenity_fit(project, amenities.get('fitness'), 'fitness')
+    aspect_fits['ev_charger'] = _flat_amenity_fit(project, amenities.get('ev_charger'), 'ev_charger')
+    aspect_fits['courtyard_garden'] = _flat_amenity_fit(project, _courtyard_pref, 'courtyard_garden')
+
+    # --- Dokončení ---
+    aspect_fits['completion_fit'] = _flat_completion_fit(project, profile)
+
+    # --- Weighted total ---
+    if commute_hard_fail:
+        fits = {**aspect_fits, 'commute_details': commute_details, 'commute_hard_fail': True}
+        return 0.0, fits
+
+    total = 0.0
+    for aspect_key, fit_val in aspect_fits.items():
+        w = flat_weights.get(aspect_key, 0.0)
+        total += w * fit_val / 100.0  # weights sum to 100, fit is 0-100 → score is 0-100
+
+    total = max(0.0, min(100.0, total))
+
+    fits = {
+        **aspect_fits,
+        'commute_details': commute_details,
+        # Backward-compatible fit fields
+        'budget_fit': aspect_fits['price_distance'],
+        'walkability_fit': aspect_fits['walkability'],
+        'location_fit': aspect_fits.get('commute_time', 0.0),
+        'layout_fit': 50.0,  # layout is a hard filter in flat model
+        'area_fit': aspect_fits['unit_area'],
+        'outdoor_fit': aspect_fits['outdoor_area'],
+        'commute_fit': aspect_fits['commute_time'],
+    }
+
+    return total, fits
+
+
+# ---------------------------------------------------------------------------
 # Confidence
 # ---------------------------------------------------------------------------
 
@@ -568,6 +1176,34 @@ def _top_strengths_and_compromises(
 # Orchestrator
 # ---------------------------------------------------------------------------
 
+def _flat_strengths_compromises(
+    aspect_fits: dict[str, float],
+    flat_weights: dict[str, float],
+) -> tuple[list[str], list[str]]:
+    """Derive top strengths and compromises from flat aspect fits.
+
+    Only considers aspects with non-zero weight (active aspects).
+    Sorted by weighted contribution.
+    """
+    scored_aspects: list[tuple[str, float, float]] = []
+    for key, fit in aspect_fits.items():
+        if key in ('commute_details', 'commute_hard_fail', 'budget_fit',
+                    'walkability_fit', 'location_fit', 'layout_fit',
+                    'area_fit', 'outdoor_fit', 'commute_fit', 'pref_adj', 'hard_filter'):
+            continue  # skip backward-compat fields
+        w = flat_weights.get(key, 0.0)
+        if w <= 0:
+            continue
+        scored_aspects.append((key, fit, w))
+
+    # Sort by fit score for strengths (high = strength) and compromises (low = compromise)
+    scored_aspects.sort(key=lambda t: t[1], reverse=True)
+
+    strengths = [FLAT_WEIGHT_LABELS.get(k, k) for k, f, _ in scored_aspects if f >= 80][:5]
+    compromises = [FLAT_WEIGHT_LABELS.get(k, k) for k, f, _ in scored_aspects if f <= 30][:5]
+    return strengths, compromises
+
+
 def compute_full_score(
     unit: Unit,
     project: Project,
@@ -576,15 +1212,13 @@ def compute_full_score(
     db: Session | None = None,
     scoring_config: dict | None = None,
     aggregates=None,
+    flat_weights: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Orchestrate eligibility → match → confidence.
+    """Orchestrate eligibility → flat match → confidence.
 
-    Returns a dict with: score, eligibility, eligibility_reasons,
-    confidence, confidence_label, confidence_reasons, fits,
-    top_strengths, top_compromises, and all individual fit values.
+    Uses the flat scoring model when flat_weights are provided.
+    Falls back to legacy config-driven scoring otherwise.
     """
-    w = weights or DEFAULT_WEIGHTS
-
     # 1. Eligibility
     elig = compute_eligibility(unit, project, profile)
     if elig["status"] == "fail":
@@ -608,14 +1242,17 @@ def compute_full_score(
             **fits,
         }
 
-    # 2. Match
-    score, fits = compute_match(unit, project, profile, w, db, scoring_config=scoring_config, aggregates=aggregates)
+    # 2. Match — flat model or legacy
+    if flat_weights is not None:
+        score, fits = compute_flat_match(unit, project, profile, flat_weights, db)
+        strengths, compromises = _flat_strengths_compromises(fits, flat_weights)
+    else:
+        w = weights or DEFAULT_WEIGHTS
+        score, fits = compute_match(unit, project, profile, w, db, scoring_config=scoring_config, aggregates=aggregates)
+        strengths, compromises = config_driven_strengths_compromises(fits, profile)
 
     # 3. Confidence
     conf = compute_confidence(unit, project, profile, fits)
-
-    # 4. Strengths / compromises
-    strengths, compromises = config_driven_strengths_compromises(fits, profile)
 
     return {
         "score": score,
@@ -768,21 +1405,6 @@ DEFAULT_FIELD_RULES = [
         "rule_config": {"true_score": 8, "false_score": 0},
         "missing_value_policy": "neutral",
         "explanation_template": "Podlahové vytápění zvyšuje komfort.",
-        "client_mode": "wizard",
-    },
-    {
-        "field_key": "orientation",
-        "label": "Orientace",
-        "entity_type": "unit",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "unit_quality",
-        "weight": 0.8,
-        "rule_type": "enum_map",
-        "rule_config": {"south": 10, "west": 6, "east": 2, "north": -6},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Orientace bytu ovlivňuje světelnost.",
         "client_mode": "wizard",
     },
     {
@@ -1001,15 +1623,13 @@ def resolve_groups(db_config: Optional[dict]) -> dict:
 
 
 def resolve_field_rules(db_config: Optional[list]) -> list:
-    """Merge DB field rules over defaults. DB can override by field_key or add new."""
+    """Merge DB field rules over defaults. DB can only override existing defaults, not add removed rules."""
     defaults_by_key = {r["field_key"]: copy.deepcopy(r) for r in DEFAULT_FIELD_RULES}
     if db_config:
         for rule in db_config:
             key = rule.get("field_key")
             if key and key in defaults_by_key:
                 defaults_by_key[key].update(rule)
-            elif key:
-                defaults_by_key[key] = rule
     return list(defaults_by_key.values())
 
 
@@ -1091,21 +1711,6 @@ ADDITIONAL_FIELD_RULES = [
     # ═══════════════════════════════════════════════════════════════════
 
     {
-        "field_key": "permit_regular_project",
-        "label": "Řádné stavební povolení (projekt)",
-        "entity_type": "project",
-        "data_type": "boolean",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.8,
-        "rule_type": "boolean_bonus",
-        "rule_config": {"bonus": 1.0},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Projekt má řádné stavební povolení",
-        "client_mode": "auto",
-    },
-    {
         "field_key": "renovation_project",
         "label": "Rekonstrukce (projekt)",
         "entity_type": "project",
@@ -1119,29 +1724,6 @@ ADDITIONAL_FIELD_RULES = [
         "missing_value_policy": "neutral",
         "explanation_template": "Projekt je rekonstrukce: {value}",
         "client_mode": "hidden",
-    },
-    {
-        "field_key": "overall_quality_project",
-        "label": "Celková kvalita projektu",
-        "entity_type": "project",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "project_quality",
-        "weight": 0.8,
-        "rule_type": "enum_map",
-        "rule_config": {
-            "value_map": {
-                "luxury": 1.0,
-                "premium": 0.85,
-                "standard_plus": 0.65,
-                "standard": 0.5,
-                "economy": 0.25,
-            }
-        },
-        "missing_value_policy": "neutral",
-        "explanation_template": "Kvalita projektu: {value}",
-        "client_mode": "wizard",
     },
     {
         "field_key": "windows_project",
@@ -1319,21 +1901,6 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Stav výstavby: {value}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "developer",
-        "label": "Developer",
-        "entity_type": "project",
-        "data_type": "string",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "project_quality",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Developer: {value}",
         "client_mode": "hidden",
     },
 
@@ -2223,21 +2790,6 @@ ADDITIONAL_FIELD_RULES = [
         "client_mode": "hidden",
     },
     {
-        "field_key": "equivalent_area_m2",
-        "label": "Ekvivalentní plocha (m²)",
-        "entity_type": "unit",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "layout",
-        "weight": 0.5,
-        "rule_type": "numeric_linear",
-        "rule_config": {"min": 20, "max": 200, "higher_is_better": True},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Ekvivalentní plocha: {value} m²",
-        "client_mode": "hidden",
-    },
-    {
         "field_key": "exterior_area_m2",
         "label": "Venkovní plocha celkem (m²)",
         "entity_type": "unit",
@@ -2332,79 +2884,11 @@ ADDITIONAL_FIELD_RULES = [
         "explanation_template": "Kategorie: {value}",
         "client_mode": "hidden",
     },
-    {
-        "field_key": "use_type",
-        "label": "Typ užití",
-        "entity_type": "unit",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "unit_quality",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Typ užití: {value}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "building_use",
-        "label": "Využití budovy",
-        "entity_type": "unit",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "unit_quality",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Využití budovy: {value}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "sale_type",
-        "label": "Typ prodeje",
-        "entity_type": "unit",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Typ prodeje: {value}",
-        "client_mode": "hidden",
-    },
 
     # ═══════════════════════════════════════════════════════════════════
     # JEDNOTKA – KVALITA & VYBAVENÍ
     # ═══════════════════════════════════════════════════════════════════
 
-    {
-        "field_key": "overall_quality_unit",
-        "label": "Celková kvalita (jednotka)",
-        "entity_type": "unit",
-        "data_type": "enum",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "unit_quality",
-        "weight": 0.8,
-        "rule_type": "enum_map",
-        "rule_config": {
-            "value_map": {
-                "luxury": 1.0,
-                "premium": 0.85,
-                "standard_plus": 0.65,
-                "standard": 0.5,
-                "economy": 0.25,
-            }
-        },
-        "missing_value_policy": "neutral",
-        "explanation_template": "Kvalita jednotky: {value}",
-        "client_mode": "wizard",
-    },
     {
         "field_key": "windows_unit",
         "label": "Okna (jednotka)",
@@ -2471,21 +2955,6 @@ ADDITIONAL_FIELD_RULES = [
         "missing_value_policy": "neutral",
         "explanation_template": "Příčky jednotky: {value}",
         "client_mode": "wizard",
-    },
-    {
-        "field_key": "permit_regular_unit",
-        "label": "Řádné stavební povolení (jednotka)",
-        "entity_type": "unit",
-        "data_type": "boolean",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.8,
-        "rule_type": "boolean_bonus",
-        "rule_config": {"bonus": 1.0},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Jednotka má řádné stavební povolení",
-        "client_mode": "auto",
     },
     {
         "field_key": "renovation_unit",
@@ -2602,51 +3071,6 @@ ADDITIONAL_FIELD_RULES = [
         "missing_value_policy": "neutral",
         "explanation_template": "Cena za m²: {value} Kč",
         "client_mode": "auto",
-    },
-    {
-        "field_key": "price_change",
-        "label": "Změna ceny (%)",
-        "entity_type": "finance",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.5,
-        "rule_type": "numeric_linear",
-        "rule_config": {"min": -0.2, "max": 0.2, "higher_is_better": False},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Změna ceny: {value}",
-        "client_mode": "auto",
-    },
-    {
-        "field_key": "original_price_czk",
-        "label": "Původní cena (Kč)",
-        "entity_type": "finance",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Původní cena: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "original_price_per_m2_czk",
-        "label": "Původní cena za m² (Kč)",
-        "entity_type": "finance",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Původní cena za m²: {value} Kč",
-        "client_mode": "hidden",
     },
     {
         "field_key": "parking_indoor_price_czk",
@@ -2798,36 +3222,6 @@ ADDITIONAL_FIELD_RULES = [
         "explanation_template": "Na trhu: {value} dní",
         "client_mode": "auto",
     },
-    {
-        "field_key": "reservation_duration_days",
-        "label": "Délka rezervace (dny)",
-        "entity_type": "unit",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Délka rezervace: {value} dní",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "is_stale_reservation",
-        "label": "Zastaralá rezervace",
-        "entity_type": "unit",
-        "data_type": "boolean",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.5,
-        "rule_type": "boolean_penalty",
-        "rule_config": {"penalty": -0.5},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Jednotka má zastaralou/podezřelou rezervaci",
-        "client_mode": "hidden",
-    },
 
     # ═══════════════════════════════════════════════════════════════════
     # PROJEKT AGGREGÁTY
@@ -2846,291 +3240,6 @@ ADDITIONAL_FIELD_RULES = [
         "rule_config": {},
         "missing_value_policy": "neutral",
         "explanation_template": "Celkem jednotek: {value}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "available_units",
-        "label": "Dostupných jednotek",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "project_quality",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Dostupných jednotek: {value}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "availability_ratio",
-        "label": "Poměr dostupnosti (%)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.4,
-        "rule_type": "numeric_thresholds",
-        "rule_config": {
-            "thresholds": [
-                {"max": 0.1, "score": 0.3, "label": "Téměř vyprodáno"},
-                {"max": 0.3, "score": 0.6, "label": "Nízká dostupnost"},
-                {"max": 0.6, "score": 1.0, "label": "Dobrá dostupnost"},
-                {"max": 0.8, "score": 0.7, "label": "Vysoká dostupnost"},
-                {"max": 1.0, "score": 0.5, "label": "Skoro neprodáno"},
-            ]
-        },
-        "missing_value_policy": "neutral",
-        "explanation_template": "Dostupnost projektu: {value:.0%}",
-        "client_mode": "auto",
-    },
-    {
-        "field_key": "avg_price_czk",
-        "label": "Průměrná cena v projektu (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Průměrná cena v projektu: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_price_czk",
-        "label": "Nejnižší cena v projektu (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Nejnižší cena: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_price_czk",
-        "label": "Nejvyšší cena v projektu (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Nejvyšší cena: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "avg_price_per_m2_czk",
-        "label": "Průměrná cena za m² v projektu (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.4,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Průměrná cena/m² v projektu: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "avg_floor_area_m2",
-        "label": "Průměrná plocha v projektu (m²)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "project_quality",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Průměrná plocha v projektu: {value} m²",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_parking_indoor_price_czk",
-        "label": "Min. cena vnitřního parkování (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Min. vnitřní parkování: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_parking_indoor_price_czk",
-        "label": "Max. cena vnitřního parkování (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Max. vnitřní parkování: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_parking_outdoor_price_czk",
-        "label": "Min. cena venkovního parkování (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Min. venkovní parkování: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_parking_outdoor_price_czk",
-        "label": "Max. cena venkovního parkování (Kč)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Max. venkovní parkování: {value} Kč",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_days_on_market",
-        "label": "Max. dny na trhu (projekt)",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "risk",
-        "weight": 0.4,
-        "rule_type": "numeric_thresholds",
-        "rule_config": {
-            "thresholds": [
-                {"max": 60, "score": 1.0, "label": "Nový projekt"},
-                {"max": 180, "score": 0.7, "label": "Běžný projekt"},
-                {"max": 365, "score": 0.4, "label": "Starší projekt"},
-                {"max": 99999, "score": 0.2, "label": "Velmi starý projekt"},
-            ]
-        },
-        "missing_value_policy": "neutral",
-        "explanation_template": "Nejdéle na trhu v projektu: {value} dní",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_payment_contract",
-        "label": "Min. platba při smlouvě",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Min. platba při smlouvě: {value:.0%}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_payment_contract",
-        "label": "Max. platba při smlouvě",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Max. platba při smlouvě: {value:.0%}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_payment_construction",
-        "label": "Min. platba při výstavbě",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Min. platba při výstavbě: {value:.0%}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_payment_construction",
-        "label": "Max. platba při výstavbě",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Max. platba při výstavbě: {value:.0%}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "min_payment_occupancy",
-        "label": "Min. platba při kolaudaci",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Min. platba při kolaudaci: {value:.0%}",
-        "client_mode": "hidden",
-    },
-    {
-        "field_key": "max_payment_occupancy",
-        "label": "Max. platba při kolaudaci",
-        "entity_type": "aggregate",
-        "data_type": "number",
-        "enabled": False,
-        "include_in_score": False,
-        "group_key": "finance",
-        "weight": 0.3,
-        "rule_type": "informational_only",
-        "rule_config": {},
-        "missing_value_policy": "neutral",
-        "explanation_template": "Max. platba při kolaudaci: {value:.0%}",
         "client_mode": "hidden",
     },
 ]

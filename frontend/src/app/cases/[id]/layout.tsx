@@ -7,10 +7,10 @@ import { API_BASE } from "@/lib/api";
 import { formatCurrencyCzk } from "@/lib/format";
 
 const TABS = [
-  { key: "overview", label: "Overview", suffix: "/overview" },
-  { key: "brief", label: "Brief", suffix: "/brief" },
+  { key: "overview", label: "Přehled", suffix: "/overview" },
+  { key: "brief", label: "Zadání", suffix: "/brief" },
   { key: "recommendations", label: "Doporučení", suffix: "/recommendations" },
-  { key: "shortlist", label: "Shortlist", suffix: "/shortlist" },
+  { key: "shortlist", label: "Výběr", suffix: "/shortlist" },
   { key: "presentation", label: "Prezentace", suffix: "/presentation" },
   { key: "activity", label: "Aktivita", suffix: "/activity" },
   { key: "notes", label: "Poznámky", suffix: "/notes" },
@@ -24,20 +24,21 @@ type CaseShellData = {
   budget_max?: number | null;
   has_profile: boolean;
   shortlist_count: number;
+  last_activity: string | null;
 };
 
 function stageLabel(d: CaseShellData): string {
   if (!d.has_profile) return "Nový";
-  if (d.recommendations_count === 0) return "Brief hotový";
-  if (d.shortlist_count > 0) return "Shortlist";
+  if (d.recommendations_count === 0) return "Zadání hotové";
+  if (d.shortlist_count > 0) return "Výběr připraven";
   return "Doporučení";
 }
 
 function nextAction(d: CaseShellData): string {
-  if (!d.has_profile) return "Doplnit brief";
-  if (d.recommendations_count === 0) return "Vygenerovat doporučení";
-  if (d.shortlist_count === 0) return "Vybrat do shortlistu";
-  return "Připravit prezentaci";
+  if (!d.has_profile) return "→ Doplnit zadání";
+  if (d.recommendations_count === 0) return "→ Vygenerovat doporučení";
+  if (d.shortlist_count === 0) return "→ Připravit výběr";
+  return "→ Připravit klientskou prezentaci";
 }
 
 export default function CaseLayout({ children }: { children: React.ReactNode }) {
@@ -54,9 +55,12 @@ export default function CaseLayout({ children }: { children: React.ReactNode }) 
       fetch(`${API_BASE}/clients/${id}`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)),
       fetch(`${API_BASE}/clients/${id}/profile`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : null)),
       fetch(`${API_BASE}/clients/${id}/recommendations`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : [])),
-    ]).then(([client, profile, recs]) => {
+      fetch(`${API_BASE}/clients/${id}/notes`, { headers: { Authorization: `Bearer ${token}` } }).then((r) => (r.ok ? r.json() : [])),
+    ]).then(([client, profile, recs, notes]) => {
       if (!client) return;
       const recsArr = Array.isArray(recs) ? recs : [];
+      const notesArr = Array.isArray(notes) ? notes : [];
+      const lastNote = notesArr[0]?.created_at ?? null;
       setData({
         name: client.name ?? `Case #${id}`,
         status: client.status ?? "new",
@@ -65,6 +69,7 @@ export default function CaseLayout({ children }: { children: React.ReactNode }) 
         budget_max: profile?.budget_max ?? null,
         has_profile: Boolean(profile && (profile.budget_min != null || profile.budget_max != null || profile.layouts?.values?.length)),
         shortlist_count: recsArr.filter((r: any) => r.pinned_by_broker).length,
+        last_activity: lastNote ?? client.created_at ?? null,
       });
     }).catch(() => {});
   }, [id]);
@@ -78,19 +83,17 @@ export default function CaseLayout({ children }: { children: React.ReactNode }) 
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_8px_rgba(0,0,0,0.06)]">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Case</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Případ</p>
             <h1 className="text-xl font-semibold text-slate-900">{data?.name ?? `Case #${String(id)}`}</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="rounded-full bg-[#1E3A5F] px-2.5 py-1 font-medium text-white">{stage}</span>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">Owner: Vojta</span>
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">Majitel: Vojta</span>
             <span className="rounded-full bg-amber-50 px-2.5 py-1 text-amber-800">{action}</span>
+            {data?.last_activity && (
+              <span className="text-slate-400">Poslední aktivita: {new Date(data.last_activity).toLocaleDateString("cs-CZ")}</span>
+            )}
           </div>
-        </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-xs">
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">Budget: {budgetStr}</span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">Doporučení: {data?.recommendations_count ?? 0}</span>
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-slate-600">Shortlist: {data?.shortlist_count ?? 0}</span>
         </div>
       </div>
 

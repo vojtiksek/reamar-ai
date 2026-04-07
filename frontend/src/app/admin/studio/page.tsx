@@ -548,6 +548,9 @@ export default function ScoringStudioPage() {
   // Expanded field rows
   const [expandedField, setExpandedField] = useState<string | null>(null);
 
+  // Rules view controls
+  const [rulesGroupBy, setRulesGroupBy] = useState<"none" | "group" | "client_mode">("none");
+
   // ── Auth ──
   useEffect(() => {
     const t =
@@ -570,13 +573,10 @@ export default function ScoringStudioPage() {
         setGroups(data.groups || {});
         setFieldRules(data.field_rules || []);
         setEligibilityRules(data.eligibility_rules || []);
-        setThresholds({
-          strong_pick_min_score: 70,
-          review_pick_min_score: 55,
-          hide_below_score: 0,
-          default_visible_limit: 50,
+        setThresholds((prev) => ({
+          ...prev,
           ...data.thresholds,
-        });
+        }));
         setWeights(data.weights || {});
       })
       .finally(() => setLoading(false));
@@ -849,6 +849,24 @@ export default function ScoringStudioPage() {
       {/* ═══════════════════ TAB 2: Field Rules ═══════════════════ */}
       {activeTab === "Pravidla" && (
         <div className="space-y-4">
+          {/* Controls */}
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-slate-500 text-xs font-medium uppercase tracking-wide">Uspořádat dle:</span>
+            {(["none", "group", "client_mode"] as const).map((opt) => (
+              <button
+                key={opt}
+                onClick={() => setRulesGroupBy(opt)}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+                  rulesGroupBy === opt
+                    ? "bg-[#1E3A5F] text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                }`}
+              >
+                {opt === "none" ? "Výchozí" : opt === "group" ? "Skupina" : "Režim klienta"}
+              </button>
+            ))}
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
@@ -863,8 +881,31 @@ export default function ScoringStudioPage() {
                 </tr>
               </thead>
               <tbody>
-                {fieldRules.map((rule, idx) => (
+                {(() => {
+                  if (rulesGroupBy === "none") return fieldRules.map((rule, idx) => ({ rule, idx, groupHeader: null }));
+                  const key = rulesGroupBy === "group" ? "group_key" : "client_mode";
+                  const sorted = [...fieldRules].sort((a, b) => {
+                    const av = (a[key] ?? "—") as string;
+                    const bv = (b[key] ?? "—") as string;
+                    return av.localeCompare(bv);
+                  });
+                  let lastGroup: string | null = null;
+                  return sorted.map((rule) => {
+                    const groupVal = (rule[key] ?? "—") as string;
+                    const header = groupVal !== lastGroup ? groupVal : null;
+                    lastGroup = groupVal;
+                    const idx = fieldRules.indexOf(rule);
+                    return { rule, idx, groupHeader: header };
+                  });
+                })().map(({ rule, idx, groupHeader }) => (
                   <Fragment key={rule.field_key}>
+                    {groupHeader !== null && (
+                      <tr>
+                        <td colSpan={7} className="px-3 pt-4 pb-1">
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{groupHeader}</span>
+                        </td>
+                      </tr>
+                    )}
                     <tr
                       className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 ${
                         expandedField === rule.field_key ? "bg-slate-50" : ""
@@ -1090,6 +1131,7 @@ export default function ScoringStudioPage() {
                   </Fragment>
                 ))}
               </tbody>
+
             </table>
           </div>
 
@@ -1164,7 +1206,7 @@ export default function ScoringStudioPage() {
                 {rule.enabled && (
                   <>
                     {/* === slider === */}
-                    {uiType === "slider" && uiConfig && (
+                    {uiType === "slider" && uiConfig && uiConfig.param && (
                       <div className="mt-3 pl-10">
                         <label className="block text-xs font-medium text-slate-600 mb-1">
                           {uiConfig.label}
@@ -1182,7 +1224,7 @@ export default function ScoringStudioPage() {
                                 ...updated[idx],
                                 config: {
                                   ...updated[idx].config,
-                                  [uiConfig.param]: Number(e.target.value),
+                                  [uiConfig.param!]: Number(e.target.value),
                                 },
                               };
                               setEligibilityRules(updated);

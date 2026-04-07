@@ -11,10 +11,10 @@ import type { RecommendationItem } from "@/lib/caseTypes";
 type ShortlistRole = "top_pick" | "alternative" | "fallback" | "wild_card";
 
 const ROLE_LABELS: Record<ShortlistRole, string> = {
-  top_pick: "Top pick",
-  alternative: "Alternative",
-  fallback: "Fallback",
-  wild_card: "Wild card",
+  top_pick: "Hlavní výběr",
+  alternative: "Alternativa",
+  fallback: "Záloha",
+  wild_card: "Doplněk",
 };
 
 function confidenceBadge(label?: string) {
@@ -107,9 +107,9 @@ export default function ShortlistPage() {
     return (
       <ReamarCard className="p-8 text-center">
         <div className="mx-auto max-w-md space-y-3">
-          <h3 className="text-lg font-semibold text-slate-900">Shortlist je prázdný</h3>
-          <p className="text-sm text-slate-600">Zatím žádné jednotky ve shortlistu. Přidej je z decision feedu v Recommendations.</p>
-          <Link href={`/cases/${clientId}/recommendations`}><ReamarButton variant="primary">Přejít na Recommendations</ReamarButton></Link>
+          <h3 className="text-lg font-semibold text-slate-900">Výběr je prázdný</h3>
+          <p className="text-sm text-slate-600">Zatím žádné jednotky ve výběru. Přidejte je z doporučení.</p>
+          <Link href={`/cases/${clientId}/recommendations`}><ReamarButton variant="primary">Přejít na doporučení</ReamarButton></Link>
         </div>
       </ReamarCard>
     );
@@ -120,26 +120,26 @@ export default function ShortlistPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">Curated shortlist</h2>
-          <p className="text-sm text-slate-500">Výběr, který skutečně vezmeš klientovi na stůl.</p>
+          <h2 className="text-xl font-semibold text-slate-900">Výběr pro klienta</h2>
+          <p className="text-sm text-slate-500">Výběr jednotek připravený k prezentaci klientovi.</p>
         </div>
         <div className="flex gap-2">
-          <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>{shareLoading ? "Vytvářím…" : "Vytvořit share link"}</ReamarButton>
+          <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>{shareLoading ? "Vytvářím…" : "Vytvořit odkaz pro klienta"}</ReamarButton>
           <Link href={`/cases/${clientId}/presentation`}><ReamarButton variant="primary" size="sm">Otevřít prezentaci</ReamarButton></Link>
         </div>
       </div>
 
       {/* Readiness panel */}
       <div className="grid gap-3 md:grid-cols-4">
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Shortlist</p><p className="mt-1 text-2xl font-semibold text-slate-900">{pinned.length}</p></ReamarCard>
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Broker notes</p><p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount}</p></ReamarCard>
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Nutno ověřit</p><p className="mt-1 text-2xl font-semibold text-amber-700">{reviewCount}</p></ReamarCard>
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Share link</p><p className="mt-1 text-sm font-medium text-slate-900">{shareUrl ? "Připravený" : "Ještě nevytvořen"}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Výběr</p><p className="mt-1 text-2xl font-semibold text-slate-900">{pinned.length}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Poznámky</p><p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">K prověření</p><p className="mt-1 text-2xl font-semibold text-amber-700">{reviewCount}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Sdílený odkaz</p><p className="mt-1 text-sm font-medium text-slate-900">{shareUrl ? "Připravený" : "Ještě nevytvořen"}</p></ReamarCard>
       </div>
 
       {shareUrl && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
-          <span className="text-emerald-700 font-medium">Share link:</span>
+          <span className="text-emerald-700 font-medium">Sdílený odkaz:</span>
           <code className="flex-1 truncate text-emerald-900">{shareUrl}</code>
           <button className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700" onClick={() => navigator.clipboard.writeText(shareUrl)}>Kopírovat</button>
         </div>
@@ -161,16 +161,16 @@ export default function ShortlistPage() {
                     >
                       {Object.entries(ROLE_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                     </select>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${rec.eligibility === "review" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{rec.eligibility === "review" ? "Nutno prověřit" : "Ready"}</span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${confidenceBadge(rec.confidence_label)}`}>Confidence {rec.confidence_label || "—"}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${rec.eligibility === "review" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}`}>{rec.eligibility === "review" ? "K prověření" : "Připraveno"}</span>
+                    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${confidenceBadge(rec.confidence_label)}`}>Jistota: {rec.confidence_label === "high" ? "vysoká" : rec.confidence_label === "medium" ? "střední" : rec.confidence_label === "low" ? "nízká" : "—"}</span>
                   </div>
                   <h3 className="mt-2 text-base font-semibold text-slate-900">{rec.project_name || rec.unit_external_id || "—"}</h3>
                   <p className="mt-1 text-sm text-slate-500">{rec.unit_external_id ?? "—"}{rec.layout_label ? ` · ${rec.layout_label}` : ""}{rec.floor_area_m2 != null ? ` · ${formatAreaM2(rec.floor_area_m2)}` : ""}{rec.price_czk != null ? ` · ${formatCurrencyCzk(rec.price_czk)}` : ""}</p>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
+                <div className="grid gap-3 md:grid-cols-3">
                   <div className="rounded-xl bg-slate-50 p-3">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Reason for inclusion</p>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Proč je ve výběru</p>
                     <textarea
                       value={reasons[rec.rec_id] || ""}
                       onChange={(e) => setReasons((prev) => ({ ...prev, [rec.rec_id]: e.target.value }))}
@@ -179,7 +179,26 @@ export default function ShortlistPage() {
                     />
                   </div>
                   <div className="rounded-xl bg-slate-50 p-3">
-                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Risk / verify</p>
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Klientský feedback</p>
+                    {rec.feedback ? (
+                      <div className="space-y-1 text-sm text-slate-700">
+                        <p>
+                          <span className="font-medium">Stav:</span>{" "}
+                          {rec.feedback.feedback_type === "liked"
+                            ? "Líbí se mi"
+                            : rec.feedback.feedback_type === "saved"
+                            ? "Uloženo"
+                            : "Nechci"}
+                        </p>
+                        {rec.feedback.dislike_reason && <p><span className="font-medium">Důvod:</span> {{ price: "Cena", location: "Lokalita", layout: "Dispozice", small_area: "Malá plocha", standard_or_project: "Standard / projekt", noise_or_surroundings: "Hluk / okolí", accessibility: "Dostupnost", other: "Jiné" }[rec.feedback.dislike_reason] || rec.feedback.dislike_reason}</p>}
+                        {rec.feedback.note && <p><span className="font-medium">Poznámka:</span> {rec.feedback.note}</p>}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-slate-500">Klient zatím nereagoval.</p>
+                    )}
+                  </div>
+                  <div className="rounded-xl bg-slate-50 p-3">
+                    <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Na co si dát pozor</p>
                     {rec.top_compromises?.length || rec.eligibility_reasons?.length ? (
                       <ul className="space-y-1 text-sm text-slate-600">
                         {(rec.top_compromises && rec.top_compromises.length ? rec.top_compromises : rec.eligibility_reasons || []).slice(0,3).map((item, idx) => <li key={idx}>• {item}</li>)}
@@ -189,7 +208,7 @@ export default function ShortlistPage() {
                 </div>
 
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Broker note</p>
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Interní poznámka</p>
                   {editingNote === rec.rec_id ? (
                     <div className="space-y-2">
                       <textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" rows={3} value={noteText} onChange={(e) => setNoteText(e.target.value)} placeholder="Jak to prodat / co ověřit před schůzkou…" />
@@ -200,7 +219,7 @@ export default function ShortlistPage() {
                     </div>
                   ) : (
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-sm text-slate-600 whitespace-pre-wrap">{rec.broker_note || "Zatím bez interní poznámky."}</p>
+                      <p className="text-sm text-slate-600 whitespace-pre-wrap">{rec.broker_note || "Zatím bez poznámky."}</p>
                       <button className="text-xs text-slate-500 hover:underline" onClick={() => { setEditingNote(rec.rec_id); setNoteText(rec.broker_note || ""); }}>Upravit</button>
                     </div>
                   )}

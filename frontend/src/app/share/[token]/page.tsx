@@ -148,7 +148,7 @@ export default function SharePage() {
       {/* ── Header ── */}
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3">
-          <span className="text-base font-semibold text-slate-900">Váš výběr nemovitostí</span>
+          <span className="text-base font-semibold text-slate-900">Výběr nemovitostí pro vás</span>
           <span className="text-xs text-slate-400">{unitCountLabel} ve výběru</span>
         </div>
         <div className="flex items-center gap-4">
@@ -175,7 +175,7 @@ export default function SharePage() {
           {/* ── Left: shortlist ── */}
           <aside className="flex w-60 shrink-0 flex-col overflow-y-auto border-r border-slate-200 bg-white">
             <div className="border-b border-slate-100 px-4 py-2.5">
-              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Výběr</p>
+              <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Doporučené nabídky</p>
             </div>
             <ul className="divide-y divide-slate-100">
               {units.map((u, i) => {
@@ -297,7 +297,7 @@ export default function SharePage() {
                 {/* Broker note */}
                 {unit.broker_note && (
                   <div className="rounded-2xl border border-indigo-100 bg-indigo-50/50 p-5">
-                    <p className="text-[11px] font-semibold uppercase tracking-widest text-indigo-400">Komentář poradce</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-indigo-400">Proč stojí za pozornost</p>
                     <p className="mt-2 whitespace-pre-wrap text-sm text-slate-700">{unit.broker_note}</p>
                   </div>
                 )}
