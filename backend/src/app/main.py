@@ -6914,6 +6914,23 @@ def list_future_projects(
     return [_fp_summary(fp, counts.get(fp.id, 0)) for fp in fps]
 
 
+@app.get("/future-projects/by-slug/{slug}", response_model=FutureProjectSummary)
+def get_future_project_by_slug(
+    slug: str,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> FutureProjectSummary:
+    fp = db.execute(
+        select(FutureProject).where(FutureProject.slug == slug, FutureProject.is_visible.is_(True))
+    ).scalar_one_or_none()
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    count = db.execute(
+        select(func.count()).where(FutureProjectInterest.future_project_id == fp.id)
+    ).scalar_one()
+    return _fp_summary(fp, count)
+
+
 @app.get("/future-projects/{fp_id}", response_model=FutureProjectSummary)
 def get_future_project(
     fp_id: int,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { API_BASE } from "@/lib/api";
 import { ReamarCard } from "@/components/ui/reamar-ui";
 
@@ -65,7 +66,8 @@ export default function FutureProjectsPage() {
         {projects.map((fp) => {
           const pub = fp.public_data_json ?? {};
           return (
-            <ReamarCard key={fp.id} className="p-4">
+            <Link key={fp.id} href={`/future-projects/${fp.slug}`} className="block">
+              <ReamarCard className="p-4 transition-shadow hover:shadow-md">
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -76,7 +78,7 @@ export default function FutureProjectsPage() {
                   {fp.developer && <p className="text-xs text-slate-500">{fp.developer}</p>}
 
                   <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
-                    {fp.city && <span>{fp.city}{fp.municipal_district ? ` — ${fp.municipal_district}` : ""}</span>}
+                    {fp.city && <span>{fp.city}{fp.municipal_district ? ` \u2014 ${fp.municipal_district}` : ""}</span>}
                     {fp.project_type && <span>{fp.project_type}</span>}
                     {fp.total_units != null && <span>{fp.total_units} jednotek</span>}
                     {fp.construction_completion && <span>Dokončení: {fp.construction_completion}</span>}
@@ -105,13 +107,12 @@ export default function FutureProjectsPage() {
                     <span className="text-[10px] text-slate-400">{fp.interest_count} zájemců</span>
                   )}
                   {fp.url && (
-                    <a href={fp.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:underline">
-                      Web projektu
-                    </a>
+                    <span className="text-[10px] text-blue-500">{`Web \u2197`}</span>
                   )}
                 </div>
               </div>
             </ReamarCard>
+            </Link>
           );
         })}
       </div>
