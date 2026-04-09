@@ -1676,7 +1676,7 @@ def recompute_client_recommendations(
         elif prop_type == "house":
             q = q.where(func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"]))
 
-    rows = db.execute(q.order_by(Unit.id).limit(500)).all()
+    rows = db.execute(q.order_by(Unit.id)).all()
 
     # Load derived_total_floors for floor-based hard filters (penthouse, ground floor)
     _row_project_ids = list({row[1].id for row in rows})
@@ -6633,7 +6633,7 @@ def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, 
         elif prop_type == "house":
             q = q.where(func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"]))
 
-    rows = db.execute(q.order_by(Unit.id).limit(500)).all()
+    rows = db.execute(q.order_by(Unit.id)).all()
 
     # Layout filter
     pref_layout_buckets: list[str] = []
