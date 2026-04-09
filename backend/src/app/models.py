@@ -734,6 +734,39 @@ class ClientShareLink(Base):
 
 
 # ---------------------------------------------------------------------------
+# Client Portal Auth
+# ---------------------------------------------------------------------------
+
+class ClientMagicLink(Base):
+    __tablename__ = "client_magic_links"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+    client: Mapped["Client"] = relationship()
+
+
+class ClientPortalSession(Base):
+    __tablename__ = "client_portal_sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True)
+    token: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+
+    client: Mapped["Client"] = relationship()
+
+
+# ---------------------------------------------------------------------------
 # Future Projects
 # ---------------------------------------------------------------------------
 

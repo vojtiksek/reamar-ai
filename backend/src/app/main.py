@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 
@@ -45,6 +46,8 @@ from .models import (
     ScoringConfig,
     FutureProject,
     FutureProjectInterest,
+    ClientMagicLink,
+    ClientPortalSession,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -7101,3 +7104,149 @@ def delete_interest(
         raise HTTPException(status_code=404, detail="Interest not found")
     db.delete(interest)
     db.commit()
+
+
+# ===========================================================================
+# Client Portal Auth
+# ===========================================================================
+
+def get_current_portal_client(
+    db: DbSession,
+    authorization: str = Header(default=""),
+) -> Client:
+    """Authenticate a portal client via session token."""
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing token")
+    token = authorization.split(" ", 1)[1].strip()
+    session = db.execute(
+        select(ClientPortalSession).where(ClientPortalSession.token == token)
+    ).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    from datetime import timezone as _tz
+    if session.expires_at < datetime.now(_tz.utc):
+        raise HTTPException(status_code=401, detail="Token expired")
+    client = db.get(Client, session.client_id)
+    if not client:
+        raise HTTPException(status_code=401, detail="Client not found")
+    return client
+
+
+class PortalInviteResponse(BaseModel):
+    magic_link_url: str
+    token: str
+    expires_at: datetime
+
+
+@app.post("/clients/{client_id}/portal-invite", response_model=PortalInviteResponse)
+def create_portal_invite(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> PortalInviteResponse:
+    """Broker generates a magic link for a client to access the portal."""
+    client = db.get(Client, client_id)
+    if not client or client.broker_id != broker.id:
+        raise HTTPException(status_code=404, detail="Client not found")
+    if not client.email:
+        raise HTTPException(status_code=400, detail="Client has no email address")
+    # Invalidate any existing unused magic links for this client
+    db.execute(
+        select(ClientMagicLink).where(
+            ClientMagicLink.client_id == client.id,
+            ClientMagicLink.used_at.is_(None),
+        )
+    )
+    for old in db.execute(
+        select(ClientMagicLink).where(
+            ClientMagicLink.client_id == client.id,
+            ClientMagicLink.used_at.is_(None),
+        )
+    ).scalars().all():
+        from datetime import timezone as _tz
+        old.used_at = datetime.now(_tz.utc)
+
+    import secrets
+    from datetime import timezone as _tz
+    token = secrets.token_urlsafe(32)
+    expires = datetime.now(_tz.utc) + timedelta(hours=24)
+    link = ClientMagicLink(
+        client_id=client.id, token=token, expires_at=expires,
+    )
+    db.add(link)
+    db.commit()
+
+    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3001")
+    magic_url = f"{frontend_url}/portal/login?token={token}"
+    return PortalInviteResponse(magic_link_url=magic_url, token=token, expires_at=expires)
+
+
+class PortalAuthRequest(BaseModel):
+    token: str
+
+
+class PortalAuthResponse(BaseModel):
+    session_token: str
+    client_id: int
+    client_name: str
+    expires_at: datetime
+
+
+@app.post("/portal/auth", response_model=PortalAuthResponse)
+def portal_auth(
+    body: PortalAuthRequest,
+    db: DbSession,
+) -> PortalAuthResponse:
+    """Exchange a magic link token for a portal session."""
+    link = db.execute(
+        select(ClientMagicLink).where(ClientMagicLink.token == body.token)
+    ).scalar_one_or_none()
+    if not link:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    if link.used_at is not None:
+        raise HTTPException(status_code=401, detail="Token already used")
+    from datetime import timezone as _tz
+    if link.expires_at < datetime.now(_tz.utc):
+        raise HTTPException(status_code=401, detail="Token expired")
+
+    # Mark magic link as used
+    link.used_at = datetime.now(_tz.utc)
+
+    # Create portal session (30 days)
+    import secrets
+    session_token = secrets.token_urlsafe(32)
+    session_expires = datetime.now(_tz.utc) + timedelta(days=30)
+    session = ClientPortalSession(
+        client_id=link.client_id, token=session_token, expires_at=session_expires,
+    )
+    db.add(session)
+    db.commit()
+
+    client = db.get(Client, link.client_id)
+    return PortalAuthResponse(
+        session_token=session_token,
+        client_id=client.id,
+        client_name=client.name,
+        expires_at=session_expires,
+    )
+
+
+class PortalMeResponse(BaseModel):
+    id: int
+    name: str
+    email: str | None
+    broker_name: str | None
+
+
+@app.get("/portal/me", response_model=PortalMeResponse)
+def portal_me(
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> PortalMeResponse:
+    broker = db.get(Broker, client.broker_id)
+    return PortalMeResponse(
+        id=client.id,
+        name=client.name,
+        email=client.email,
+        broker_name=broker.name if broker else None,
+    )
