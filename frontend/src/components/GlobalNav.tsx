@@ -37,6 +37,7 @@ function NavLinks() {
 
   const isCases = pathname?.startsWith("/cases") || pathname?.startsWith("/clients");
   const isExplorer = pathname?.startsWith("/explorer") || pathname?.startsWith("/units") || pathname?.startsWith("/projects");
+  const isFuture = pathname?.startsWith("/future-projects");
   const isAdmin = pathname?.startsWith("/admin") || pathname?.startsWith("/matches") || pathname?.startsWith("/analytics");
 
   return (
@@ -47,6 +48,9 @@ function NavLinks() {
         </Link>
         <Link href={buildNavHref("/explorer/projects", searchParams)} className={navClass(!!isExplorer)}>
           Explorer
+        </Link>
+        <Link href="/future-projects" className={navClass(!!isFuture)}>
+          Budoucí
         </Link>
         <Link href="/admin/studio" className={navClass(!!isAdmin)}>
           Admin

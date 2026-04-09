@@ -43,6 +43,8 @@ from .models import (
     ClientNote,
     UnitEvent,
     ScoringConfig,
+    FutureProject,
+    FutureProjectInterest,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -6785,3 +6787,242 @@ def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, 
         "newly_visible": newly_visible,
         "newly_hidden": newly_hidden,
     }
+
+
+# ---------------------------------------------------------------------------
+# Future Projects
+# ---------------------------------------------------------------------------
+
+class FutureProjectSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    slug: str
+    is_visible: bool
+    sort_order: int
+    public_data_json: dict | None = None
+    internal_data_json: dict | None = None
+    interest_count: int = 0
+    created_at: datetime
+    updated_at: datetime
+
+
+class FutureProjectCreateBody(BaseModel):
+    name: str
+    slug: str | None = None
+    is_visible: bool = True
+    sort_order: int = 0
+    public_data_json: dict | None = None
+    internal_data_json: dict | None = None
+
+
+class FutureProjectUpdateBody(BaseModel):
+    name: str | None = None
+    slug: str | None = None
+    is_visible: bool | None = None
+    sort_order: int | None = None
+    public_data_json: dict | None = None
+    internal_data_json: dict | None = None
+
+
+def _slugify(name: str) -> str:
+    import re, unicodedata
+    s = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    s = re.sub(r"[^\w\s-]", "", s).strip().lower()
+    return re.sub(r"[-\s]+", "-", s)
+
+
+def _fp_summary(fp: FutureProject, interest_count: int = 0) -> FutureProjectSummary:
+    return FutureProjectSummary(
+        id=fp.id, name=fp.name, slug=fp.slug, is_visible=fp.is_visible,
+        sort_order=fp.sort_order, public_data_json=fp.public_data_json,
+        internal_data_json=fp.internal_data_json, interest_count=interest_count,
+        created_at=fp.created_at, updated_at=fp.updated_at,
+    )
+
+
+@app.get("/future-projects", response_model=list[FutureProjectSummary])
+def list_future_projects(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+    include_hidden: bool = False,
+) -> list[FutureProjectSummary]:
+    q = select(FutureProject)
+    if not include_hidden:
+        q = q.where(FutureProject.is_visible.is_(True))
+    fps = db.execute(q.order_by(FutureProject.sort_order, FutureProject.name)).scalars().all()
+    counts: dict[int, int] = {}
+    if fps:
+        rows = db.execute(
+            select(FutureProjectInterest.future_project_id, func.count())
+            .where(FutureProjectInterest.future_project_id.in_([f.id for f in fps]))
+            .group_by(FutureProjectInterest.future_project_id)
+        ).all()
+        counts = {r[0]: r[1] for r in rows}
+    return [_fp_summary(fp, counts.get(fp.id, 0)) for fp in fps]
+
+
+@app.get("/future-projects/{fp_id}", response_model=FutureProjectSummary)
+def get_future_project(
+    fp_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> FutureProjectSummary:
+    fp = db.get(FutureProject, fp_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    count = db.execute(
+        select(func.count()).where(FutureProjectInterest.future_project_id == fp.id)
+    ).scalar_one()
+    return _fp_summary(fp, count)
+
+
+@app.post("/future-projects", response_model=FutureProjectSummary, status_code=201)
+def create_future_project(
+    body: FutureProjectCreateBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> FutureProjectSummary:
+    slug = body.slug or _slugify(body.name)
+    fp = FutureProject(
+        name=body.name, slug=slug, is_visible=body.is_visible,
+        sort_order=body.sort_order, public_data_json=body.public_data_json,
+        internal_data_json=body.internal_data_json,
+    )
+    db.add(fp)
+    db.commit()
+    db.refresh(fp)
+    return _fp_summary(fp)
+
+
+@app.patch("/future-projects/{fp_id}", response_model=FutureProjectSummary)
+def update_future_project(
+    fp_id: int,
+    body: FutureProjectUpdateBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> FutureProjectSummary:
+    fp = db.get(FutureProject, fp_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    if body.name is not None:
+        fp.name = body.name
+    if body.slug is not None:
+        fp.slug = body.slug
+    if body.is_visible is not None:
+        fp.is_visible = body.is_visible
+    if body.sort_order is not None:
+        fp.sort_order = body.sort_order
+    if body.public_data_json is not None:
+        fp.public_data_json = body.public_data_json
+    if body.internal_data_json is not None:
+        fp.internal_data_json = body.internal_data_json
+    db.add(fp)
+    db.commit()
+    db.refresh(fp)
+    count = db.execute(
+        select(func.count()).where(FutureProjectInterest.future_project_id == fp.id)
+    ).scalar_one()
+    return _fp_summary(fp, count)
+
+
+@app.delete("/future-projects/{fp_id}", status_code=204)
+def delete_future_project(
+    fp_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    fp = db.get(FutureProject, fp_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    db.delete(fp)
+    db.commit()
+
+
+# --- Future Project Interests ---
+
+class InterestItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    future_project_id: int
+    client_id: int | None
+    client_name: str | None = None
+    broker_id: int
+    status: str
+    note: str | None
+    created_at: datetime
+
+
+class InterestCreateBody(BaseModel):
+    client_id: int | None = None
+    status: str = "interested"
+    note: str | None = None
+
+
+@app.get("/future-projects/{fp_id}/interests", response_model=list[InterestItem])
+def list_interests(
+    fp_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[InterestItem]:
+    fp = db.get(FutureProject, fp_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    rows = db.execute(
+        select(FutureProjectInterest, Client)
+        .outerjoin(Client, FutureProjectInterest.client_id == Client.id)
+        .where(FutureProjectInterest.future_project_id == fp_id)
+        .order_by(FutureProjectInterest.created_at.desc())
+    ).all()
+    return [
+        InterestItem(
+            id=i.id, future_project_id=i.future_project_id,
+            client_id=i.client_id, client_name=c.name if c else None,
+            broker_id=i.broker_id, status=i.status, note=i.note,
+            created_at=i.created_at,
+        )
+        for i, c in rows
+    ]
+
+
+@app.post("/future-projects/{fp_id}/interests", response_model=InterestItem, status_code=201)
+def create_interest(
+    fp_id: int,
+    body: InterestCreateBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> InterestItem:
+    fp = db.get(FutureProject, fp_id)
+    if not fp:
+        raise HTTPException(status_code=404, detail="Future project not found")
+    interest = FutureProjectInterest(
+        future_project_id=fp_id, client_id=body.client_id,
+        broker_id=broker.id, status=body.status, note=body.note,
+    )
+    db.add(interest)
+    db.commit()
+    db.refresh(interest)
+    client_name = None
+    if interest.client_id:
+        cl = db.get(Client, interest.client_id)
+        client_name = cl.name if cl else None
+    return InterestItem(
+        id=interest.id, future_project_id=interest.future_project_id,
+        client_id=interest.client_id, client_name=client_name,
+        broker_id=interest.broker_id, status=interest.status,
+        note=interest.note, created_at=interest.created_at,
+    )
+
+
+@app.delete("/future-projects/{fp_id}/interests/{interest_id}", status_code=204)
+def delete_interest(
+    fp_id: int,
+    interest_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> None:
+    interest = db.get(FutureProjectInterest, interest_id)
+    if not interest or interest.future_project_id != fp_id:
+        raise HTTPException(status_code=404, detail="Interest not found")
+    db.delete(interest)
+    db.commit()

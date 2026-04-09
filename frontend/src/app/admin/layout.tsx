@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 
 const TABS = [
   { href: "/admin/studio", label: "Scoring Studio" },
+  { href: "/admin/future-projects", label: "Budoucí projekty" },
 ];
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

@@ -733,6 +733,43 @@ class ClientShareLink(Base):
     broker: Mapped["Broker"] = relationship()
 
 
+# ---------------------------------------------------------------------------
+# Future Projects
+# ---------------------------------------------------------------------------
+
+class FutureProject(Base):
+    __tablename__ = "future_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    public_data_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    internal_data_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), server_onupdate=func.now())
+
+    interests: Mapped[list["FutureProjectInterest"]] = relationship(back_populates="future_project", cascade="all, delete-orphan")
+
+
+class FutureProjectInterest(Base):
+    __tablename__ = "future_project_interests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    future_project_id: Mapped[int] = mapped_column(ForeignKey("future_projects.id", ondelete="CASCADE"), nullable=False)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id"), nullable=True)
+    broker_id: Mapped[int] = mapped_column(ForeignKey("brokers.id"), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'interested'"))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), server_onupdate=func.now())
+
+    future_project: Mapped["FutureProject"] = relationship(back_populates="interests")
+    client: Mapped["Client | None"] = relationship()
+    broker: Mapped["Broker"] = relationship()
+
+
 # Indexes
 Index("ix_units_project_id", Unit.project_id)
 Index("ix_units_price_per_m2_czk", Unit.price_per_m2_czk)
