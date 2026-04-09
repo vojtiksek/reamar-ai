@@ -745,6 +745,24 @@ class FutureProject(Base):
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     is_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("true"))
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+    # Core fields
+    developer: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    total_units: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    date_sale_start: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    construction_completion: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    project_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    renovation: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    gps_latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 8), nullable=True)
+    gps_longitude: Mapped[Decimal | None] = mapped_column(Numeric(11, 8), nullable=True)
+    city: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    municipal_district: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    region: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # JSON fields
     public_data_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     internal_data_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())

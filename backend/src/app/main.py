@@ -6800,6 +6800,22 @@ class FutureProjectSummary(BaseModel):
     slug: str
     is_visible: bool
     sort_order: int
+    # Core fields
+    developer: str | None = None
+    address: str | None = None
+    stage: str | None = None
+    total_units: int | None = None
+    date_sale_start: str | None = None
+    construction_completion: str | None = None
+    project_type: str | None = None
+    url: str | None = None
+    renovation: bool | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
+    city: str | None = None
+    municipal_district: str | None = None
+    region: str | None = None
+    # JSON fields
     public_data_json: dict | None = None
     internal_data_json: dict | None = None
     interest_count: int = 0
@@ -6812,6 +6828,20 @@ class FutureProjectCreateBody(BaseModel):
     slug: str | None = None
     is_visible: bool = True
     sort_order: int = 0
+    developer: str | None = None
+    address: str | None = None
+    stage: str | None = None
+    total_units: int | None = None
+    date_sale_start: str | None = None
+    construction_completion: str | None = None
+    project_type: str | None = None
+    url: str | None = None
+    renovation: bool | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
+    city: str | None = None
+    municipal_district: str | None = None
+    region: str | None = None
     public_data_json: dict | None = None
     internal_data_json: dict | None = None
 
@@ -6821,6 +6851,20 @@ class FutureProjectUpdateBody(BaseModel):
     slug: str | None = None
     is_visible: bool | None = None
     sort_order: int | None = None
+    developer: str | None = None
+    address: str | None = None
+    stage: str | None = None
+    total_units: int | None = None
+    date_sale_start: str | None = None
+    construction_completion: str | None = None
+    project_type: str | None = None
+    url: str | None = None
+    renovation: bool | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
+    city: str | None = None
+    municipal_district: str | None = None
+    region: str | None = None
     public_data_json: dict | None = None
     internal_data_json: dict | None = None
 
@@ -6835,7 +6879,15 @@ def _slugify(name: str) -> str:
 def _fp_summary(fp: FutureProject, interest_count: int = 0) -> FutureProjectSummary:
     return FutureProjectSummary(
         id=fp.id, name=fp.name, slug=fp.slug, is_visible=fp.is_visible,
-        sort_order=fp.sort_order, public_data_json=fp.public_data_json,
+        sort_order=fp.sort_order,
+        developer=fp.developer, address=fp.address, stage=fp.stage,
+        total_units=fp.total_units, date_sale_start=fp.date_sale_start,
+        construction_completion=fp.construction_completion,
+        project_type=fp.project_type, url=fp.url, renovation=fp.renovation,
+        gps_latitude=float(fp.gps_latitude) if fp.gps_latitude is not None else None,
+        gps_longitude=float(fp.gps_longitude) if fp.gps_longitude is not None else None,
+        city=fp.city, municipal_district=fp.municipal_district, region=fp.region,
+        public_data_json=fp.public_data_json,
         internal_data_json=fp.internal_data_json, interest_count=interest_count,
         created_at=fp.created_at, updated_at=fp.updated_at,
     )
@@ -6886,7 +6938,14 @@ def create_future_project(
     slug = body.slug or _slugify(body.name)
     fp = FutureProject(
         name=body.name, slug=slug, is_visible=body.is_visible,
-        sort_order=body.sort_order, public_data_json=body.public_data_json,
+        sort_order=body.sort_order,
+        developer=body.developer, address=body.address, stage=body.stage,
+        total_units=body.total_units, date_sale_start=body.date_sale_start,
+        construction_completion=body.construction_completion,
+        project_type=body.project_type, url=body.url, renovation=body.renovation,
+        gps_latitude=body.gps_latitude, gps_longitude=body.gps_longitude,
+        city=body.city, municipal_district=body.municipal_district, region=body.region,
+        public_data_json=body.public_data_json,
         internal_data_json=body.internal_data_json,
     )
     db.add(fp)
@@ -6905,18 +6964,17 @@ def update_future_project(
     fp = db.get(FutureProject, fp_id)
     if not fp:
         raise HTTPException(status_code=404, detail="Future project not found")
-    if body.name is not None:
-        fp.name = body.name
-    if body.slug is not None:
-        fp.slug = body.slug
-    if body.is_visible is not None:
-        fp.is_visible = body.is_visible
-    if body.sort_order is not None:
-        fp.sort_order = body.sort_order
-    if body.public_data_json is not None:
-        fp.public_data_json = body.public_data_json
-    if body.internal_data_json is not None:
-        fp.internal_data_json = body.internal_data_json
+    for field in [
+        "name", "slug", "is_visible", "sort_order",
+        "developer", "address", "stage", "total_units",
+        "date_sale_start", "construction_completion", "project_type", "url",
+        "renovation", "gps_latitude", "gps_longitude",
+        "city", "municipal_district", "region",
+        "public_data_json", "internal_data_json",
+    ]:
+        val = getattr(body, field)
+        if val is not None:
+            setattr(fp, field, val)
     db.add(fp)
     db.commit()
     db.refresh(fp)
