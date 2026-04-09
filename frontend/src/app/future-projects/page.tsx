@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { API_BASE } from "@/lib/api";
-import { ReamarCard, ReamarButton } from "@/components/ui/reamar-ui";
+import { ReamarCard } from "@/components/ui/reamar-ui";
 
 type FutureProject = {
   id: number;
@@ -11,6 +10,18 @@ type FutureProject = {
   slug: string;
   is_visible: boolean;
   sort_order: number;
+  developer: string | null;
+  address: string | null;
+  stage: string | null;
+  total_units: number | null;
+  date_sale_start: string | null;
+  construction_completion: string | null;
+  project_type: string | null;
+  url: string | null;
+  renovation: boolean | null;
+  city: string | null;
+  municipal_district: string | null;
+  region: string | null;
   public_data_json: Record<string, unknown> | null;
   internal_data_json: Record<string, unknown> | null;
   interest_count: number;
@@ -38,12 +49,10 @@ export default function FutureProjectsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 px-4 py-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Připravujeme</p>
-          <h1 className="text-xl font-semibold text-slate-900">Budoucí projekty</h1>
-          <p className="mt-1 text-sm text-slate-500">Projekty v přípravě — zatím bez detailních parametrů.</p>
-        </div>
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Připravujeme</p>
+        <h1 className="text-xl font-semibold text-slate-900">Budoucí projekty</h1>
+        <p className="mt-1 text-sm text-slate-500">Projekty v přípravě — zatím bez detailních parametrů jednotek.</p>
       </div>
 
       {projects.length === 0 && (
@@ -53,20 +62,58 @@ export default function FutureProjectsPage() {
       )}
 
       <div className="grid gap-3">
-        {projects.map((fp) => (
-          <ReamarCard key={fp.id} className="flex items-center justify-between p-4">
-            <div>
-              <p className="font-semibold text-slate-800">{fp.name}</p>
-              <p className="text-xs text-slate-500">
-                {fp.interest_count > 0 && <span className="mr-2">{fp.interest_count} zájemců</span>}
-                <span>Přidáno: {new Date(fp.created_at).toLocaleDateString("cs")}</span>
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">V přípravě</span>
-            </div>
-          </ReamarCard>
-        ))}
+        {projects.map((fp) => {
+          const pub = fp.public_data_json ?? {};
+          return (
+            <ReamarCard key={fp.id} className="p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="font-semibold text-slate-800">{fp.name}</p>
+                    {fp.renovation && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">Rekonstrukce</span>}
+                    {!!pub.cooperative_housing && <span className="rounded bg-violet-100 px-1.5 py-0.5 text-[10px] font-medium text-violet-700">Družstevní</span>}
+                  </div>
+                  {fp.developer && <p className="text-xs text-slate-500">{fp.developer}</p>}
+
+                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
+                    {fp.city && <span>{fp.city}{fp.municipal_district ? ` — ${fp.municipal_district}` : ""}</span>}
+                    {fp.project_type && <span>{fp.project_type}</span>}
+                    {fp.total_units != null && <span>{fp.total_units} jednotek</span>}
+                    {fp.construction_completion && <span>Dokončení: {fp.construction_completion}</span>}
+                    {fp.date_sale_start && <span>Prodej od: {fp.date_sale_start}</span>}
+                  </div>
+
+                  {!!(pub.ride_to_center || pub.public_transport_to_center || pub.overall_quality || pub.standards_rating) && (
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500">
+                      {!!pub.ride_to_center && <span>Autem do centra: {String(pub.ride_to_center)} min</span>}
+                      {!!pub.public_transport_to_center && <span>MHD do centra: {String(pub.public_transport_to_center)} min</span>}
+                      {!!pub.overall_quality && <span>Kvalita: {String(pub.overall_quality)}</span>}
+                      {!!pub.standards_rating && <span>Standardy: {String(pub.standards_rating)}</span>}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    fp.stage === "Výstavba" ? "bg-blue-100 text-blue-700" :
+                    fp.stage === "Dokončeno" ? "bg-emerald-100 text-emerald-700" :
+                    "bg-slate-100 text-slate-600"
+                  }`}>
+                    {fp.stage || "V přípravě"}
+                  </span>
+                  {fp.interest_count > 0 && (
+                    <span className="text-[10px] text-slate-400">{fp.interest_count} zájemců</span>
+                  )}
+                  {fp.url && (
+                    <a href={fp.url} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:underline">
+                      Web projektu
+                    </a>
+                  )}
+                </div>
+              </div>
+            </ReamarCard>
+          );
+        })}
       </div>
     </div>
   );
