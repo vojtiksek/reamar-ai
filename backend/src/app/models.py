@@ -684,6 +684,8 @@ class ProjectAggregates(Base):
     max_payment_construction: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     min_payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     max_payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
+    # Derived floor info from units
+    derived_total_floors: Mapped[int | None] = mapped_column(Integer, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

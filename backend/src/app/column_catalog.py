@@ -148,6 +148,7 @@ PROJECTS_OVERVIEW_KEYS: frozenset[str] = frozenset({
     "project_first_seen",
     "project_last_seen",
     "max_days_on_market",
+    "derived_total_floors",
     # Single-value financing fields per project (computed from units or overrides)
     "payment_contract",
     "payment_construction",

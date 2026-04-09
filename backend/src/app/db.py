@@ -8,7 +8,15 @@ from .settings import settings
 
 
 def _create_engine() -> Engine:
-    return create_engine(settings.database_url, echo=False, future=True)
+    return create_engine(
+        settings.database_url,
+        echo=False,
+        future=True,
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        pool_recycle=300,
+    )
 
 
 engine: Engine = _create_engine()

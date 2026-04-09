@@ -44,6 +44,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 3011;Dispozice;Jednotka;orientation;Orientace;ANO;ANO;ANO;;;enum;
 3012;Dispozice;Projekt;category;Kategorie;ANO;ANO;NE;;;enum;
 3013;Dispozice;Projekt;floors_above_ground;Počet podlaží;ANO;NE;ANO;;0;integer;
+3014;Dispozice;Projekt;derived_total_floors;Odvozený počet pater;ANO;NE;NE;;0;integer;
 
 4001;Obecné;Jednotka;availability;Obecné;ANO;ANO;NE;;;enum;
 4010;Obecné;Jednotka;use_type;Typ využití;ANO;ANO;ANO;;;enum;

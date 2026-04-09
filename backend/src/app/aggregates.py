@@ -227,6 +227,16 @@ def recompute_project_aggregates(db: Session, project_ids: Sequence[int]) -> Non
         agg.min_payment_occupancy = min(payment_occupancy_vals) if payment_occupancy_vals else None
         agg.max_payment_occupancy = max(payment_occupancy_vals) if payment_occupancy_vals else None
 
+        # Derived total floors = max(unit.floor) across units in this project
+        floor_vals = [d.get("floor") for d in unit_dicts if d.get("floor") is not None]
+        floor_ints: list[int] = []
+        for fv in floor_vals:
+            try:
+                floor_ints.append(int(fv))
+            except (TypeError, ValueError):
+                continue
+        agg.derived_total_floors = max(floor_ints) if floor_ints else None
+
         db.merge(agg)
 
     db.flush()

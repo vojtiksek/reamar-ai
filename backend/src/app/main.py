@@ -27,6 +27,7 @@ from .import_semantics import (
 )
 from .models import (
     Project,
+    ProjectAggregates,
     Unit,
     UnitApiPending,
     UnitOverride,
@@ -76,7 +77,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
-from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides
+from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -354,6 +355,8 @@ class ClientRecommendationItem(BaseModel):
     confidence_reasons: list[str] = []
     top_strengths: list[str] = []
     top_compromises: list[str] = []
+    project_lat: float | None = None
+    project_lng: float | None = None
     distance_to_tram_stop_m: float | None = None
     distance_to_metro_station_m: float | None = None
     distance_to_bus_stop_m: float | None = None
@@ -1042,6 +1045,27 @@ def get_client_profile(
     )
 
 
+@app.get(
+    "/clients/{client_id}/profile/structured",
+    summary="Structured wizard output (hard_filters / preferences / metadata)",
+)
+def get_structured_wizard(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Return the wizard output split into hard_filters, preferences, and metadata.
+
+    Useful for debugging how the wizard state maps to scoring decisions.
+    """
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    sw = build_structured_wizard(profile)
+    return sw.to_dict()
+
+
 @app.post("/clients/{client_id}/profile", response_model=ClientProfileBody)
 @app.patch("/clients/{client_id}/profile", response_model=ClientProfileBody)
 def upsert_client_profile(
@@ -1083,98 +1107,77 @@ def _wizard_preferences_adjustment(
     profile: ClientProfile | None,
 ) -> float:
     """Return a bonus/penalty adjustment (points, capped externally to ±20/+15)
-    based on wizard fields that are not part of the main weighted scoring:
-    noise sensitivity, floor preference, ground_floor_sensitive, orientation.
+    based on StructuredWizard preferences and hard-filter intensity levels.
+
+    Reads from StructuredWizard (hard_filters + preferences) — no raw wizard dict.
 
     Convention:
       "prefer" → mild signal  (±3–5 pts)
       "must"   → strong signal (±8–12 pts)
     Data absent for a given project/unit → 0 (neutral, no penalty for missing data).
     """
-    if not profile or not profile.filter_json:
+    if not profile:
         return 0.0
 
-    wizard = (profile.filter_json or {}).get("wizard") or {}
-    wizard_noise = wizard.get("noise") or {}
-    wizard_outdoor = wizard.get("outdoor") or {}
+    sw = build_structured_wizard(profile)
+    hf = sw.hard_filters
+    pref = sw.preferences
 
     adj = 0.0
 
+    # Helper: derive intensity from split must/prefer booleans.
+    # "must" takes precedence (stronger signal) when both are somehow True.
+    def _intensity(must: bool, prefer: bool) -> str | None:
+        if must:
+            return "must"
+        if prefer:
+            return "prefer"
+        return None
+
     # ── Noise sensitivity ─────────────────────────────────────────────────────
-    # quiet_area: client prefers a quiet neighbourhood.
-    # noise_label values in DB: 'Nízký' (quiet), 'Střední' (medium),
-    #                           'Vyšší' / 'Vysoký' (noisy)
-    qa_pref = wizard_noise.get("quiet_area")
-    if qa_pref in ("prefer", "must"):
+    qa = _intensity(hf.must_quiet_area, pref.prefer_quiet_area)
+    if qa:
         nl = project.noise_label
         if nl is not None:
             nl_low = nl.lower()
-            if "nízk" in nl_low:  # 'Nízký' → quiet ✓
-                adj += 5.0 if qa_pref == "must" else 4.0
+            if "nízk" in nl_low:
+                adj += 5.0 if qa == "must" else 4.0
             elif "vyšší" in nl_low or "vysoký" in nl_low or "vysoká" in nl_low:
-                adj += -12.0 if qa_pref == "must" else -5.0
-            # 'Střední' → neutral, no adjustment
+                adj += -12.0 if qa == "must" else -5.0
 
-    # main_road sensitivity: distance_to_primary_road_m (metres)
-    mr_pref = wizard_noise.get("main_road")
-    if mr_pref in ("prefer", "must"):
-        dist = project.distance_to_primary_road_m
-        if dist is not None:
-            if dist < 150.0:
-                adj += -12.0 if mr_pref == "must" else -5.0
-            elif dist < 400.0:
-                adj += -6.0 if mr_pref == "must" else -2.0
-            else:  # comfortably far
-                adj += 4.0 if mr_pref == "must" else 3.0
-
-    # tram sensitivity: distance_to_tram_tracks_m
-    tram_pref = wizard_noise.get("tram")
-    if tram_pref in ("prefer", "must"):
-        dist = project.distance_to_tram_tracks_m
-        if dist is not None:
-            if dist < 100.0:
-                adj += -10.0 if tram_pref == "must" else -4.0
-            elif dist < 300.0:
-                adj += -5.0 if tram_pref == "must" else -2.0
-            else:
-                adj += 3.0 if tram_pref == "must" else 2.0
-
-    # railway sensitivity: distance_to_railway_m
-    rail_pref = wizard_noise.get("railway")
-    if rail_pref in ("prefer", "must"):
-        dist = project.distance_to_railway_m
-        if dist is not None:
-            if dist < 300.0:
-                adj += -10.0 if rail_pref == "must" else -4.0
-            elif dist < 700.0:
-                adj += -5.0 if rail_pref == "must" else -2.0
-            else:
-                adj += 3.0 if rail_pref == "must" else 2.0
-
-    # airport sensitivity: distance_to_airport_m
-    airport_pref = wizard_noise.get("airport")
-    if airport_pref in ("prefer", "must"):
-        dist = project.distance_to_airport_m
-        if dist is not None:
-            if dist < 5_000.0:
-                adj += -10.0 if airport_pref == "must" else -4.0
-            elif dist < 10_000.0:
-                adj += -4.0 if airport_pref == "must" else -2.0
-            else:
-                adj += 3.0 if airport_pref == "must" else 2.0
+    # (intensity, distance, close_thresh, mid_thresh, close_must, close_prefer, mid_must, mid_prefer, far_must, far_prefer)
+    _noise_dist_checks = [
+        (_intensity(hf.must_no_main_road, pref.prefer_no_main_road),
+         project.distance_to_primary_road_m, 150.0, 400.0, -12.0, -5.0, -6.0, -2.0, 4.0, 3.0),
+        (_intensity(hf.must_no_tram, pref.prefer_no_tram),
+         project.distance_to_tram_tracks_m, 100.0, 300.0, -10.0, -4.0, -5.0, -2.0, 3.0, 2.0),
+        (_intensity(hf.must_no_railway, pref.prefer_no_railway),
+         project.distance_to_railway_m, 300.0, 700.0, -10.0, -4.0, -5.0, -2.0, 3.0, 2.0),
+        (_intensity(hf.must_no_airport, pref.prefer_no_airport),
+         project.distance_to_airport_m, 5_000.0, 10_000.0, -10.0, -4.0, -4.0, -2.0, 3.0, 2.0),
+    ]
+    for intensity, dist, close, mid, cm, cp, mm, mp, fm, fp in _noise_dist_checks:
+        if not intensity or dist is None:
+            continue
+        is_must = intensity == "must"
+        if dist < close:
+            adj += cm if is_must else cp
+        elif dist < mid:
+            adj += mm if is_must else mp
+        else:
+            adj += fm if is_must else fp
 
     # ── Floor preference ──────────────────────────────────────────────────────
-    # Czech floor convention in DB: 0 = přízemí (ground), 1 = 1st floor above ground, etc.
-    unit_floor = unit.floor  # int | None
+    unit_floor = unit.floor
 
     # ground_floor_sensitive: client dislikes being on ground floor (floor <= 0)
-    gfs = wizard_outdoor.get("ground_floor_sensitive")
-    if gfs in ("prefer", "must") and unit_floor is not None:
+    gfs = _intensity(hf.exclude_ground_floor, pref.ground_floor_sensitive)
+    if gfs and unit_floor is not None:
         if unit_floor <= 0:
             adj += -15.0 if gfs == "must" else -6.0
 
     # preferred_floor: "ground" | "low" | "middle" | "high" | "ignore"
-    pf = wizard_outdoor.get("preferred_floor")
+    pf = pref.preferred_floor
     if pf and pf != "ignore" and unit_floor is not None:
         floor_match = (
             (pf == "ground" and unit_floor <= 0)
@@ -1185,69 +1188,63 @@ def _wizard_preferences_adjustment(
         if floor_match:
             adj += 5.0
         elif pf == "ground" and unit_floor > 3:
-            adj += -4.0  # clearly not ground-level
+            adj += -4.0
         elif pf == "high" and unit_floor <= 1:
-            adj += -4.0  # clearly not high
+            adj += -4.0
 
     # ── Orientation preference ────────────────────────────────────────────────
-    # unit.orientation format: "SW", "N,E", "NE,W", "N,S,E,W" etc.
-    # Parse by scanning for compass letters N/S/E/W (commas and spaces are separators).
-    orient_prefs = wizard_outdoor.get("orientation") or {}
+    orient_prefs = pref.outdoor_orientation or {}
     if orient_prefs and unit.orientation:
         unit_dirs: set[str] = {ch for ch in unit.orientation.upper() if ch in "NSEW"}
         dir_map = {"south": "S", "north": "N", "east": "E", "west": "W"}
         for direction, letter in dir_map.items():
-            pref = orient_prefs.get(direction)
-            if pref not in ("prefer", "must"):
+            dir_pref = orient_prefs.get(direction)
+            if dir_pref not in ("prefer", "must"):
                 continue
             if letter in unit_dirs:
-                adj += 5.0 if pref == "must" else 3.0
+                adj += 5.0 if dir_pref == "must" else 3.0
             else:
-                adj += -8.0 if pref == "must" else -3.0
+                adj += -8.0 if dir_pref == "must" else -3.0
 
     # ── Outdoor space (unified) ─────────────────────────────────────────────
-    outdoor_pref = wizard_outdoor.get("outdoor_space")
-    if outdoor_pref in ("prefer", "must"):
+    outdoor_int = _intensity(hf.must_outdoor_space, pref.prefer_outdoor_space)
+    if outdoor_int:
+        is_must = outdoor_int == "must"
         ext = unit.exterior_area_m2
-        min_out = wizard_outdoor.get("min_outdoor_area_m2")
         if ext is not None and float(ext) > 0:
-            adj += 5.0 if outdoor_pref == "must" else 3.0
-            if min_out is not None and float(ext) >= float(min_out):
-                adj += 3.0  # meets minimum
-            elif min_out is not None:
-                adj += -2.0  # has outdoor but below minimum
+            adj += 5.0 if is_must else 3.0
+            if hf.outdoor_area_min is not None and float(ext) >= float(hf.outdoor_area_min):
+                adj += 3.0
+            elif hf.outdoor_area_min is not None:
+                adj += -2.0
         else:
-            adj += -10.0 if outdoor_pref == "must" else -4.0
+            adj += -10.0 if is_must else -4.0
 
     # ── Energy class ─────────────────────────────────────────────────────────
-    energy_pref = wizard.get("energy_class")
-    if energy_pref and energy_pref != "ignore":
+    if hf.energy_class:
         unit_ec = getattr(project, "energy_class", None)
         if unit_ec:
             ec_order = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6}
-            req_rank = ec_order.get(str(energy_pref).upper()[:1], 99)
+            req_rank = ec_order.get(hf.energy_class.upper()[:1], 99)
             unit_rank = ec_order.get(str(unit_ec).strip().upper()[:1], 99)
             if unit_rank <= req_rank:
-                adj += 5.0  # meets or exceeds requirement
+                adj += 5.0
             elif unit_rank == req_rank + 1:
-                adj += -3.0  # one grade below
-            # worse → handled by hard filter
+                adj += -3.0
 
     # ── Developer preference ─────────────────────────────────────────────────
-    dev_pref = wizard.get("preferred_developer")
-    if dev_pref and isinstance(dev_pref, str) and dev_pref.strip():
+    if pref.preferred_developer and pref.preferred_developer.strip():
         proj_dev = getattr(project, "developer", None) or ""
-        if dev_pref.strip().lower() in proj_dev.lower():
-            adj += 8.0  # developer match
+        if pref.preferred_developer.strip().lower() in proj_dev.lower():
+            adj += 8.0
         else:
-            adj += -2.0  # mild penalty for non-preferred developer
+            adj += -2.0
 
     # ── Completion date proximity ────────────────────────────────────────────
-    completion_pref = wizard.get("completion_date")
-    if completion_pref:
+    if hf.latest_move_in:
         from datetime import date as _date
         try:
-            max_date = _date.fromisoformat(str(completion_pref))
+            max_date = _date.fromisoformat(str(hf.latest_move_in))
             proj_date = getattr(project, "completion_date", None)
             if proj_date is not None:
                 if isinstance(proj_date, str):
@@ -1255,29 +1252,16 @@ def _wizard_preferences_adjustment(
                 if hasattr(proj_date, "date"):
                     proj_date = proj_date.date()
                 if proj_date <= max_date:
-                    adj += 4.0  # on time
-                # past max_date → handled by hard filter
+                    adj += 4.0
         except (ValueError, TypeError):
             pass
 
     # ── Renovation / new-build preference ──────────────────────────────────
-    # renovation_preference values:
-    #   "any"               → no adjustment
-    #   "prefer_new"        → mild bonus for new build, mild penalty for renovation
-    #   "only_new"          → handled by hard filter in frontend, no scoring needed
-    #   "prefer_renovation" → mild bonus for renovation, mild penalty for new build
-    #   "only_renovation"   → handled by hard filter in frontend, no scoring needed
-    #
-    # Data field: unit.renovation (bool | None)
-    #   True  = renovation/reconstruction
-    #   False = new build
-    #   None  = unknown → neutral (no adjustment)
-    reno_pref = wizard.get("renovation_preference")
-    if reno_pref in ("prefer_new", "prefer_renovation") and unit.renovation is not None:
+    if unit.renovation is not None:
         is_new_build = unit.renovation is False
-        if reno_pref == "prefer_new":
+        if pref.prefer_new:
             adj += 4.0 if is_new_build else -3.0
-        else:  # prefer_renovation
+        elif pref.prefer_renovation:
             adj += 4.0 if unit.renovation else -3.0
 
     return adj
@@ -1685,6 +1669,16 @@ def recompute_client_recommendations(
 
     rows = db.execute(q.order_by(Unit.id).limit(500)).all()
 
+    # Load derived_total_floors for floor-based hard filters (penthouse, ground floor)
+    _row_project_ids = list({row[1].id for row in rows})
+    _dtf_map: dict[int, int | None] = {}
+    if _row_project_ids:
+        _dtf_rows = db.execute(
+            select(ProjectAggregates.project_id, ProjectAggregates.derived_total_floors)
+            .where(ProjectAggregates.project_id.in_(_row_project_ids))
+        ).all()
+        _dtf_map = {r[0]: r[1] for r in _dtf_rows}
+
     # If client has explicit layout preferences, compute preferred buckets once.
     pref_layout_buckets: list[str] = []
     if profile and profile.layouts and "values" in profile.layouts:
@@ -1721,7 +1715,8 @@ def recompute_client_recommendations(
                 "field_rules": global_cfg.field_rules_json if global_cfg else None,
                 "eligibility_rules": global_cfg.eligibility_rules_json if global_cfg else None,
             }
-        result = compute_full_score(unit, project, profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w)
+        _agg_proxy = type("_AggProxy", (), {"derived_total_floors": _dtf_map.get(project.id)})()
+        result = compute_full_score(unit, project, profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w, aggregates=_agg_proxy)
         score = result["score"]
         if score <= 0:
             continue
@@ -1747,6 +1742,25 @@ def recompute_client_recommendations(
     # Apply hide_below_score: units below threshold are not stored as recommendations
     scored = [(s, u, p, r) for s, u, p, r in scored if s >= hide_below]
     top = scored[:visible_limit]
+
+    # Preserve feedback from existing recs before deleting them
+    old_recs = db.execute(
+        select(ClientRecommendation)
+        .options(selectinload(ClientRecommendation.feedback))
+        .where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.pinned_by_broker.is_(False),
+            ClientRecommendation.hidden_by_broker.is_(False),
+        )
+    ).scalars().all()
+    saved_feedback: dict[int, dict] = {}  # unit_id → {feedback_type, dislike_reason, note}
+    for old_rec in old_recs:
+        if old_rec.feedback:
+            saved_feedback[old_rec.unit_id] = {
+                "feedback_type": old_rec.feedback.feedback_type,
+                "dislike_reason": old_rec.feedback.dislike_reason,
+                "note": old_rec.feedback.note,
+            }
 
     # Delete existing non-pinned, non-hidden suggestions
     db.execute(
@@ -1796,12 +1810,45 @@ def recompute_client_recommendations(
             reason_json=result,
         )
         db.add(rec)
+        # Re-attach preserved feedback if this unit had feedback before recompute
+        if unit.id in saved_feedback:
+            db.flush()  # ensure rec.id is assigned
+            fb = saved_feedback[unit.id]
+            db.add(ClientRecommendationFeedback(
+                recommendation_id=rec.id,
+                feedback_type=fb["feedback_type"],
+                dislike_reason=fb["dislike_reason"],
+                note=fb["note"],
+            ))
+    # Re-validate pinned recommendations against current eligibility.
+    # Pinned recs survive the delete above, but may now fail hard filters
+    # (e.g. client changed to "only_new" after pinning a renovation unit).
+    pinned_recs = db.execute(
+        select(ClientRecommendation)
+        .where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.pinned_by_broker.is_(True),
+        )
+    ).scalars().all()
+
+    unpinned_count = 0
+    for prec in pinned_recs:
+        pinned_unit = db.get(Unit, prec.unit_id)
+        pinned_project = db.get(Project, prec.project_id) if prec.project_id else None
+        if pinned_unit and pinned_project and profile:
+            elig = compute_eligibility(pinned_unit, pinned_project, profile)
+            if elig["status"] == "fail":
+                prec.pinned_by_broker = False
+                prec.hidden_by_broker = True
+                unpinned_count += 1
+
     db.commit()
 
     return {
         "client_id": client.id,
         "total_candidates": len(rows),
         "created": len(top),
+        "pinned_failed_eligibility": unpinned_count,
     }
 
 
@@ -2114,7 +2161,7 @@ def market_simulate(
         .join(Project, Unit.project_id == Project.id)
         .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
     )
-    rows = db.execute(q.limit(1000)).all()
+    rows = db.execute(q.order_by(Unit.id).limit(1000)).all()
 
     eff_budget_max = budget_max if budget_max is not None else profile.budget_max
     eff_area_min = area_min if area_min is not None else profile.area_min
@@ -2349,6 +2396,8 @@ def list_client_recommendations(
                 floor=unit.floor,
                 layout_label=layout_label,
                 district=project.district,
+                project_lat=float(project.gps_latitude) if project.gps_latitude is not None else None,
+                project_lng=float(project.gps_longitude) if project.gps_longitude is not None else None,
                 score=rec.score,
                 budget_fit=float(reason.get("budget_fit", 0.0)),
                 walkability_fit=float(reason.get("walkability_fit", 0.0)),
@@ -4672,6 +4721,8 @@ def get_projects_overview(
             func.min(unit_subq.c.payment_occupancy).label("min_payment_occupancy"),
             func.max(unit_subq.c.payment_occupancy).label("max_payment_occupancy"),
             func.max(unit_subq.c.sold_date).label("sold_date"),
+            # Derived total floors (max unit floor)
+            func.max(unit_subq.c.floor).label("derived_total_floors"),
         )
         .select_from(unit_subq)
         .join(Project, unit_subq.c.project_id == Project.id)
@@ -4784,6 +4835,9 @@ def get_projects_overview(
         item["max_days_on_market"] = (
             int(r["max_days_on_market"]) if r.get("max_days_on_market") is not None else None
         )
+        # Derived total floors from units
+        v_dtf = r.get("derived_total_floors")
+        item["derived_total_floors"] = int(v_dtf) if v_dtf is not None else None
         # Payment scheme aggregates (fractions 0–1).
         # Keep raw min/max for potential debugging, but expose single-value
         # payment_* fields that are easier to work with in the UI.
@@ -4924,6 +4978,8 @@ def _project_agg_subquery():
             func.min(Unit.payment_occupancy).label("min_payment_occupancy"),
             func.max(Unit.payment_occupancy).label("max_payment_occupancy"),
             func.max(Unit.sold_date).label("sold_date"),
+            # Derived total floors (max unit floor)
+            func.max(Unit.floor).label("derived_total_floors"),
             # Fallback GPS pro projekty – průměrná poloha jednotek v projektu
             func.avg(Unit.gps_latitude).label("project_gps_latitude"),
             func.avg(Unit.gps_longitude).label("project_gps_longitude"),
@@ -5046,6 +5102,10 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         out["project_last_seen"] = out["project_last_seen"].isoformat()
     v_days = agg.get("max_days_on_market")
     out["max_days_on_market"] = int(v_days) if v_days is not None else None
+
+    # Derived total floors from units
+    v_floors = agg.get("derived_total_floors")
+    out["derived_total_floors"] = int(v_floors) if v_floors is not None else None
 
     # Derived single-value financing fields (per project). 0 = nevyplněno, vracíme None.
     def _first_non_none(a, b):
@@ -6135,6 +6195,40 @@ def admin_walkability_recompute_all(db: DbSession) -> dict[str, Any]:
     return recompute_all_walkability(db)
 
 
+@app.post("/admin/aggregates/recompute-floors")
+def admin_recompute_derived_floors(db: DbSession) -> dict[str, Any]:
+    """Recompute derived_total_floors (max unit.floor) for all projects."""
+    import time as _time
+    t0 = _time.monotonic()
+
+    all_project_ids = [
+        pid for (pid,) in db.execute(select(Project.id)).all()
+    ]
+    if not all_project_ids:
+        return {"processed": 0, "elapsed_seconds": 0}
+
+    recompute_project_aggregates(db, all_project_ids)
+    db.commit()
+
+    # Collect results for response
+    agg_rows = (
+        db.execute(
+            select(ProjectAggregates).where(
+                ProjectAggregates.project_id.in_(all_project_ids)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    with_floors = sum(1 for a in agg_rows if a.derived_total_floors is not None)
+    elapsed = round(_time.monotonic() - t0, 2)
+    return {
+        "processed": len(all_project_ids),
+        "with_derived_floors": with_floors,
+        "elapsed_seconds": elapsed,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Scoring weights — global + per-client
 # ---------------------------------------------------------------------------
@@ -6245,14 +6339,17 @@ def get_client_flat_weights(
         select(ClientProfile).where(ClientProfile.client_id == client.id)
     ).scalars().first()
 
-    wizard = {}
-    if profile and profile.filter_json:
-        wizard = (profile.filter_json or {}).get("wizard") or {}
-
-    wizard_weights = derive_flat_weights_from_wizard(wizard)
+    sw = build_structured_wizard(profile)
+    wizard_weights = derive_flat_weights_from_wizard(sw)
     broker_overrides = profile.broker_weight_overrides_json if profile else None
     effective = merge_broker_weight_overrides(wizard_weights, broker_overrides)
-    skip_categories = (wizard.get("skip_categories") or {}) if wizard else {}
+    pref = sw.preferences
+    skip_categories = {
+        "standards": pref.skip_standards,
+        "amenities": pref.skip_amenities,
+        "noise": pref.skip_noise,
+        "walkability": pref.skip_walkability,
+    }
 
     return {
         "wizard_weights": wizard_weights,
@@ -6296,10 +6393,8 @@ def set_client_broker_weight_overrides(
     db.refresh(profile)
 
     # Return effective weights
-    wizard = {}
-    if profile.filter_json:
-        wizard = (profile.filter_json or {}).get("wizard") or {}
-    wizard_weights = derive_flat_weights_from_wizard(wizard)
+    sw = build_structured_wizard(profile)
+    wizard_weights = derive_flat_weights_from_wizard(sw)
     effective = merge_broker_weight_overrides(wizard_weights, profile.broker_weight_overrides_json)
 
     return {

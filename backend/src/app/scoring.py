@@ -2,9 +2,11 @@
 
 Public API:
     compute_full_score(unit, project, profile, weights=None, db=None) → dict
+    build_structured_wizard(profile) → dict   # structured wizard output
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field, asdict
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -83,7 +85,9 @@ FLAT_WEIGHT_CATEGORIES: dict[str, list[str]] = {
     'standards': ['heating', 'heating_source', 'recuperation', 'exterior_blinds',
                   'air_conditioning', 'flooring', 'ceiling_height', 'windows'],
     'amenities': ['reception', 'fitness_project', 'ev_charger', 'courtyard_garden'],
-    'surroundings': ['walkability', 'noise'],
+    'noise': ['noise'],
+    'walkability': ['walkability'],
+    'surroundings': ['walkability', 'noise'],  # backward compat: old wizard data
 }
 
 # Czech labels for UI
@@ -113,19 +117,34 @@ FLAT_WEIGHT_LABELS: dict[str, str] = {
 }
 
 
-def derive_flat_weights_from_wizard(wizard: dict | None) -> dict[str, float]:
+def derive_flat_weights_from_wizard(
+    wizard_or_sw: 'dict | StructuredWizard | None' = None,
+) -> dict[str, float]:
     """Derive flat scoring weights from wizard answers.
 
     If the client skipped a category (e.g. standards_skip=True),
     all weights in that category are zeroed and redistributed.
+
+    Accepts either a StructuredWizard instance or a raw wizard dict (legacy).
     """
     weights = dict(FLAT_WEIGHT_DEFAULTS)
-    if not wizard:
+    if not wizard_or_sw:
         return weights
 
-    skip_flags = wizard.get('skip_categories') or {}
-    zeroed_total = 0.0
+    # Extract skip flags from StructuredWizard or raw dict
+    if isinstance(wizard_or_sw, StructuredWizard):
+        pref = wizard_or_sw.preferences
+        skip_flags: dict[str, bool] = {
+            "standards": pref.skip_standards,
+            "amenities": pref.skip_amenities,
+            "noise": pref.skip_noise,
+            "walkability": pref.skip_walkability,
+            "surroundings": pref.skip_noise or pref.skip_walkability,
+        }
+    else:
+        skip_flags = wizard_or_sw.get('skip_categories') or {}
 
+    zeroed_total = 0.0
     for category, keys in FLAT_WEIGHT_CATEGORIES.items():
         if skip_flags.get(category):
             for k in keys:
@@ -171,11 +190,8 @@ def resolve_flat_weights(
     profile: 'ClientProfile | None',
 ) -> dict[str, float]:
     """Resolve effective flat weights: wizard-derived → broker overrides → normalize."""
-    wizard = {}
-    if profile and profile.filter_json:
-        wizard = (profile.filter_json or {}).get('wizard') or {}
-
-    base = derive_flat_weights_from_wizard(wizard)
+    sw = build_structured_wizard(profile)
+    base = derive_flat_weights_from_wizard(sw)
     broker_ov = None
     if profile and hasattr(profile, 'broker_weight_overrides_json'):
         broker_ov = profile.broker_weight_overrides_json
@@ -215,6 +231,491 @@ def resolve_weights(global_weights: dict | None, client_weights: dict | None) ->
 
 
 # ---------------------------------------------------------------------------
+# Wizard normalization — new 10-step wizard (cases/[id]/brief) → scoring fields
+# ---------------------------------------------------------------------------
+
+def normalize_wizard(wizard: dict) -> dict:
+    """Translate field names from the new 10-step wizard to the names scoring logic reads.
+
+    The new wizard (cases/[id]/brief/page.tsx) uses different field names than the
+    legacy wizard and the backend scoring engine.  This function is a pure mapping
+    layer — no data is dropped, only aliased where the names diverge.
+
+    Called at the top of compute_eligibility() and compute_flat_match() so that
+    both hard-filter and soft-preference paths see consistent field names.
+    Backward-compatible: fields already in the canonical form pass through unchanged.
+    """
+    w = dict(wizard)
+
+    # ── 1. latest_move_in → completion_date ───────────────────────────────────
+    # New wizard stores the hard deadline as wizard.latest_move_in ("YYYY-MM-DD").
+    # compute_eligibility() and _flat_completion_fit() read wizard.completion_date.
+    if w.get("latest_move_in") and not w.get("completion_date"):
+        w["completion_date"] = w["latest_move_in"]
+
+    # ── 2. outdoor.floor_rule → outdoor.ground_floor_sensitive / preferred_floor ─
+    # New wizard stores a single enum: "no_ground" | "top_3" | "top_1" | "ignore".
+    # _wizard_preferences_adjustment() reads outdoor.ground_floor_sensitive (Priority)
+    # and outdoor.preferred_floor ("ground"|"low"|"middle"|"high"|"ignore").
+    outdoor = dict(w.get("outdoor") or {})
+    floor_rule = outdoor.get("floor_rule")
+    if floor_rule and floor_rule != "ignore":
+        if floor_rule == "no_ground" and not outdoor.get("ground_floor_sensitive"):
+            outdoor["ground_floor_sensitive"] = "must"
+        elif floor_rule in ("top_3", "top_1") and not outdoor.get("preferred_floor"):
+            outdoor["preferred_floor"] = "high"
+    w["outdoor"] = outdoor
+
+    # ── 3. budget.min_outdoor_area_m2 → outdoor.min_outdoor_area_m2 ───────────
+    # Step 3 (Dispozice) saves the minimum outdoor area under wizard.budget.*
+    # but compute_eligibility() and _flat_outdoor_fit() read outdoor.min_outdoor_area_m2.
+    budget = w.get("budget") or {}
+    if budget.get("min_outdoor_area_m2") is not None and outdoor.get("min_outdoor_area_m2") is None:
+        w["outdoor"] = {**w.get("outdoor", {}), "min_outdoor_area_m2": budget["min_outdoor_area_m2"]}
+
+    # ── 4. "bonus" → "prefer" ─────────────────────────────────────────────────
+    # IntensityPicker in step 6 emits "bonus" as a third intensity level.
+    # The scoring engine only understands "must" | "prefer" | "ignore".
+    # Map "bonus" → "prefer" so it is not silently treated as "ignore".
+    for section in ("standards", "noise", "house_amenities", "project_amenities", "outdoor"):
+        sub = w.get(section)
+        if isinstance(sub, dict):
+            w[section] = {k: ("prefer" if v == "bonus" else v) for k, v in sub.items()}
+
+    return w
+
+
+# ---------------------------------------------------------------------------
+# Structured wizard output — separates hard filters / preferences / metadata
+# ---------------------------------------------------------------------------
+
+@dataclass
+class HardFilters:
+    """Fields that EXCLUDE units/projects. If violated → score = 0."""
+    # Price
+    budget_max: int | None = None
+    budget_max_tolerance_pct: float | None = None
+    # Area
+    area_min: float | None = None
+    area_min_tolerance_pct: float | None = None
+    # Outdoor area
+    outdoor_area_min: float | None = None
+    outdoor_area_min_tolerance_pct: float | None = None
+    # Layouts (any-of)
+    layouts: list[str] = field(default_factory=list)
+    # Location — polygon / admin district (stored separately on profile)
+    location_polygon: bool = False
+    location_admin_area: str | None = None
+    location_admin_region: str | None = None
+    # Commute — points stored separately on profile
+    location_commute: bool = False
+    # Completion
+    latest_move_in: str | None = None  # "YYYY-MM-DD"
+    # Renovation
+    renovation_preference: str | None = None  # "only_new" | "only_renovation" | None
+    # Standards — only "must" level
+    must_recuperation: bool = False
+    must_air_conditioning: bool = False
+    must_floor_heating: bool = False
+    must_exterior_blinds: bool = False
+    # Amenities — only "must" level
+    must_bike_room: bool = False
+    must_stroller_room: bool = False
+    must_fitness: bool = False
+    must_courtyard_garden: bool = False
+    must_reception: bool = False
+    must_concierge: bool = False
+    # Noise — only "must" level
+    must_quiet_area: bool = False
+    must_no_main_road: bool = False
+    must_no_tram: bool = False
+    must_no_railway: bool = False
+    must_no_airport: bool = False
+    # Outdoor — only "must" level
+    must_outdoor_space: bool = False
+    must_balcony: bool = False
+    must_terrace: bool = False
+    must_garden: bool = False
+    # Payment
+    max_payment_contract_pct: float | None = None
+    max_payment_construction_pct: float | None = None
+    # Days on market
+    max_days_on_market: int | None = None
+    # Energy
+    energy_class: str | None = None  # "A" | "B" | "C" | "D" | None (ignore)
+    # Floor
+    exclude_ground_floor: bool = False
+    penthouse_only: bool = False
+
+
+@dataclass
+class PreferenceTags:
+    """Fields that RANK units but never exclude. Soft scoring + preference adj."""
+    # Purchase purpose
+    purchase_purpose: str | None = None  # "own_use" | "investment"
+    # Standards — "prefer" level (not "must")
+    prefer_recuperation: bool = False
+    prefer_air_conditioning: bool = False
+    prefer_floor_heating: bool = False
+    prefer_exterior_blinds: bool = False
+    prefer_smart_home: bool = False
+    # Specific standard values
+    heating_type: str | None = None
+    heating_source: str | None = None
+    partition_type: str | None = None  # flooring / partitions
+    window_type: str | None = None  # actually ceiling height in wizard
+    window_material: str | None = None
+    # Project amenities — "prefer" / "reject"
+    prefer_reception: str | None = None  # "prefer" | "reject" | None
+    prefer_fitness: str | None = None
+    prefer_ev_charger: str | None = None
+    prefer_courtyard_garden: str | None = None
+    # Noise sensitivity — "prefer" level
+    prefer_quiet_area: bool = False
+    prefer_no_main_road: bool = False
+    prefer_no_tram: bool = False
+    prefer_no_railway: bool = False
+    prefer_no_airport: bool = False
+    # Floor preference
+    preferred_floor: str | None = None  # "ground" | "low" | "middle" | "high" | None
+    ground_floor_sensitive: bool = False  # prefer (not must) to avoid floor 1
+    # Area
+    ideal_area: float | None = None  # fallback for area scoring when no min/max
+    # Outdoor
+    prefer_outdoor_space: bool = False
+    outdoor_orientation: dict[str, str] | None = None  # {"south": "prefer", ...}
+    # Renovation
+    prefer_new: bool = False  # "prefer_new" (not "only_new")
+    prefer_renovation: bool = False  # "prefer_renovation"
+    # Completion
+    earliest_move_in: str | None = None  # "YYYY-MM-DD"
+    # Developer
+    preferred_developer: str | None = None
+    # Walkability (stored separately on profile, referenced here)
+    walkability_active: bool = False
+    # Skip categories
+    skip_standards: bool = False
+    skip_amenities: bool = False
+    skip_noise: bool = False
+    skip_walkability: bool = False
+
+
+@dataclass
+class WizardMetadata:
+    """Non-filtering, non-scoring context for the broker."""
+    client_type: str | None = None  # "family" | "couple" | "single" | "downsizing"
+    financing_type: str | None = None  # "cash" | "mortgage" | "combo" | "unknown"
+    assignment_important: str | None = None  # "yes" | "no" | "irrelevant"
+    completion_standard: str | None = None  # "shell_and_core" | "white_wall" | "fit_out"
+    property_type: str | None = None  # "any" | "apartment" | "house"
+
+
+@dataclass
+class StructuredWizard:
+    """Clean, categorized wizard output. Source of truth for scoring pipeline."""
+    hard_filters: HardFilters = field(default_factory=HardFilters)
+    preferences: PreferenceTags = field(default_factory=PreferenceTags)
+    metadata: WizardMetadata = field(default_factory=WizardMetadata)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> StructuredWizard:
+    """Hydrate StructuredWizard from frontend-provided structured_wizard payload.
+
+    Profile-column fields (budget_max, area_min, layouts, purchase_purpose, etc.)
+    are always read from the DB profile object — they are authoritative and may be
+    updated outside the wizard flow.
+    """
+    result = StructuredWizard()
+    hf_d = sw_payload.get("hard_filters") or {}
+    pref_d = sw_payload.get("preferences") or {}
+    meta_d = sw_payload.get("metadata") or {}
+
+    hf = result.hard_filters
+    pref = result.preferences
+    meta = result.metadata
+
+    # ── Hard filters ────────────────────────────────────────────────────
+    # Profile-column fields: always from DB
+    hf.budget_max = profile.budget_max
+    hf.area_min = profile.area_min
+    layouts_raw = profile.layouts
+    if isinstance(layouts_raw, dict) and "values" in layouts_raw:
+        hf.layouts = [str(l) for l in (layouts_raw["values"] or []) if l]
+    elif isinstance(layouts_raw, list):
+        hf.layouts = [str(l) for l in layouts_raw if l]
+
+    # Wizard-derived fields from structured payload
+    hf.budget_max_tolerance_pct = hf_d.get("budget_max_tolerance_pct")
+    hf.area_min_tolerance_pct = hf_d.get("area_min_tolerance_pct")
+    hf.outdoor_area_min = hf_d.get("outdoor_area_min")
+    hf.outdoor_area_min_tolerance_pct = hf_d.get("outdoor_area_min_tolerance_pct")
+
+    hf.location_polygon = bool(hf_d.get("location_polygon"))
+    hf.location_commute = bool(hf_d.get("location_commute"))
+    hf.location_admin_area = hf_d.get("location_admin_area")
+    hf.location_admin_region = hf_d.get("location_admin_region")
+
+    hf.latest_move_in = hf_d.get("latest_move_in")
+    reno = hf_d.get("renovation_preference")
+    hf.renovation_preference = reno if reno in ("only_new", "only_renovation") else None
+
+    # Bool flags
+    for attr in (
+        "must_recuperation", "must_air_conditioning", "must_floor_heating",
+        "must_exterior_blinds", "must_bike_room", "must_stroller_room",
+        "must_fitness", "must_courtyard_garden", "must_reception", "must_concierge",
+        "must_quiet_area", "must_no_main_road", "must_no_tram",
+        "must_no_railway", "must_no_airport",
+        "must_outdoor_space", "must_balcony", "must_terrace", "must_garden",
+        "exclude_ground_floor", "penthouse_only",
+    ):
+        setattr(hf, attr, bool(hf_d.get(attr)))
+
+    hf.max_payment_contract_pct = hf_d.get("max_payment_contract_pct")
+    hf.max_payment_construction_pct = hf_d.get("max_payment_construction_pct")
+    dom = hf_d.get("max_days_on_market")
+    hf.max_days_on_market = int(dom) if dom is not None else None
+    ec = hf_d.get("energy_class")
+    hf.energy_class = ec if ec and ec != "ignore" else None
+
+    # ── Preferences ─────────────────────────────────────────────────────
+    # Profile-column field
+    pref.purchase_purpose = profile.purchase_purpose
+
+    # Bool flags
+    for attr in (
+        "prefer_recuperation", "prefer_air_conditioning", "prefer_floor_heating",
+        "prefer_exterior_blinds", "prefer_smart_home",
+        "prefer_quiet_area", "prefer_no_main_road", "prefer_no_tram",
+        "prefer_no_railway", "prefer_no_airport",
+        "ground_floor_sensitive", "prefer_outdoor_space",
+        "prefer_new", "prefer_renovation",
+        "skip_standards", "skip_amenities", "skip_noise", "skip_walkability",
+    ):
+        setattr(pref, attr, bool(pref_d.get(attr)))
+
+    # String/value fields
+    pref.heating_type = pref_d.get("heating_type")
+    pref.heating_source = pref_d.get("heating_source")
+    pref.partition_type = pref_d.get("partition_type")
+    pref.window_type = pref_d.get("window_type")
+    pref.window_material = pref_d.get("window_material")
+    pref.prefer_reception = pref_d.get("prefer_reception")
+    pref.prefer_fitness = pref_d.get("prefer_fitness")
+    pref.prefer_ev_charger = pref_d.get("prefer_ev_charger")
+    pref.prefer_courtyard_garden = pref_d.get("prefer_courtyard_garden")
+    pref.preferred_floor = pref_d.get("preferred_floor")
+    pref.outdoor_orientation = pref_d.get("outdoor_orientation")
+    pref.earliest_move_in = pref_d.get("earliest_move_in")
+    pref.preferred_developer = pref_d.get("preferred_developer")
+
+    ideal = pref_d.get("ideal_area")
+    if ideal is not None:
+        try:
+            pref.ideal_area = float(ideal)
+        except (TypeError, ValueError):
+            pass
+
+    # Profile-column field
+    pref.walkability_active = bool(profile.walkability_preferences_json)
+
+    # ── Metadata ────────────────────────────────────────────────────────
+    meta.client_type = meta_d.get("client_type")
+    meta.financing_type = meta_d.get("financing_type")
+    meta.assignment_important = meta_d.get("assignment_important")
+    meta.completion_standard = meta_d.get("completion_standard")
+    meta.property_type = profile.property_type
+
+    return result
+
+
+def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
+    """Transform wizard state into a clean structured model.
+
+    Prefers filter_json.structured_wizard (frontend-provided) when available.
+    Falls back to raw wizard transform when structured_wizard is absent.
+    """
+    result = StructuredWizard()
+    if not profile:
+        return result
+
+    filter_json = profile.filter_json or {}
+
+    # ── Prefer structured_wizard from frontend ──────────────────────────
+    sw_payload = filter_json.get("structured_wizard")
+    if isinstance(sw_payload, dict) and "hard_filters" in sw_payload:
+        return _hydrate_from_structured(sw_payload, profile)
+
+    # ── Fallback: transform from raw wizard ─────────────────────────────
+    wizard = normalize_wizard(filter_json.get("wizard") or {})
+    budget_section = wizard.get("budget") or {}
+    outdoor_section = wizard.get("outdoor") or {}
+    standards = wizard.get("standards") or {}
+    noise = wizard.get("noise") or {}
+    amenities = wizard.get("house_amenities") or {}
+    project_amenities = wizard.get("project_amenities") or {}
+    location = wizard.get("location") or {}
+    skip = wizard.get("skip_categories") or {}
+
+    hf = result.hard_filters
+    pref = result.preferences
+    meta = result.metadata
+
+    # ── Hard filters: price / area / outdoor ────────────────────────────────
+    hf.budget_max = profile.budget_max
+    hf.budget_max_tolerance_pct = budget_section.get("max_price_tolerance_pct")
+    hf.area_min = profile.area_min
+    hf.area_min_tolerance_pct = budget_section.get("max_area_tolerance_pct")
+    hf.outdoor_area_min = outdoor_section.get("min_outdoor_area_m2")
+    hf.outdoor_area_min_tolerance_pct = budget_section.get("max_outdoor_tolerance_pct")
+
+    # Layouts — stored as {"values": ["3kk", "4kk"]} or as a plain list
+    layouts_raw = profile.layouts
+    if isinstance(layouts_raw, dict) and "values" in layouts_raw:
+        hf.layouts = [str(l) for l in (layouts_raw["values"] or []) if l]
+    elif isinstance(layouts_raw, list):
+        hf.layouts = [str(l) for l in layouts_raw if l]
+
+    # Location
+    hf.location_polygon = bool(location.get("method_polygon"))
+    hf.location_commute = bool(location.get("method_commute"))
+    hf.location_admin_area = location.get("administrative_area")
+    hf.location_admin_region = location.get("administrative_region")
+
+    # Completion
+    hf.latest_move_in = wizard.get("completion_date") or wizard.get("latest_move_in")
+
+    # Renovation — only "only_*" variants are hard filters
+    reno = wizard.get("renovation_preference")
+    if reno in ("only_new", "only_renovation"):
+        hf.renovation_preference = reno
+
+    # Standards — "must" level → hard filter
+    hf.must_recuperation = standards.get("recuperation") == "must"
+    hf.must_air_conditioning = standards.get("air_conditioning") == "must"
+    hf.must_floor_heating = standards.get("floor_heating") == "must"
+    hf.must_exterior_blinds = standards.get("exterior_blinds") == "must"
+
+    # Amenities — "must" level → hard filter
+    hf.must_bike_room = amenities.get("bike_room") == "must"
+    hf.must_stroller_room = amenities.get("stroller_room") == "must"
+    hf.must_fitness = amenities.get("fitness") == "must"
+    hf.must_courtyard_garden = amenities.get("courtyard_garden") == "must"
+    hf.must_reception = amenities.get("reception") == "must"
+    hf.must_concierge = amenities.get("concierge") == "must"
+
+    # Noise — "must" level → hard filter
+    hf.must_quiet_area = noise.get("quiet_area") == "must"
+    hf.must_no_main_road = noise.get("main_road") == "must"
+    hf.must_no_tram = noise.get("tram") == "must"
+    hf.must_no_railway = noise.get("railway") == "must"
+    hf.must_no_airport = noise.get("airport") == "must"
+
+    # Outdoor — "must" level → hard filter
+    hf.must_outdoor_space = outdoor_section.get("outdoor_space") == "must"
+    hf.must_balcony = outdoor_section.get("balcony") == "must"
+    hf.must_terrace = outdoor_section.get("terrace") == "must"
+    hf.must_garden = outdoor_section.get("garden") == "must"
+
+    # Payment
+    hf.max_payment_contract_pct = budget_section.get("max_payment_contract_pct")
+    hf.max_payment_construction_pct = budget_section.get("max_payment_construction_pct")
+
+    # Days on market
+    dom = budget_section.get("max_days_on_market")
+    hf.max_days_on_market = int(dom) if dom is not None else None
+
+    # Energy class
+    ec = wizard.get("energy_class")
+    hf.energy_class = ec if ec and ec != "ignore" else None
+
+    # Floor filters (NEW)
+    floor_rule = outdoor_section.get("floor_rule")
+    hf.exclude_ground_floor = floor_rule == "no_ground"
+    hf.penthouse_only = floor_rule == "top_1"
+
+    # ── Preferences ─────────────────────────────────────────────────────────
+    pref.purchase_purpose = profile.purchase_purpose
+
+    # Standards — "prefer" level
+    pref.prefer_recuperation = standards.get("recuperation") == "prefer"
+    pref.prefer_air_conditioning = standards.get("air_conditioning") == "prefer"
+    pref.prefer_floor_heating = standards.get("floor_heating") == "prefer"
+    pref.prefer_exterior_blinds = standards.get("exterior_blinds") == "prefer"
+    pref.prefer_smart_home = standards.get("smart_home") == "prefer"
+
+    # Specific standard values (for scoring match, not for hard filtering)
+    pref.heating_type = standards.get("heating_type")
+    pref.heating_source = standards.get("heating_source")
+    pref.partition_type = standards.get("partitions")
+    pref.window_type = standards.get("window_type")
+    pref.window_material = standards.get("window_material")
+
+    # Project amenities
+    pref.prefer_reception = project_amenities.get("reception")
+    pref.prefer_fitness = project_amenities.get("fitness")
+    pref.prefer_ev_charger = project_amenities.get("ev_charger")
+    pref.prefer_courtyard_garden = project_amenities.get("courtyard_garden")
+
+    # Noise — "prefer" level
+    pref.prefer_quiet_area = noise.get("quiet_area") == "prefer"
+    pref.prefer_no_main_road = noise.get("main_road") == "prefer"
+    pref.prefer_no_tram = noise.get("tram") == "prefer"
+    pref.prefer_no_railway = noise.get("railway") == "prefer"
+    pref.prefer_no_airport = noise.get("airport") == "prefer"
+
+    # Floor preference
+    pref.preferred_floor = outdoor_section.get("preferred_floor")
+    pref.ground_floor_sensitive = (
+        outdoor_section.get("ground_floor_sensitive") == "prefer"
+        or (floor_rule == "top_3" and not hf.exclude_ground_floor)
+    )
+
+    # Outdoor
+    pref.prefer_outdoor_space = outdoor_section.get("outdoor_space") == "prefer"
+    pref.outdoor_orientation = outdoor_section.get("orientation")
+
+    # Renovation — "prefer_*" variants are preferences
+    pref.prefer_new = reno == "prefer_new"
+    pref.prefer_renovation = reno == "prefer_renovation"
+
+    # Completion
+    pref.earliest_move_in = wizard.get("earliest_move_in")
+
+    # Developer
+    pref.preferred_developer = wizard.get("preferred_developer")
+
+    # Ideal area (fallback for unit area scoring when no area_min/max on profile)
+    ideal_raw = budget_section.get("ideal_area")
+    if ideal_raw is not None:
+        try:
+            pref.ideal_area = float(ideal_raw)
+        except (TypeError, ValueError):
+            pass
+
+    # Walkability
+    pref.walkability_active = bool(profile.walkability_preferences_json)
+
+    # Skip categories
+    pref.skip_standards = bool(skip.get("standards"))
+    pref.skip_amenities = bool(skip.get("amenities"))
+    pref.skip_noise = bool(skip.get("noise"))
+    pref.skip_walkability = bool(skip.get("walkability"))
+
+    # ── Metadata ────────────────────────────────────────────────────────────
+    meta.client_type = wizard.get("client_type")
+    meta.financing_type = wizard.get("financing_type")
+    meta.assignment_important = wizard.get("assignment_important")
+    meta.completion_standard = wizard.get("completion_standard")
+    meta.property_type = profile.property_type
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Eligibility (hard filters)
 # ---------------------------------------------------------------------------
 
@@ -222,144 +723,136 @@ def compute_eligibility(
     unit: Unit,
     project: Project,
     profile: ClientProfile | None,
+    *,
+    project_derived_total_floors: int | None = None,
 ) -> dict[str, Any]:
-    """Evaluate hard-filter eligibility.
+    """Evaluate hard-filter eligibility using StructuredWizard as source of truth.
 
     Returns {'status': 'pass'|'review'|'fail', 'reasons': [...]}.
     When a must-have field is NULL on the unit/project → status='review' instead of fail.
     """
-    if not profile or not profile.filter_json:
+    if not profile:
         return {"status": "pass", "reasons": []}
 
-    wizard = (profile.filter_json or {}).get("wizard") or {}
+    sw = build_structured_wizard(profile)
+    hf = sw.hard_filters
     reasons: list[str] = []
     has_review = False
 
     def _fail(reason: str):
         reasons.append(reason)
 
-    def _check_null_or_fail(value, reason: str) -> bool:
-        """If value is None → mark review; otherwise return True if should fail."""
+    def _review(reason: str):
         nonlocal has_review
-        if value is None:
-            reasons.append(f"{reason} (data missing)")
-            has_review = True
-            return False  # don't fail, review
-        return True
+        reasons.append(f"{reason} (data missing)")
+        has_review = True
 
     # -- Standards --
-    standards = wizard.get("standards") or {}
-    if standards.get("recuperation") == "must":
+    if hf.must_recuperation:
         val = getattr(project, "recuperation", None)
         if val is None:
-            reasons.append("recuperation (data missing)")
-            has_review = True
+            _review("recuperation")
         elif val != "true":
             _fail("recuperation")
 
-    if standards.get("air_conditioning") == "must":
+    if hf.must_air_conditioning:
         val = getattr(unit, "air_conditioning", None)
         if val is None:
-            reasons.append("air_conditioning (data missing)")
-            has_review = True
+            _review("air_conditioning")
         elif not val:
             _fail("air_conditioning")
 
-    if standards.get("floor_heating") == "must":
+    if hf.must_floor_heating:
         h = getattr(unit, "heating", None) or getattr(project, "heating", None)
         if h is None:
-            reasons.append("floor_heating (data missing)")
-            has_review = True
+            _review("floor_heating")
         else:
             h_lower = str(h).lower()
-            has_floor = "podlah" in h_lower or "underfloor" in h_lower or "floor" in h_lower
-            if not has_floor:
+            if not ("podlah" in h_lower or "underfloor" in h_lower or "floor" in h_lower):
                 _fail("floor_heating")
 
-    if standards.get("exterior_blinds") == "must":
+    if hf.must_exterior_blinds:
         eb = getattr(unit, "exterior_blinds", None)
         if eb is None:
-            reasons.append("exterior_blinds (data missing)")
-            has_review = True
+            _review("exterior_blinds")
         elif str(eb).lower() in ("false", "0", ""):
             _fail("exterior_blinds")
 
     # -- Amenities --
-    amenities = wizard.get("house_amenities") or {}
-    amenity_map = {
-        "parking": None,
-        "bike_room": "bike_room",
-        "stroller_room": "stroller_room",
-        "fitness": "fitness",
-        "courtyard_garden": "courtyard_garden",
-        "reception": "reception",
-        "concierge": "concierge",
-    }
-    for pref_key, project_attr in amenity_map.items():
-        if amenities.get(pref_key) == "must" and project_attr:
+    _amenity_checks: list[tuple[bool, str, str]] = [
+        (hf.must_bike_room, "bike_room", "bike_room"),
+        (hf.must_stroller_room, "stroller_room", "stroller_room"),
+        (hf.must_fitness, "fitness", "fitness"),
+        (hf.must_courtyard_garden, "courtyard_garden", "courtyard_garden"),
+        (hf.must_reception, "reception", "reception"),
+        (hf.must_concierge, "concierge", "concierge"),
+    ]
+    for must_flag, reason_key, project_attr in _amenity_checks:
+        if must_flag:
             val = getattr(project, project_attr, None)
             if val is None:
-                reasons.append(f"{pref_key} (data missing)")
-                has_review = True
+                _review(reason_key)
             elif not val:
-                _fail(pref_key)
+                _fail(reason_key)
 
     # -- Noise --
-    noise = wizard.get("noise") or {}
-    if noise.get("quiet_area") == "must":
+    if hf.must_quiet_area:
         nl = getattr(project, "noise_label", None)
         if nl and ("vyšší" in nl.lower() or "vysoký" in nl.lower() or "vysoká" in nl.lower()):
             _fail("quiet_area")
 
-    noise_checks = [
-        ("main_road", "distance_to_primary_road_m", 150),
-        ("tram", "distance_to_tram_tracks_m", 100),
-        ("railway", "distance_to_railway_m", 300),
-        ("airport", "distance_to_airport_m", 5000),
+    _noise_checks: list[tuple[bool, str, str, int]] = [
+        (hf.must_no_main_road, "main_road", "distance_to_primary_road_m", 150),
+        (hf.must_no_tram, "tram", "distance_to_tram_tracks_m", 100),
+        (hf.must_no_railway, "railway", "distance_to_railway_m", 300),
+        (hf.must_no_airport, "airport", "distance_to_airport_m", 5000),
     ]
-    for key, attr, threshold in noise_checks:
-        if noise.get(key) == "must":
+    for must_flag, reason_key, attr, threshold in _noise_checks:
+        if must_flag:
             d = getattr(project, attr, None)
             if d is not None and d < threshold:
-                _fail(f"{key}_noise" if key != "main_road" else key)
+                _fail(f"{reason_key}_noise" if reason_key != "main_road" else reason_key)
 
     # -- Outdoor --
-    outdoor = wizard.get("outdoor") or {}
-    if outdoor.get("outdoor_space") == "must":
+    if hf.must_outdoor_space:
         ext = unit.exterior_area_m2
         if ext is None or float(ext) <= 0:
             _fail("outdoor_space")
-        else:
-            min_out = outdoor.get("min_outdoor_area_m2")
-            if min_out is not None and float(ext) < float(min_out):
-                _fail("outdoor_space_too_small")
+        elif hf.outdoor_area_min is not None and float(ext) < float(hf.outdoor_area_min):
+            _fail("outdoor_space_too_small")
 
-    for outdoor_key in ("balcony", "terrace", "garden"):
-        if outdoor.get(outdoor_key) == "must":
-            val = getattr(unit, f"{outdoor_key}_area_m2", None)
-            if val is None or float(val) <= 0:
-                _fail(outdoor_key)
+    if hf.must_balcony:
+        val = getattr(unit, "balcony_area_m2", None)
+        if val is None or float(val) <= 0:
+            _fail("balcony")
+
+    if hf.must_terrace:
+        val = getattr(unit, "terrace_area_m2", None)
+        if val is None or float(val) <= 0:
+            _fail("terrace")
+
+    if hf.must_garden:
+        val = getattr(unit, "garden_area_m2", None)
+        if val is None or float(val) <= 0:
+            _fail("garden")
 
     # -- Energy class --
-    energy_pref = wizard.get("energy_class")
-    if energy_pref and energy_pref != "ignore":
+    if hf.energy_class:
         unit_ec = getattr(project, "energy_class", None)
         if unit_ec:
             ec_order = {"A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5, "G": 6}
-            req_rank = ec_order.get(energy_pref.upper(), 99)
+            req_rank = ec_order.get(hf.energy_class.upper(), 99)
             unit_rank = ec_order.get(str(unit_ec).strip().upper()[:1], 99)
             if unit_rank > req_rank + 1:
                 _fail("energy_class")
         else:
-            reasons.append("energy_class (data missing)")
-            has_review = True
+            _review("energy_class")
 
     # -- Completion date --
-    completion_pref = wizard.get("completion_date")
-    if completion_pref:
+    if hf.latest_move_in:
         from datetime import date as _date
         try:
-            max_date = _date.fromisoformat(str(completion_pref))
+            max_date = _date.fromisoformat(str(hf.latest_move_in))
             proj_date = getattr(project, "completion_date", None)
             if proj_date is not None:
                 if isinstance(proj_date, str):
@@ -372,28 +865,40 @@ def compute_eligibility(
             pass
 
     # -- Days on market --
-    budget_prefs = wizard.get("budget") or {}
-    max_dom = budget_prefs.get("max_days_on_market")
-    if max_dom is not None:
+    if hf.max_days_on_market is not None:
         proj_dom = getattr(project, "max_days_on_market", None)
-        if proj_dom is not None and int(proj_dom) > int(max_dom):
+        if proj_dom is not None and int(proj_dom) > hf.max_days_on_market:
             _fail("days_on_market")
 
     # -- Payment contract --
-    max_pct = budget_prefs.get("max_payment_contract_pct")
-    if max_pct is not None:
+    if hf.max_payment_contract_pct is not None:
         proj_pc = getattr(project, "payment_contract", None)
         if proj_pc is not None:
             pct_val = float(proj_pc) * 100 if float(proj_pc) <= 1 else float(proj_pc)
-            if pct_val > float(max_pct):
+            if pct_val > float(hf.max_payment_contract_pct):
                 _fail("payment_contract")
 
     # -- Renovation preference --
-    reno_pref = wizard.get("renovation_preference")
-    if reno_pref == "only_new" and unit.renovation is True:
+    if hf.renovation_preference == "only_new" and unit.renovation is True:
         _fail("only_new")
-    if reno_pref == "only_renovation" and unit.renovation is False:
+    if hf.renovation_preference == "only_renovation" and unit.renovation is False:
         _fail("only_renovation")
+
+    # -- Floor filters --
+    unit_floor = getattr(unit, "floor", None)
+
+    if hf.exclude_ground_floor:
+        if unit_floor is not None and int(unit_floor) <= 1:
+            _fail("exclude_ground_floor")
+        elif unit_floor is None:
+            _review("exclude_ground_floor")
+
+    if hf.penthouse_only:
+        if unit_floor is not None and project_derived_total_floors is not None:
+            if int(unit_floor) < int(project_derived_total_floors):
+                _fail("penthouse_only")
+        elif unit_floor is None or project_derived_total_floors is None:
+            _review("penthouse_only")
 
     # Determine status
     fail_reasons = [r for r in reasons if "(data missing)" not in r]
@@ -628,6 +1133,15 @@ def _legacy_compute_match(
 # Flat scoring — individual aspect fit computations
 # ---------------------------------------------------------------------------
 
+
+def _intensity(must: bool, prefer: bool) -> str | None:
+    """Derive intensity from split must/prefer bools → "must" | "prefer" | None."""
+    if must:
+        return "must"
+    if prefer:
+        return "prefer"
+    return None
+
 def _flat_price_distance_fit(unit, profile) -> float:
     """Score: how close is the price to the client's ideal/max."""
     price = getattr(unit, 'price_czk', None)
@@ -683,44 +1197,42 @@ def _flat_payment_schedule_fit(unit) -> float:
     return max(0.0, min(100.0, score))
 
 
-def _flat_noise_fit(unit, project, profile) -> float:
+def _flat_noise_fit(unit, project, hf: HardFilters, pref: PreferenceTags) -> float:
     """Score: noise exposure. Lower noise = better score.
 
-    Uses wizard sensitivity settings: sensitive sources get heavier penalty.
+    Uses must_no_*/prefer_no_* from StructuredWizard to derive sensitivity.
+    "must" = sensitive (hard filter already excludes worst cases, but scoring still penalizes).
+    "prefer" = sensitive (milder signal).
     """
-    wizard = {}
-    if profile and getattr(profile, 'filter_json', None):
-        wizard = ((profile.filter_json or {}).get('wizard') or {}).get('noise') or {}
+    # Build noise checks from structured fields
+    noise_checks = [
+        (_intensity(hf.must_no_main_road, pref.prefer_no_main_road), 'distance_to_primary_road_m', 200, 500),
+        (_intensity(hf.must_no_tram, pref.prefer_no_tram), 'distance_to_tram_tracks_m', 100, 300),
+        (_intensity(hf.must_no_railway, pref.prefer_no_railway), 'distance_to_railway_m', 300, 1000),
+        (_intensity(hf.must_no_airport, pref.prefer_no_airport), 'distance_to_airport_m', 2000, 10000),
+    ]
 
-    # If client doesn't care about noise at all, neutral
-    if not wizard:
+    has_any = any(intensity is not None for intensity, *_ in noise_checks)
+    has_quiet = _intensity(hf.must_quiet_area, pref.prefer_quiet_area) is not None
+    if not has_any and not has_quiet:
         return 50.0
 
     penalty = 0.0
-    noise_checks = [
-        ('main_road', 'distance_to_primary_road_m', 200, 500),
-        ('tram', 'distance_to_tram_tracks_m', 100, 300),
-        ('railway', 'distance_to_railway_m', 300, 1000),
-        ('airport', 'distance_to_airport_m', 2000, 10000),
-    ]
-
-    for key, attr, close_m, far_m in noise_checks:
-        pref = wizard.get(key)
-        if pref == 'ignore' or pref is None:
+    for intensity, attr, close_m, far_m in noise_checks:
+        if intensity is None:
             continue
         dist = getattr(project, attr, None)
         if dist is None:
             continue
         dist = float(dist)
-        if pref == 'sensitive':
-            # Closer = worse: linear penalty from far_m (0 penalty) to close_m (full penalty)
-            if dist >= far_m:
-                pass
-            elif dist <= close_m:
-                penalty += 25.0
-            else:
-                ratio = (far_m - dist) / (far_m - close_m)
-                penalty += 25.0 * ratio
+        # Both "must" and "prefer" count as sensitive for scoring (eligibility already handles must)
+        if dist >= far_m:
+            pass
+        elif dist <= close_m:
+            penalty += 25.0
+        else:
+            ratio = (far_m - dist) / (far_m - close_m)
+            penalty += 25.0 * ratio
 
     # Also check noise_day_db if available
     noise_db = getattr(project, 'noise_day_db', None)
@@ -734,8 +1246,11 @@ def _flat_noise_fit(unit, project, profile) -> float:
     return max(0.0, min(100.0, 80.0 - penalty))
 
 
-def _flat_unit_area_fit(unit, profile) -> float:
-    """Score: how well does unit area match preferences. Bigger = better with cap."""
+def _flat_unit_area_fit(unit, profile, ideal_area: float | None = None) -> float:
+    """Score: how well does unit area match preferences. Bigger = better with cap.
+
+    ideal_area from PreferenceTags is used as a fallback center when profile has no area range.
+    """
     area = float(unit.floor_area_m2) if getattr(unit, 'floor_area_m2', None) is not None else None
     if area is None or not profile:
         return 50.0
@@ -751,11 +1266,18 @@ def _flat_unit_area_fit(unit, profile) -> float:
         center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
         diff_ratio = abs(area - center) / max(center, 1.0)
         return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
+    # Fallback: use ideal_area from wizard as center point
+    if ideal_area is not None and ideal_area > 0:
+        diff_ratio = abs(area - ideal_area) / ideal_area
+        return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
     return 50.0
 
 
-def _flat_outdoor_fit(unit, profile) -> float:
-    """Score: outdoor space size. Bigger = better up to 50m²."""
+def _flat_outdoor_fit(unit, outdoor_area_min: float | None = None) -> float:
+    """Score: outdoor space size. Bigger = better up to 50m².
+
+    outdoor_area_min from HardFilters.outdoor_area_min.
+    """
     ext = getattr(unit, 'exterior_area_m2', None)
     if ext is not None:
         outdoor = float(ext)
@@ -766,13 +1288,8 @@ def _flat_outdoor_fit(unit, profile) -> float:
             + float(getattr(unit, 'garden_area_m2', None) or 0)
         )
 
-    wizard_outdoor = {}
-    if profile and getattr(profile, 'filter_json', None):
-        wizard_outdoor = ((profile.filter_json or {}).get('wizard') or {}).get('outdoor') or {}
-
-    min_out = wizard_outdoor.get('min_outdoor_area_m2')
-    if min_out is not None:
-        min_out = float(min_out)
+    if outdoor_area_min is not None:
+        min_out = float(outdoor_area_min)
         if outdoor < min_out * 0.5:
             return 10.0
         if outdoor < min_out:
@@ -785,20 +1302,24 @@ def _flat_outdoor_fit(unit, profile) -> float:
     return min(100.0, 20.0 + cap * 1.6)
 
 
-def _flat_floor_preference_fit(unit, project, profile) -> float:
-    """Score: floor preference (no ground floor, want top floor, etc.)."""
+def _flat_floor_preference_fit(
+    unit, project,
+    preferred_floor: str | None = None,
+    exclude_ground: bool = False,
+    penthouse_only: bool = False,
+) -> float:
+    """Score: floor preference (no ground floor, want top floor, etc.).
+
+    Reads preferred_floor from PreferenceTags, exclude_ground/penthouse_only from HardFilters.
+    """
     floor = getattr(unit, 'floor', None)
     if floor is None:
         return 50.0
 
-    wizard_outdoor = {}
-    if profile and getattr(profile, 'filter_json', None):
-        wizard_outdoor = ((profile.filter_json or {}).get('wizard') or {}).get('outdoor') or {}
-
-    pref = wizard_outdoor.get('preferred_floor')
     total_floors = getattr(project, 'floors_above_ground', None)
     floor = int(floor)
 
+    pref = preferred_floor
     if pref == 'no_ground' and floor == 0:
         return 15.0
     if pref == 'top_3' and total_floors:
@@ -809,6 +1330,14 @@ def _flat_floor_preference_fit(unit, project, profile) -> float:
         if floor >= int(total_floors):
             return 100.0
         return 30.0
+    # Penthouse preference from hard filter (eligibility already excludes non-top)
+    if penthouse_only and total_floors:
+        if floor >= int(total_floors):
+            return 100.0
+        return 30.0
+    # Ground floor exclusion as scoring signal (eligibility already excludes)
+    if exclude_ground and floor == 0:
+        return 15.0
     # Default: slight preference for higher floors (not ground)
     if floor == 0:
         return 50.0
@@ -845,7 +1374,8 @@ def _flat_standard_fit(unit, project, pref_value: str | None, field: str) -> flo
 
     has_feature = _check_standard_match(val, field)
 
-    if pref_value == 'prefer':
+    if pref_value in ('prefer', 'must'):
+        # "must" is already hard-filtered by eligibility; for scoring, same weight as "prefer"
         return 90.0 if has_feature else 20.0
     if pref_value == 'bonus':
         return 75.0 if has_feature else 45.0
@@ -885,18 +1415,18 @@ def _flat_amenity_fit(project, pref_value: str | None, field: str) -> float:
     return 50.0
 
 
-def _flat_completion_fit(project, profile) -> float:
-    """Score: how well does project completion align with client's preferred dates."""
+def _flat_completion_fit(
+    project,
+    latest_move_in: str | None = None,
+    earliest_move_in: str | None = None,
+) -> float:
+    """Score: how well does project completion align with client's preferred dates.
+
+    latest_move_in from HardFilters, earliest_move_in from PreferenceTags.
+    """
     from datetime import date as _date
 
-    wizard = {}
-    if profile and getattr(profile, 'filter_json', None):
-        wizard = (profile.filter_json or {}).get('wizard') or {}
-
-    earliest = wizard.get('earliest_move_in')
-    latest = wizard.get('latest_move_in') or wizard.get('completion_date')
     proj_date = getattr(project, 'completion_date', None)
-
     if proj_date is None:
         return 50.0
 
@@ -908,22 +1438,19 @@ def _flat_completion_fit(project, profile) -> float:
     except (ValueError, TypeError):
         return 50.0
 
-    # If we have a date range, check fit
-    if latest:
+    if latest_move_in:
         try:
-            latest_d = _date.fromisoformat(str(latest))
+            latest_d = _date.fromisoformat(str(latest_move_in))
             if proj_date > latest_d:
-                # Over deadline — penalty based on how far
                 days_over = (proj_date - latest_d).days
                 return max(0.0, 70.0 - days_over * 0.3)
         except (ValueError, TypeError):
             pass
 
-    if earliest:
+    if earliest_move_in:
         try:
-            earliest_d = _date.fromisoformat(str(earliest))
+            earliest_d = _date.fromisoformat(str(earliest_move_in))
             if proj_date < earliest_d:
-                # Too early — slight penalty
                 days_early = (earliest_d - proj_date).days
                 return max(40.0, 80.0 - days_early * 0.1)
         except (ValueError, TypeError):
@@ -946,15 +1473,9 @@ def compute_flat_match(
     """
     _ensure_geo_helpers()
 
-    wizard = {}
-    if profile and getattr(profile, 'filter_json', None):
-        wizard = (profile.filter_json or {}).get('wizard') or {}
-
-    standards = wizard.get('standards') or {}
-    amenities = wizard.get('house_amenities') or {}
-
-    _proj_amenities = wizard.get('project_amenities') or {}
-    _courtyard_pref = _proj_amenities.get('courtyard_garden') or amenities.get('courtyard_garden')
+    sw = build_structured_wizard(profile)
+    hf = sw.hard_filters
+    pref = sw.preferences
 
     # Compute all aspect fits
     aspect_fits: dict[str, float] = {}
@@ -1036,31 +1557,48 @@ def compute_flat_match(
         aspect_fits['walkability'] = 50.0
 
     # Noise
-    aspect_fits['noise'] = _flat_noise_fit(unit, project, profile)
+    aspect_fits['noise'] = _flat_noise_fit(unit, project, hf, pref)
 
     # --- Dispozice a prostor ---
-    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile)
-    aspect_fits['outdoor_area'] = _flat_outdoor_fit(unit, profile)
-    aspect_fits['floor_preference'] = _flat_floor_preference_fit(unit, project, profile)
+    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile, ideal_area=pref.ideal_area)
+    aspect_fits['outdoor_area'] = _flat_outdoor_fit(unit, outdoor_area_min=hf.outdoor_area_min)
+    aspect_fits['floor_preference'] = _flat_floor_preference_fit(
+        unit, project,
+        preferred_floor=pref.preferred_floor,
+        exclude_ground=hf.exclude_ground_floor,
+        penthouse_only=hf.penthouse_only,
+    )
 
     # --- Standardy ---
-    aspect_fits['heating'] = _flat_standard_fit(unit, project, standards.get('floor_heating'), 'heating')
-    aspect_fits['heating_source'] = _flat_heating_source_fit(project, standards.get('heating_source'))
-    aspect_fits['recuperation'] = _flat_standard_fit(unit, project, standards.get('recuperation'), 'recuperation')
-    aspect_fits['exterior_blinds'] = _flat_standard_fit(unit, project, standards.get('exterior_blinds'), 'exterior_blinds')
-    aspect_fits['air_conditioning'] = _flat_standard_fit(unit, project, standards.get('air_conditioning'), 'air_conditioning')
-    aspect_fits['flooring'] = _flat_standard_fit(unit, project, standards.get('flooring'), 'floors')
-    aspect_fits['ceiling_height'] = _flat_standard_fit(unit, project, standards.get('ceiling_height'), 'ceiling_height')
-    aspect_fits['windows'] = _flat_standard_fit(unit, project, standards.get('window_type'), 'windows')
+    # Derive priority from must/prefer split: "must"→already hard-filtered but still
+    # scores as "prefer"; "prefer"→scoring only; None→neutral 50.
+    aspect_fits['heating'] = _flat_standard_fit(
+        unit, project, _intensity(hf.must_floor_heating, pref.prefer_floor_heating) or None, 'heating')
+    aspect_fits['heating_source'] = _flat_heating_source_fit(project, pref.heating_source)
+    aspect_fits['recuperation'] = _flat_standard_fit(
+        unit, project, _intensity(hf.must_recuperation, pref.prefer_recuperation) or None, 'recuperation')
+    aspect_fits['exterior_blinds'] = _flat_standard_fit(
+        unit, project, _intensity(hf.must_exterior_blinds, pref.prefer_exterior_blinds) or None, 'exterior_blinds')
+    aspect_fits['air_conditioning'] = _flat_standard_fit(
+        unit, project, _intensity(hf.must_air_conditioning, pref.prefer_air_conditioning) or None, 'air_conditioning')
+    # flooring/ceiling_height: no wizard fields map here (pre-existing no-ops → neutral 50)
+    aspect_fits['flooring'] = _flat_standard_fit(unit, project, None, 'floors')
+    aspect_fits['ceiling_height'] = _flat_standard_fit(unit, project, None, 'ceiling_height')
+    aspect_fits['windows'] = _flat_standard_fit(unit, project, pref.window_type, 'windows')
 
     # --- Vybavení projektu ---
-    aspect_fits['reception'] = _flat_amenity_fit(project, amenities.get('reception'), 'reception')
-    aspect_fits['fitness_project'] = _flat_amenity_fit(project, amenities.get('fitness'), 'fitness')
-    aspect_fits['ev_charger'] = _flat_amenity_fit(project, amenities.get('ev_charger'), 'ev_charger')
-    aspect_fits['courtyard_garden'] = _flat_amenity_fit(project, _courtyard_pref, 'courtyard_garden')
+    # "must" amenities are hard-filtered by eligibility; for scoring, treat must as "prefer"
+    aspect_fits['reception'] = _flat_amenity_fit(
+        project, 'prefer' if hf.must_reception else pref.prefer_reception, 'reception')
+    aspect_fits['fitness_project'] = _flat_amenity_fit(
+        project, 'prefer' if hf.must_fitness else pref.prefer_fitness, 'fitness')
+    aspect_fits['ev_charger'] = _flat_amenity_fit(project, pref.prefer_ev_charger, 'ev_charger')
+    aspect_fits['courtyard_garden'] = _flat_amenity_fit(
+        project, 'prefer' if hf.must_courtyard_garden else pref.prefer_courtyard_garden, 'courtyard_garden')
 
     # --- Dokončení ---
-    aspect_fits['completion_fit'] = _flat_completion_fit(project, profile)
+    aspect_fits['completion_fit'] = _flat_completion_fit(
+        project, latest_move_in=hf.latest_move_in, earliest_move_in=pref.earliest_move_in)
 
     # --- Weighted total ---
     if commute_hard_fail:
@@ -1220,7 +1758,12 @@ def compute_full_score(
     Falls back to legacy config-driven scoring otherwise.
     """
     # 1. Eligibility
-    elig = compute_eligibility(unit, project, profile)
+    # Extract derived_total_floors from aggregates if available
+    _dtf = getattr(aggregates, "derived_total_floors", None) if aggregates else None
+    elig = compute_eligibility(
+        unit, project, profile,
+        project_derived_total_floors=_dtf,
+    )
     if elig["status"] == "fail":
         fits = {
             "budget_fit": 0.0, "walkability_fit": 0.0, "location_fit": 0.0,
