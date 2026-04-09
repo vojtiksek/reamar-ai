@@ -7250,3 +7250,97 @@ def portal_me(
         email=client.email,
         broker_name=broker.name if broker else None,
     )
+
+
+# --- Portal: Future Projects ---
+
+class PortalFutureProjectItem(BaseModel):
+    id: int
+    name: str
+    slug: str
+    developer: str | None = None
+    city: str | None = None
+    municipal_district: str | None = None
+    stage: str | None = None
+    total_units: int | None = None
+    date_sale_start: str | None = None
+    construction_completion: str | None = None
+    project_type: str | None = None
+    url: str | None = None
+    renovation: bool | None = None
+    public_data_json: dict | None = None
+    my_interest: bool = False
+
+
+@app.get("/portal/future-projects", response_model=list[PortalFutureProjectItem])
+def portal_list_future_projects(
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> list[PortalFutureProjectItem]:
+    fps = db.execute(
+        select(FutureProject)
+        .where(FutureProject.is_visible.is_(True))
+        .order_by(FutureProject.sort_order, FutureProject.name)
+    ).scalars().all()
+    # Check which projects the client already expressed interest in
+    interested_ids: set[int] = set()
+    if fps:
+        rows = db.execute(
+            select(FutureProjectInterest.future_project_id).where(
+                FutureProjectInterest.client_id == client.id,
+                FutureProjectInterest.future_project_id.in_([f.id for f in fps]),
+            )
+        ).scalars().all()
+        interested_ids = set(rows)
+    return [
+        PortalFutureProjectItem(
+            id=fp.id, name=fp.name, slug=fp.slug,
+            developer=fp.developer, city=fp.city,
+            municipal_district=fp.municipal_district,
+            stage=fp.stage, total_units=fp.total_units,
+            date_sale_start=fp.date_sale_start,
+            construction_completion=fp.construction_completion,
+            project_type=fp.project_type, url=fp.url,
+            renovation=fp.renovation,
+            public_data_json=fp.public_data_json,
+            my_interest=fp.id in interested_ids,
+        )
+        for fp in fps
+    ]
+
+
+class PortalInterestResponse(BaseModel):
+    status: str  # "created" | "already_exists"
+    interest_id: int
+
+
+@app.post("/portal/future-projects/{fp_id}/interest", response_model=PortalInterestResponse)
+def portal_create_interest(
+    fp_id: int,
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> PortalInterestResponse:
+    fp = db.get(FutureProject, fp_id)
+    if not fp or not fp.is_visible:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check for existing interest (anti-duplicate)
+    existing = db.execute(
+        select(FutureProjectInterest).where(
+            FutureProjectInterest.future_project_id == fp_id,
+            FutureProjectInterest.client_id == client.id,
+        )
+    ).scalar_one_or_none()
+    if existing:
+        return PortalInterestResponse(status="already_exists", interest_id=existing.id)
+
+    interest = FutureProjectInterest(
+        future_project_id=fp_id,
+        client_id=client.id,
+        broker_id=client.broker_id,
+        status="interested",
+    )
+    db.add(interest)
+    db.commit()
+    db.refresh(interest)
+    return PortalInterestResponse(status="created", interest_id=interest.id)
