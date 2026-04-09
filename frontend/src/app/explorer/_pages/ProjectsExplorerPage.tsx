@@ -876,6 +876,7 @@ export default function ProjectsPage() {
   const [recomputingWalkability, setRecomputingWalkability] = useState(false);
   const [importingBuiltMind, setImportingBuiltMind] = useState(false);
   const [importBuiltMindResult, setImportBuiltMindResult] = useState<string | null>(null);
+  const [recomputingFloors, setRecomputingFloors] = useState(false);
   const [actionsOpen, setActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
 
@@ -1172,6 +1173,28 @@ export default function ProjectsPage() {
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
                 >
                   {recomputingWalkability ? "Stahování walkability…" : "Stáhnout walkability POI + přepočítat projekty"}
+                </button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setRecomputingFloors(true);
+                    setActionsOpen(false);
+                    try {
+                      const res = await fetch(`${API_BASE}/admin/aggregates/recompute-floors`, { method: "POST" });
+                      if (!res.ok) throw new Error(await res.text());
+                      const data = await res.json();
+                      alert(`Odvozený počet pater přepočítán.\nProjektů: ${data.processed}, s patry: ${data.with_derived_floors} (${data.elapsed_seconds}s)`);
+                      setRefetchTrigger((t) => t + 1);
+                    } catch (e) {
+                      alert(e instanceof Error ? e.message : "Chyba při přepočtu pater");
+                    } finally {
+                      setRecomputingFloors(false);
+                    }
+                  }}
+                  disabled={recomputingFloors || loading}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100 disabled:opacity-50"
+                >
+                  {recomputingFloors ? "Přepočítávám patra…" : "Odvodit počet pater z jednotek"}
                 </button>
                 <div className="my-1 border-t border-slate-100" />
                 <button

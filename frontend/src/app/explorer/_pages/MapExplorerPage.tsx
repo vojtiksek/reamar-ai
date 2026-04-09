@@ -4,6 +4,8 @@ import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { useFilterGroups } from "@/hooks/useFilterGroups";
 import { useFilterDrawer } from "@/hooks/useFilterDrawer";
 import { API_BASE } from "@/lib/api";
+import { usePoiOverview } from "@/hooks/usePoiOverview";
+import { DEFAULT_POI_CATEGORIES, ALL_POI_CATEGORIES, POI_CATEGORY_LABELS } from "@/lib/poiConfig";
 import {
   buildUnitsQuery,
   countActiveFilters,
@@ -43,39 +45,6 @@ const ProjectsLeafletMap = dynamic(() => import("../../projects/map/ProjectsLeaf
   ssr: false,
 });
 
-const DEFAULT_POI_CATEGORIES = [
-  "supermarkets",
-  "pharmacies",
-  "parks",
-  "restaurants",
-  "tram_stops",
-  "bus_stops",
-  "metro_stations",
-];
-
-const ALL_POI_CATEGORIES = [
-  ...DEFAULT_POI_CATEGORIES,
-  "cafes",
-  "fitness",
-  "playgrounds",
-  "kindergartens",
-  "primary_schools",
-];
-
-const POI_CATEGORY_LABELS: Record<string, string> = {
-  supermarkets: "Supermarkety",
-  pharmacies: "Lékárny",
-  parks: "Parky",
-  restaurants: "Restaurace",
-  tram_stops: "Tram",
-  bus_stops: "Bus",
-  metro_stations: "Metro",
-  cafes: "Kavárny",
-  fitness: "Fitness",
-  playgrounds: "Hřiště",
-  kindergartens: "Školky",
-  primary_schools: "ZŠ",
-};
 
 /**
  * Parse the first polygon ring from a GeoJSON Polygon or MultiPolygon string.
@@ -119,11 +88,10 @@ export default function ProjectsMapPage() {
   const [poiCategoriesEnabled, setPoiCategoriesEnabled] = useState<Set<string>>(
     () => new Set(DEFAULT_POI_CATEGORIES)
   );
-  const [poiOverviewData, setPoiOverviewData] = useState<{
-    project: { lat: number; lon: number };
-    categories: Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>>;
-  } | null>(null);
-  const [poiOverviewLoading, setPoiOverviewLoading] = useState(false);
+  const { poiOverview: poiOverviewData, loading: poiOverviewLoading } = usePoiOverview(
+    selectedProjectId,
+    poiCategoriesEnabled,
+  );
   const [poiPanelOpen, setPoiPanelOpen] = useState(true);
 
   const filtersInUrl: CurrentFilters = useMemo(
@@ -140,38 +108,6 @@ export default function ProjectsMapPage() {
   const canSaveToClient = activeClient != null;
   const [savingToClient, setSavingToClient] = useState(false);
 
-  useEffect(() => {
-    if (selectedProjectId == null) {
-      setPoiOverviewData(null);
-      return;
-    }
-    let cancelled = false;
-    setPoiOverviewLoading(true);
-    const categories = Array.from(poiCategoriesEnabled).filter(Boolean);
-    const params = new URLSearchParams({
-      categories: categories.join(","),
-      per_category: "2",
-    });
-    fetch(`${API_BASE}/projects/${selectedProjectId}/walkability-poi-overview?${params}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: { project?: { lat: number; lon: number } | null; categories?: Record<string, unknown[]> }) => {
-        if (cancelled) return;
-        if (data.project && data.categories) {
-          setPoiOverviewData({ project: data.project, categories: data.categories as Record<string, Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>> });
-        } else {
-          setPoiOverviewData(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) setPoiOverviewData(null);
-      })
-      .finally(() => {
-        if (!cancelled) setPoiOverviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedProjectId, poiCategoriesEnabled]);
 
   useEffect(() => {
     let cancelled = false;

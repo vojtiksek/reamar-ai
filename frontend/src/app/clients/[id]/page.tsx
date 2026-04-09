@@ -237,7 +237,6 @@ export default function ClientDetailPage() {
       administrative_region?: string | null;
     };
     budget?: {
-      ideal_price?: number | null;
       max_price?: number | null;
       tolerate_plus_10?: boolean;
       ideal_area?: number | null;
@@ -1062,14 +1061,8 @@ export default function ClientDetailPage() {
                       )}
                     </div>
                     {/* Wizard extras summary */}
-                    {wizardExtras.budget && (wizardExtras.budget.ideal_price || wizardExtras.budget.ideal_area) && (
+                    {wizardExtras.budget && (wizardExtras.budget.ideal_area) && (
                       <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 text-sm">
-                        {wizardExtras.budget.ideal_price != null && (
-                          <div>
-                            <p className="text-[11px] font-medium text-slate-500">Ideální cena</p>
-                            <p className="font-medium text-slate-900">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>
-                          </div>
-                        )}
                         {wizardExtras.budget.ideal_area != null && (
                           <div>
                             <p className="text-[11px] font-medium text-slate-500">Idealni plocha</p>
@@ -1660,29 +1653,7 @@ export default function ClientDetailPage() {
                       <h4 className="text-sm font-semibold text-slate-900">
                         Rozpočet a velikost bytu
                       </h4>
-                      <div>
-                        <label className={reamarLabelClass}>
-                          Ideální cena (Kč)
-                        </label>
-                        <input
-                          type="number"
-                          value={wizardExtras.budget?.ideal_price ?? ""}
-                          onChange={(e) =>
-                            setWizardExtras((prev) => ({
-                              ...prev,
-                              budget: {
-                                ...(prev.budget ?? {}),
-                                ideal_price: e.target.value ? Number(e.target.value) : null,
-                              },
-                            }))
-                          }
-                          className={cn("mt-1", reamarInputClass)}
-                          placeholder="Např. 8 500 000"
-                        />
-                        {wizardExtras.budget?.ideal_price != null && (
-                          <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>
-                        )}
-                      </div>
+                      {/* ideal_price removed — budget_max is the primary constraint */}
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className={reamarLabelClass}>

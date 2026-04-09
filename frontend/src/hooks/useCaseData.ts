@@ -26,6 +26,7 @@ import type {
   NoteItem,
   WizardExtras,
 } from "@/lib/caseTypes";
+import { buildStructuredWizard } from "@/lib/wizardTransform";
 
 export function useCaseData() {
   const params = useParams();
@@ -208,10 +209,11 @@ export function useCaseData() {
     }
     setLoading(true);
 
+    const controller = new AbortController();
     const authHeaders = { Authorization: `Bearer ${token}` };
     const fetchOptionalJson = async <T,>(url: string, fallback: T): Promise<T> => {
       try {
-        const response = await fetch(url, { headers: authHeaders });
+        const response = await fetch(url, { headers: authHeaders, signal: controller.signal });
         if (!response.ok) return fallback;
         return (await response.json()) as T;
       } catch {
@@ -221,9 +223,11 @@ export function useCaseData() {
 
     fetch(`${API_BASE}/clients/${clientId}`, {
       headers: authHeaders,
+      signal: controller.signal,
     })
       .then((r) => (r.ok ? r.json() : Promise.reject(new Error(r.statusText))))
       .then(async (clientJson) => {
+        if (controller.signal.aborted) return;
         setClient(clientJson as ClientSummary);
 
         const [
@@ -245,6 +249,7 @@ export function useCaseData() {
           fetchOptionalJson<NoteItem[]>(`${API_BASE}/clients/${clientId}/notes`, []),
         ]);
 
+        if (controller.signal.aborted) return;
         setProfile((profileJson || null) as ClientProfile | null);
         setRecs((recsJson || []) as RecommendationItem[]);
         setMarketFit((marketFitJson || null) as MarketFitAnalysis | null);
@@ -272,8 +277,15 @@ export function useCaseData() {
           }));
         setLocationProjects(withGps);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : "Chyba"))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (e instanceof DOMException && e.name === "AbortError") return;
+        setError(e instanceof Error ? e.message : "Chyba");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+
+    return () => { controller.abort(); };
   }, [clientId, token, hydrated]);
 
   const buildProfileBody = useCallback((): ClientProfile => ({
@@ -283,6 +295,7 @@ export function useCaseData() {
     filter_json: {
       ...(profile?.filter_json ?? {}),
       wizard: wizardExtras,
+      structured_wizard: buildStructuredWizard(wizardExtras, profile, selectedLayouts),
     },
     polygon_geojson:
       locationPolygons.length === 0 || locationPolygons[0].length < 3

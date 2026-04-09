@@ -66,6 +66,8 @@ export type RecommendationItem = {
   layout?: string | null;
   layout_label?: string | null;
   district?: string | null;
+  project_lat?: number | null;
+  project_lng?: number | null;
   exterior_area_m2?: number | null;
   floor_area_m2?: number | null;
   price_czk?: number | null;
@@ -161,7 +163,6 @@ export type WizardExtras = {
     administrative_region?: string | null;
   };
   budget?: {
-    ideal_price?: number | null;
     max_price?: number | null;
     tolerate_plus_10?: boolean;
     max_price_tolerance_pct?: number | null;
@@ -257,7 +258,9 @@ export type WizardExtras = {
   skip_categories?: {
     standards?: boolean;
     amenities?: boolean;
-    surroundings?: boolean;
+    surroundings?: boolean;  // legacy — kept for backward compat
+    noise?: boolean;
+    walkability?: boolean;
   };
   earliest_move_in?: string | null;
   latest_move_in?: string | null;

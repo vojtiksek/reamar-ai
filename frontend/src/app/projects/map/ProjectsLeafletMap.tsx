@@ -6,6 +6,7 @@ import L from "leaflet";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
 import type { LatLng } from "@/lib/geo";
+import { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS } from "@/lib/poiConfig";
 
 type ProjectPoint = {
   id: number;
@@ -30,37 +31,7 @@ export type PoiOverview = {
   categories: Record<string, PoiOverviewItem[]>;
 } | null;
 
-const POI_CATEGORY_COLORS: Record<string, string> = {
-  supermarkets: "#22c55e",
-  pharmacies: "#8b5cf6",
-  parks: "#16a34a",
-  restaurants: "#ea580c",
-  tram_stops: "#0ea5e9",
-  bus_stops: "#06b6d4",
-  metro_stations: "#6366f1",
-  cafes: "#ca8a04",
-  fitness: "#dc2626",
-  playgrounds: "#ec4899",
-  kindergartens: "#0891b2",
-  primary_schools: "#4f46e5",
-};
-
-const POI_CATEGORY_LABELS: Record<string, string> = {
-  supermarkets: "Supermarket",
-  pharmacies: "Lékárna",
-  parks: "Park",
-  restaurants: "Restaurace",
-  tram_stops: "Tram",
-  bus_stops: "Bus",
-  metro_stations: "Metro",
-  cafes: "Kavárna",
-  fitness: "Fitness",
-  playgrounds: "Hřiště",
-  kindergartens: "Školka",
-  primary_schools: "ZŠ",
-};
-
-export { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS };
+export { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS } from "@/lib/poiConfig";
 
 const poiIconCache = new Map<string, L.DivIcon>();
 function getPoiCategoryIcon(category: string): L.DivIcon {

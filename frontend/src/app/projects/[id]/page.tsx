@@ -6,6 +6,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { API_BASE } from "@/lib/api";
+import { usePoiOverview } from "@/hooks/usePoiOverview";
 import type { FiltersResponse } from "@/lib/filters";
 import { flattenFilterSpecsByKey } from "@/lib/filters";
 import {
@@ -218,13 +219,10 @@ export default function ProjectDetailPage() {
     view: "list" | "map";
   }>({ open: false, category: "", categoryLabel: "", items: [], loading: false, view: "list" });
 
-  const [overviewPoi, setOverviewPoi] = useState<{
-    project: { lat: number; lon: number };
-    categories: Record<
-      string,
-      Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>
-    >;
-  } | null>(null);
+  const { poiOverview: overviewPoi } = usePoiOverview(
+    projectId ?? null,
+    "supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations",
+  );
   const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");
   const [unitsSortDir, setUnitsSortDir] = useState<"asc" | "desc">("asc");
 
@@ -444,45 +442,6 @@ export default function ProjectDetailPage() {
     setPoiModal((prev) => ({ ...prev, open: false }));
   }, []);
 
-  useEffect(() => {
-    if (!projectId) {
-      setOverviewPoi(null);
-      return;
-    }
-    let cancelled = false;
-    const params = new URLSearchParams({
-      categories:
-        "supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations",
-      per_category: "2",
-    });
-    fetch(`${API_BASE}/projects/${encodeURIComponent(projectId)}/walkability-poi-overview?${params.toString()}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then(
-        (data: {
-          project?: { lat: number; lon: number } | null;
-          categories?: Record<
-            string,
-            Array<{ name: string | null; distance_m: number | null; lat: number | null; lon: number | null }>
-          >;
-        }) => {
-          if (cancelled) return;
-          if (data.project && data.categories) {
-            setOverviewPoi({
-              project: data.project,
-              categories: data.categories,
-            });
-          } else {
-            setOverviewPoi(null);
-          }
-        }
-      )
-      .catch(() => {
-        if (!cancelled) setOverviewPoi(null);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
 
   useEffect(() => {
     setFiltersState((prev) => ({ ...prev, loading: true }));
