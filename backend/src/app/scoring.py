@@ -900,6 +900,19 @@ def compute_eligibility(
         elif unit_floor is None or project_derived_total_floors is None:
             _review("penthouse_only")
 
+    # -- Polygon (location) --
+    if hf.location_polygon and profile.polygon_geojson:
+        _ensure_geo_helpers()
+        poly = _parse_polygon_geojson(profile.polygon_geojson)
+        if poly:
+            lat = getattr(project, "gps_latitude", None)
+            lon = getattr(project, "gps_longitude", None)
+            if lat is not None and lon is not None:
+                if not _point_in_polygon(float(lat), float(lon), poly):
+                    _fail("outside_polygon")
+            else:
+                _review("polygon_location")
+
     # Determine status
     fail_reasons = [r for r in reasons if "(data missing)" not in r]
     if fail_reasons:
