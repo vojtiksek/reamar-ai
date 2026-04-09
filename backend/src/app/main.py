@@ -1652,12 +1652,21 @@ def recompute_client_recommendations(
         .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
     )
     if profile:
+        # Apply tolerance from wizard to widen the SQL filter window.
+        # Scoring still penalizes units beyond the ideal; this just ensures
+        # they enter the candidate pool instead of being silently excluded.
+        wiz_budget = ((profile.filter_json or {}).get("wizard", {}).get("budget", {}))
+        price_tol_pct = wiz_budget.get("max_price_tolerance_pct", 0) or 0
+        area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
+
         if profile.budget_min is not None:
             q = q.where(Unit.price_czk >= profile.budget_min)
         if profile.budget_max is not None:
-            q = q.where(Unit.price_czk <= profile.budget_max)
+            effective_budget_max = int(profile.budget_max * (1 + price_tol_pct / 100))
+            q = q.where(Unit.price_czk <= effective_budget_max)
         if profile.area_min is not None:
-            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+            effective_area_min = profile.area_min * (1 - area_tol_pct / 100)
+            q = q.where(Unit.floor_area_m2 >= effective_area_min)
         if profile.area_max is not None:
             q = q.where(Unit.floor_area_m2 <= profile.area_max)
         # Property type hard filter
@@ -2429,6 +2438,54 @@ def list_client_recommendations(
     return items
 
 
+class HiddenRecItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    rec_id: int
+    unit_id: int
+    unit_external_id: str | None
+    project_id: int
+    project_name: str
+    layout: str | None
+    floor_area_m2: float | None
+    price_czk: int | None
+    score: float
+    floor: int | None
+
+
+@app.get("/clients/{client_id}/recommendations/hidden", response_model=list[HiddenRecItem])
+def list_hidden_recommendations(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> list[HiddenRecItem]:
+    client = _get_client_for_broker(db, client_id, broker)
+    recs = db.execute(
+        select(ClientRecommendation, Unit, Project)
+        .join(Unit, ClientRecommendation.unit_id == Unit.id)
+        .join(Project, ClientRecommendation.project_id == Project.id)
+        .where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.hidden_by_broker.is_(True),
+        )
+        .order_by(ClientRecommendation.score.desc())
+    ).all()
+    return [
+        HiddenRecItem(
+            rec_id=rec.id,
+            unit_id=unit.id,
+            unit_external_id=unit.external_id,
+            project_id=project.id,
+            project_name=project.name,
+            layout=unit.layout,
+            floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+            price_czk=unit.price_czk,
+            score=rec.score,
+            floor=unit.floor,
+        )
+        for rec, unit, project in recs
+    ]
+
+
 class ManualAddRequest(BaseModel):
     unit_external_id: str
 
@@ -2913,13 +2970,18 @@ def analytics_clients_without_units(
             .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
         )
 
-        # Budget + area filters
+        # Budget + area filters (with wizard tolerance)
+        wiz_budget = ((profile.filter_json or {}).get("wizard", {}).get("budget", {}))
+        price_tol_pct = wiz_budget.get("max_price_tolerance_pct", 0) or 0
+        area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
         if profile.budget_min is not None:
             q = q.where(Unit.price_czk >= profile.budget_min)
         if profile.budget_max is not None:
-            q = q.where(Unit.price_czk <= profile.budget_max)
+            effective_budget_max = int(profile.budget_max * (1 + price_tol_pct / 100))
+            q = q.where(Unit.price_czk <= effective_budget_max)
         if profile.area_min is not None:
-            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+            effective_area_min = profile.area_min * (1 - area_tol_pct / 100)
+            q = q.where(Unit.floor_area_m2 >= effective_area_min)
         if profile.area_max is not None:
             q = q.where(Unit.floor_area_m2 <= profile.area_max)
 
@@ -6552,12 +6614,17 @@ def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, 
         .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
     )
     if profile:
+        wiz_budget = ((profile.filter_json or {}).get("wizard", {}).get("budget", {}))
+        price_tol_pct = wiz_budget.get("max_price_tolerance_pct", 0) or 0
+        area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
         if profile.budget_min is not None:
             q = q.where(Unit.price_czk >= profile.budget_min)
         if profile.budget_max is not None:
-            q = q.where(Unit.price_czk <= profile.budget_max)
+            effective_budget_max = int(profile.budget_max * (1 + price_tol_pct / 100))
+            q = q.where(Unit.price_czk <= effective_budget_max)
         if profile.area_min is not None:
-            q = q.where(Unit.floor_area_m2 >= profile.area_min)
+            effective_area_min = profile.area_min * (1 - area_tol_pct / 100)
+            q = q.where(Unit.floor_area_m2 >= effective_area_min)
         if profile.area_max is not None:
             q = q.where(Unit.floor_area_m2 <= profile.area_max)
         prop_type = profile.property_type

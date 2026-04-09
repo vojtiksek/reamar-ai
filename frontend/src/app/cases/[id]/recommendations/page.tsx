@@ -1069,6 +1069,27 @@ export default function RecommendationsPage() {
   const likedCount = recs.filter((r) => r.feedback?.feedback_type === "liked").length;
   const dislikedCount = recs.filter((r) => r.feedback?.feedback_type === "disliked").length;
 
+  // Hidden recommendations
+  type HiddenRec = { rec_id: number; unit_id: number; unit_external_id: string | null; project_id: number; project_name: string; layout: string | null; floor_area_m2: number | null; price_czk: number | null; score: number; floor: number | null };
+  const [hiddenRecs, setHiddenRecs] = useState<HiddenRec[]>([]);
+  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenLoading, setHiddenLoading] = useState(false);
+
+  const fetchHidden = async () => {
+    if (!client || !token) return;
+    setHiddenLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/clients/${client.id}/recommendations/hidden`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) setHiddenRecs(await res.json());
+    } finally { setHiddenLoading(false); }
+  };
+
+  const handleUnhide = async (recId: number) => {
+    if (!client || !token) return;
+    await fetch(`${API_BASE}/clients/${client.id}/recommendations/${recId}/hide`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+    setHiddenRecs((prev) => prev.filter((r) => r.rec_id !== recId));
+  };
+
   if (!hydrated) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Načítání…</div></div>;
   if (!token) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Nejste přihlášen. Přejděte na <Link href="/login" className="text-slate-900 underline">/login</Link>.</div></div>;
   if (loading) return <p className="text-sm text-slate-600">Načítání…</p>;
@@ -1195,6 +1216,43 @@ export default function RecommendationsPage() {
           <ReamarButton variant="primary" size="sm" className="mt-3" onClick={() => router.push(`/cases/${client.id}/shortlist`)}>Přejít na výběr</ReamarButton>
         </ReamarCard>
       )}
+
+      {/* Hidden recommendations */}
+      <div className="mt-6 border-t border-slate-200 pt-4">
+        <button
+          className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700"
+          onClick={() => { setShowHidden((v) => !v); if (!showHidden && hiddenRecs.length === 0) fetchHidden(); }}
+        >
+          <span>{showHidden ? "▾" : "▸"}</span>
+          <span>Skryté jednotky</span>
+          {hiddenRecs.length > 0 && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium">{hiddenRecs.length}</span>}
+        </button>
+        {showHidden && (
+          <div className="mt-3 space-y-2">
+            {hiddenLoading && <p className="text-xs text-slate-400">Načítám…</p>}
+            {!hiddenLoading && hiddenRecs.length === 0 && <p className="text-xs text-slate-400">Žádné skryté jednotky.</p>}
+            {hiddenRecs.map((hr) => (
+              <div key={hr.rec_id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-700 truncate">{hr.project_name}</p>
+                  <p className="text-xs text-slate-500">
+                    {hr.layout && <span>{hr.layout} · </span>}
+                    {hr.floor_area_m2 && <span>{hr.floor_area_m2} m² · </span>}
+                    {hr.price_czk && <span>{formatCurrencyCzk(hr.price_czk)} · </span>}
+                    <span>Skóre: {hr.score.toFixed(0)}</span>
+                  </p>
+                </div>
+                <button
+                  className="ml-4 shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
+                  onClick={() => handleUnhide(hr.rec_id)}
+                >
+                  Odkrýt
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

@@ -163,6 +163,7 @@ export type WizardExtras = {
     administrative_region?: string | null;
   };
   budget?: {
+    ideal_price?: number | null;
     max_price?: number | null;
     tolerate_plus_10?: boolean;
     max_price_tolerance_pct?: number | null;
