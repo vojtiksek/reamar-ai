@@ -76,7 +76,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
-from .scoring import compute_full_score, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides
+from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -1796,12 +1796,35 @@ def recompute_client_recommendations(
             reason_json=result,
         )
         db.add(rec)
+    # Re-validate pinned recommendations against current eligibility.
+    # Pinned recs survive the delete above, but may now fail hard filters
+    # (e.g. client changed to "only_new" after pinning a renovation unit).
+    pinned_recs = db.execute(
+        select(ClientRecommendation)
+        .where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.pinned_by_broker.is_(True),
+        )
+    ).scalars().all()
+
+    unpinned_count = 0
+    for prec in pinned_recs:
+        pinned_unit = db.get(Unit, prec.unit_id)
+        pinned_project = db.get(Project, prec.project_id) if prec.project_id else None
+        if pinned_unit and pinned_project and profile:
+            elig = compute_eligibility(pinned_unit, pinned_project, profile)
+            if elig["status"] == "fail":
+                prec.pinned_by_broker = False
+                prec.hidden_by_broker = True
+                unpinned_count += 1
+
     db.commit()
 
     return {
         "client_id": client.id,
         "total_candidates": len(rows),
         "created": len(top),
+        "pinned_failed_eligibility": unpinned_count,
     }
 
 
