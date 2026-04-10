@@ -18,11 +18,18 @@ from .import_semantics import (
 )
 
 # Version — bump when field definitions change so frontend can cache-bust.
-METADATA_VERSION = 1
+#
+# v1: enum / feature / toggle fields, compound (sub_options, states) for AC / blinds.
+# v2: add numeric / date / text / toggle_bool field types, visible_when conditionals,
+#     visibility hints, semantics for noise negative-constraint fields.
+METADATA_VERSION = 6
 
 
-def _opt(value: str, label: str) -> dict:
-    return {"value": value, "label": label}
+def _opt(value: str, label: str, desc: str | None = None) -> dict:
+    out: dict = {"value": value, "label": label}
+    if desc:
+        out["desc"] = desc
+    return out
 
 
 # ── Enum field definitions ────────────────────────────────────────────
@@ -234,6 +241,20 @@ AMENITY_FIELDS: dict[str, dict] = {
 }
 
 # ── Noise features ────────────────────────────────────────────────────
+# Noise fields use negative-constraint semantics: "ignore" = fine, "prefer" =
+# annoys me, "must" = exclude.  They piggy-back on the same priority picker
+# state machine as other feature fields, but UI labels differ.  Expose this
+# via `semantics` + `custom_state_labels` so consumers (fullscreen wizard,
+# broker quick-edit, summary) can render consistent language.
+
+_NOISE_SEMANTICS = {
+    "semantics": "negative_constraint",
+    "custom_state_labels": {
+        "ignore": "Neřeším",
+        "prefer": "Vadí mi",
+        "must": "Vyloučit",
+    },
+}
 
 NOISE_FIELDS: dict[str, dict] = {
     "main_road": {
@@ -242,6 +263,7 @@ NOISE_FIELDS: dict[str, dict] = {
         "label": "Hlavní silnice",
         "section": "noise",
         "scoring_role": "preference",
+        **_NOISE_SEMANTICS,
     },
     "tram": {
         "key": "tram",
@@ -249,6 +271,7 @@ NOISE_FIELDS: dict[str, dict] = {
         "label": "Tramvajové koleje",
         "section": "noise",
         "scoring_role": "preference",
+        **_NOISE_SEMANTICS,
     },
     "railway": {
         "key": "railway",
@@ -256,6 +279,7 @@ NOISE_FIELDS: dict[str, dict] = {
         "label": "Vlakové koleje",
         "section": "noise",
         "scoring_role": "preference",
+        **_NOISE_SEMANTICS,
     },
     "airport": {
         "key": "airport",
@@ -263,6 +287,7 @@ NOISE_FIELDS: dict[str, dict] = {
         "label": "Letiště",
         "section": "noise",
         "scoring_role": "preference",
+        **_NOISE_SEMANTICS,
     },
 }
 
@@ -275,6 +300,7 @@ TOGGLE_FIELDS: dict[str, dict] = {
         "label": "Novostavba nebo rekonstrukce?",
         "section": "completion",
         "scoring_role": "hard_filter",
+        "visibility": "client",
         "options": [
             _opt("any", "Nezáleží"),
             _opt("prefer_new", "Raději novostavba"),
@@ -289,10 +315,12 @@ TOGGLE_FIELDS: dict[str, dict] = {
         "label": "Standard dokončení",
         "section": "completion",
         "scoring_role": "context",
+        "visibility": "client",
         "options": [
-            _opt("shell_and_core", "Holá stavba"),
-            _opt("white_wall", "Bílé stěny"),
-            _opt("fit_out", "Kompletní"),
+            _opt("doesnt_matter", "Je mi to jedno", "Nerozlišuji standard dokončení"),
+            _opt("shell_and_core", "Holá stavba", "Bez vnitřního vybavení"),
+            _opt("white_wall", "Bílé stěny", "Základní bílá povrchová úprava"),
+            _opt("fit_out", "Kompletní dokončení", "Nastěhování ihned"),
         ],
     },
     "floor_rule": {
@@ -378,6 +406,7 @@ TOGGLE_FIELDS: dict[str, dict] = {
         "label": "Kdy chcete bydlet?",
         "section": "completion",
         "scoring_role": "context",
+        "visibility": "client",
         "options": [
             _opt("asap", "Co nejdříve"),
             _opt("by_date", "Do konkrétního data"),
@@ -390,6 +419,7 @@ TOGGLE_FIELDS: dict[str, dict] = {
         "label": "Postoupení smlouvy",
         "section": "completion",
         "scoring_role": "context",
+        "visibility": "broker",
         "options": [
             _opt("yes", "Ano, důležité"),
             _opt("no", "Ne"),
@@ -399,17 +429,260 @@ TOGGLE_FIELDS: dict[str, dict] = {
 }
 
 
-def get_wizard_metadata() -> dict:
-    """Build the complete wizard metadata response."""
-    fields: dict[str, dict] = {}
-    fields.update(ENUM_FIELDS)
-    fields.update({f"std_{k}": v for k, v in FEATURE_FIELDS.items()})
-    fields.update({f"amenity_{k}": v for k, v in AMENITY_FIELDS.items()})
-    fields.update({f"noise_{k}": v for k, v in NOISE_FIELDS.items()})
-    fields.update(TOGGLE_FIELDS)
+# ── Date field definitions (v2) ───────────────────────────────────────
+# Top-level wizard fields storing ISO date strings.  `visible_when` expresses
+# conditional visibility in declarative form (consumer may ignore).
 
-    # Use field key as the dict key (not the prefixed version)
-    # Prefix is only for internal dedup — expose by section + key
+DATE_FIELDS: dict[str, dict] = {
+    "completion_date": {
+        "key": "completion_date",
+        "field_type": "date",
+        "label": "Nejpozději do",
+        "section": "completion",
+        "scoring_role": "hard_filter",
+        "visibility": "client",
+        "visible_when": {"field": "move_in_timeline", "equals": "by_date"},
+    },
+    "earliest_move_in": {
+        "key": "earliest_move_in",
+        "field_type": "date",
+        "label": "Nejdříve nastěhování",
+        "section": "completion",
+        "scoring_role": "preference",
+        "visibility": "broker",
+    },
+    "latest_move_in": {
+        "key": "latest_move_in",
+        "field_type": "date",
+        "label": "Nejpozději nastěhování",
+        "section": "completion",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+    },
+}
+
+# ── Text field definitions (v2) ───────────────────────────────────────
+# Free-text inputs used for administrative area / region names.  Backend
+# reads these from wizard.location.* as hard filters.
+
+TEXT_FIELDS: dict[str, dict] = {
+    "administrative_area": {
+        "key": "administrative_area",
+        "field_type": "text",
+        "label": "Preferované části v této oblasti",
+        "section": "location",
+        # Default role is a soft preference: the area list boosts/demotes
+        # ranking inside the polygon.  When the broker opts in to
+        # `method_admin`, the same list also acts as a hard filter.
+        "scoring_role": "preference",
+        "visibility": "client",
+        "placeholder": "Např. Praha 6",
+        "note": (
+            "Ovlivní pořadí výsledků uvnitř vybrané oblasti. "
+            "Pro striktní filtr zapněte 'Použít i jako striktní požadavek'."
+        ),
+        # Autocomplete hint — frontend calls
+        # GET /locations/suggest?scope=area to populate suggestions.
+        # Free text remains allowed; suggestions are just a quick-pick.
+        "suggest": "area",
+        # Multi-value: broker/client selects multiple preferred areas as
+        # chips.  Frontend dispatches to the MultiSuggestInput variant when
+        # both `suggest` and `multi` are set.
+        "multi": True,
+    },
+    "administrative_region": {
+        "key": "administrative_region",
+        "field_type": "text",
+        "label": "Region / kraj",
+        "section": "location",
+        "scoring_role": "hard_filter",
+        "visibility": "client",
+        "placeholder": "Např. Praha, Středočeský kraj",
+        "suggest": "region",
+    },
+}
+
+# ── Numeric field definitions (v2) ────────────────────────────────────
+# Budget / area / tolerances.  Currency / percent / plain formats drive
+# formatting in the UI.  `visibility: broker` marks fields that brokers
+# tweak on behalf of the client (tolerances, payment schedule limits).
+
+NUMERIC_FIELDS: dict[str, dict] = {
+    # `ideal_price` was removed from the wizard — the product model now only
+    # asks for max price + tolerance.  Legacy JSONB values remain readable
+    # but are no longer exposed via metadata.
+    "budget_max": {
+        "key": "budget_max",
+        "field_type": "numeric",
+        "label": "Maximální cena",
+        "section": "profile",  # stored on ClientProfile.budget_max, not wizard.budget
+        "scoring_role": "hard_filter",
+        "visibility": "client",
+        "unit": "Kč",
+        "format": "currency",
+        "placeholder": "Absolutní strop",
+    },
+    "max_price_tolerance_pct": {
+        "key": "max_price_tolerance_pct",
+        "field_type": "numeric",
+        "label": "Tolerance rozpočtu",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        # Client-facing in the fullscreen wizard — tolerance is part of the
+        # primary budget question.  Kept in sync with wizardModel.ts.
+        "visibility": "both",
+        "unit": "%",
+        "format": "percent",
+        "min": 0,
+        "max": 100,
+        "placeholder": "Např. 10",
+    },
+    # `ideal_area` was removed from the wizard — the product model now only
+    # asks for min area + tolerance.  Backend scoring still has a fallback
+    # path reading `wizard.budget.ideal_area` for legacy cases; it degrades
+    # gracefully to neutral when absent.
+    "area_min": {
+        "key": "area_min",
+        "field_type": "numeric",
+        "label": "Minimální plocha",
+        "section": "profile",
+        "scoring_role": "hard_filter",
+        "visibility": "client",
+        "unit": "m²",
+        "format": "plain",
+        "placeholder": "Absolutní minimum",
+    },
+    "max_area_tolerance_pct": {
+        "key": "max_area_tolerance_pct",
+        "field_type": "numeric",
+        "label": "Tolerance plochy",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        # Client-facing — tolerance is part of the primary area question.
+        "visibility": "both",
+        "unit": "%",
+        "format": "percent",
+        "min": 0,
+        "max": 100,
+        "placeholder": "Např. 10",
+    },
+    "min_outdoor_area_m2": {
+        "key": "min_outdoor_area_m2",
+        "field_type": "numeric",
+        "label": "Minimální venkovní prostor",
+        # Moved from "budget" to "outdoor" to match wizardTransform and
+        # backend unit_report which both read `wizard.outdoor.min_outdoor_area_m2`.
+        "section": "outdoor",
+        "scoring_role": "hard_filter",
+        "visibility": "client",
+        "unit": "m²",
+        "format": "plain",
+        "placeholder": "Např. 5",
+    },
+    "max_outdoor_tolerance_pct": {
+        "key": "max_outdoor_tolerance_pct",
+        "field_type": "numeric",
+        "label": "Tolerance venkovní plochy",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        # Client-facing — tolerance is part of the outdoor question in
+        # the fullscreen wizard.
+        "visibility": "both",
+        "unit": "%",
+        "format": "percent",
+        "min": 0,
+        "max": 100,
+        "placeholder": "Např. 10",
+    },
+    "max_payment_contract_pct": {
+        "key": "max_payment_contract_pct",
+        "field_type": "numeric",
+        "label": "Max. záloha při smlouvě",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+        "unit": "%",
+        "format": "percent",
+        "min": 0,
+        "max": 100,
+        "placeholder": "Např. 20",
+    },
+    "max_payment_construction_pct": {
+        "key": "max_payment_construction_pct",
+        "field_type": "numeric",
+        "label": "Max. platba při výstavbě",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+        "unit": "%",
+        "format": "percent",
+        "min": 0,
+        "max": 100,
+        "placeholder": "Např. 30",
+    },
+    "max_days_on_market": {
+        "key": "max_days_on_market",
+        "field_type": "numeric",
+        "label": "Max. dnů na trhu",
+        "section": "budget",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+        "unit": "dní",
+        "format": "plain",
+        "placeholder": "Např. 90",
+    },
+}
+
+# ── Location method flags (v2) ────────────────────────────────────────
+# These boolean toggles express HOW the broker defined the location
+# constraint.  Polygon and commute are edited on map surfaces elsewhere
+# and surface here as read-only indicators; admin is the fallback text path.
+
+BOOL_TOGGLE_FIELDS: dict[str, dict] = {
+    "method_polygon": {
+        "key": "method_polygon",
+        "field_type": "toggle_bool",
+        "label": "Vybraná oblast na mapě",
+        "section": "location",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+        "note": "edited_on_map",
+    },
+    "method_commute": {
+        "key": "method_commute",
+        "field_type": "toggle_bool",
+        "label": "Dojezdové body",
+        "section": "location",
+        "scoring_role": "hard_filter",
+        "visibility": "broker",
+        "note": "edited_on_map",
+    },
+    "method_admin": {
+        "key": "method_admin",
+        "field_type": "toggle_bool",
+        # Wording shift: this is no longer a "separate location method",
+        # it's an opt-in to promote the preferred admin areas to a hard
+        # filter.  By default the area list is soft (ranking-only).
+        "label": "Použít preferované oblasti i jako striktní požadavek",
+        "section": "location",
+        "scoring_role": "hard_filter_opt_in",
+        "visibility": "both",
+        "note": (
+            "Bez zaškrtnutí jsou preferované části jen soft preference uvnitř "
+            "vybrané oblasti na mapě. Zaškrtnutím se stanou striktním filtrem."
+        ),
+    },
+}
+
+
+def get_wizard_metadata() -> dict:
+    """Build the complete wizard metadata response.
+
+    Keys in the returned ``fields`` dict are section-prefixed for
+    section-nested fields (e.g. ``standards.recuperation``) and bare for
+    top-level fields (e.g. ``renovation_preference``).  The frontend
+    ``getFieldOptions`` helper tries both lookups.
+    """
     flat: dict[str, dict] = {}
     for v in ENUM_FIELDS.values():
         flat[v["key"]] = v
@@ -421,6 +694,18 @@ def get_wizard_metadata() -> dict:
         flat[f"noise.{v['key']}"] = v
     for v in TOGGLE_FIELDS.values():
         flat[v["key"]] = v
+    # v2 additions
+    for v in DATE_FIELDS.values():
+        flat[v["key"]] = v
+    for v in TEXT_FIELDS.values():
+        flat[f"{v['section']}.{v['key']}"] = v
+    for v in NUMERIC_FIELDS.values():
+        # Section drives the prefix: "profile.*" for profile-backed numerics
+        # (budget_max, area_min), "budget.*" for tolerances/payment limits,
+        # "outdoor.*" for min_outdoor_area_m2.
+        flat[f"{v['section']}.{v['key']}"] = v
+    for v in BOOL_TOGGLE_FIELDS.values():
+        flat[f"{v['section']}.{v['key']}"] = v
 
     return {
         "version": METADATA_VERSION,

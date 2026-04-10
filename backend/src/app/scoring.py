@@ -305,8 +305,15 @@ class HardFilters:
     layouts: list[str] = field(default_factory=list)
     # Location — polygon / admin district (stored separately on profile)
     location_polygon: bool = False
-    location_admin_area: str | None = None
+    # Multi-value: broker/client can pick several preferred administrative
+    # areas (e.g. ["Praha 5", "Praha 6"]).  Backward-compat: hydration
+    # accepts both a plain string and a list of strings.
+    location_admin_area: list[str] = field(default_factory=list)
     location_admin_region: str | None = None
+    # Explicit opt-in for administrative-area hard filtering.  Without this
+    # flag the `location_admin_area` list only acts as broker metadata and
+    # never excludes projects.
+    method_admin: bool = False
     # Commute — points stored separately on profile
     location_commute: bool = False
     # Completion
@@ -365,6 +372,7 @@ class PreferenceTags:
     partition_type: str | None = None  # flooring / partitions
     window_type: str | None = None  # actually ceiling height in wizard
     window_material: str | None = None
+    flooring: str | None = None
     # Project amenities — "prefer" / "reject"
     prefer_reception: str | None = None  # "prefer" | "reject" | None
     prefer_fitness: str | None = None
@@ -421,6 +429,229 @@ class StructuredWizard:
         return asdict(self)
 
 
+def _normalize_admin_area(raw: Any) -> list[str]:
+    """Coerce a wizard administrative_area value into a clean list[str].
+
+    Backward-compat: legacy profiles store a single string; new profiles
+    store a list of strings; empty/None becomes an empty list.  All entries
+    are stripped and blanks are dropped while preserving order.
+    """
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        v = raw.strip()
+        return [v] if v else []
+    if isinstance(raw, (list, tuple)):
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            if item is None:
+                continue
+            s = str(item).strip()
+            if not s:
+                continue
+            key = s.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(s)
+        return out
+    return []
+
+
+def _admin_area_signal(
+    project: "Project",
+    hf: "HardFilters",
+) -> dict[str, Any]:
+    """Detailed admin_area signal used for both scoring and explainability.
+
+    Returns a dict with:
+        status: one of
+            'off'        — no preferred areas selected
+            'na'         — project missing admin/district data
+            'inside'     — soft-mode match  (adj = +6.0)
+            'outside'    — soft-mode miss   (adj = -3.0)
+            'hard_match' — hard-mode match (adj = 0.0, just informational)
+            'hard_miss'  — defensive: project that slipped past the hard filter
+        adj: float contribution to the total score
+        matched_area: original-casing label that matched, or None
+        preferred_areas: list of preferred labels (original casing)
+
+    `_admin_area_soft_adjustment` is a thin wrapper over this helper so the
+    ranking behaviour stays unchanged.
+    """
+    if not hf.location_admin_area:
+        return {
+            "status": "off",
+            "adj": 0.0,
+            "matched_area": None,
+            "preferred_areas": [],
+        }
+
+    preferred = [str(a).strip() for a in hf.location_admin_area if a and str(a).strip()]
+    if not preferred:
+        return {
+            "status": "off",
+            "adj": 0.0,
+            "matched_area": None,
+            "preferred_areas": [],
+        }
+
+    proj_admin = getattr(project, "administrative_district_iga", None)
+    proj_district = getattr(project, "district", None)
+    candidates_raw = [
+        str(v).strip()
+        for v in (proj_admin, proj_district)
+        if v is not None and str(v).strip()
+    ]
+
+    if not candidates_raw:
+        return {
+            "status": "na",
+            "adj": 0.0,
+            "matched_area": None,
+            "preferred_areas": preferred,
+        }
+
+    candidates_lower = {c.lower() for c in candidates_raw}
+    matched_area: str | None = None
+    for label in preferred:
+        if label.lower() in candidates_lower:
+            matched_area = label
+            break
+
+    if hf.method_admin:
+        # Hard-filter path: project has already been filtered by eligibility;
+        # anything reaching here should be a match, but be defensive.
+        return {
+            "status": "hard_match" if matched_area else "hard_miss",
+            "adj": 0.0,
+            "matched_area": matched_area,
+            "preferred_areas": preferred,
+        }
+
+    if matched_area:
+        return {
+            "status": "inside",
+            "adj": 6.0,
+            "matched_area": matched_area,
+            "preferred_areas": preferred,
+        }
+    return {
+        "status": "outside",
+        "adj": -3.0,
+        "matched_area": None,
+        "preferred_areas": preferred,
+    }
+
+
+def _admin_area_soft_adjustment(
+    project: "Project",
+    hf: "HardFilters",
+) -> float:
+    """Soft location preference based on `administrative_area` list.
+
+    Only active when the broker/client did NOT opt in to the hard filter
+    (`method_admin == False`).  When opted in, the hard filter has already
+    excluded non-matching projects so the boost would be a no-op noise.
+
+    Returns:
+        +6.0 — project is inside one of the preferred areas
+        -3.0 — project has admin data but no match
+         0.0 — no admin data / no areas selected / method_admin opt-in active
+
+    Values are intentionally small: they nudge ranking without overpowering
+    the hard price/area/commute signals.
+    """
+    return float(_admin_area_signal(project, hf).get("adj") or 0.0)
+
+
+def _admin_area_explain_texts(
+    signal: dict[str, Any] | None,
+) -> tuple[str | None, str | None]:
+    """Translate an admin_area signal into (strength_text, compromise_text).
+
+    Returns `(None, None)` when the signal is off / na / hard_miss — those
+    states carry no actionable insight for the broker.
+    """
+    if not signal:
+        return (None, None)
+    status = signal.get("status")
+    matched = signal.get("matched_area")
+    if status in ("inside", "hard_match"):
+        text = (
+            f"V preferované části ({matched})"
+            if matched
+            else "V preferované části"
+        )
+        return (text, None)
+    if status == "outside":
+        return (None, "Mimo preferované části")
+    return (None, None)
+
+
+def _commute_explain_texts(
+    fits: dict[str, Any],
+) -> tuple[list[str], list[str]]:
+    """Translate commute_details into human-readable strength / compromise texts.
+
+    Replaces the generic "Dojezdové vzdálenosti" / "Dojezd" aspect label with
+    specific per-point texts when travel-time data is available in the fits.
+
+    Selection strategy
+    ------------------
+    Strengths  — points whose travel time is within max_minutes (passed=True),
+                 prioritised by must_have first, then quickest.
+    Compromises — points whose travel time exceeded the limit (passed=False),
+                  prioritised by must_have first, then worst overshoot.
+
+    Cap: at most 2 strengths and 2 compromises, to avoid zahltění.
+
+    Format
+    ------
+    Strength    → "Do {label} za {N} min"
+    Compromise  → "Delší dojezd do {label}"   (no exact minutes — avoids
+                   confusion with hard-filter limit values)
+
+    Returns ([], []) when commute_details is empty (no travel data cached or
+    no commute points configured), allowing the generic aspect label to stand.
+    """
+    details: list[dict[str, Any]] = fits.get("commute_details") or []
+    if not details:
+        return ([], [])
+
+    _priority_rank = {"must_have": 0, "prefer": 1, "ignore": 2}
+
+    passed = [d for d in details if d.get("passed")]
+    failed = [d for d in details if not d.get("passed")]
+
+    # must_have first; within group, quickest travel time wins for strengths
+    passed.sort(key=lambda d: (
+        _priority_rank.get(str(d.get("priority", "ignore")), 2),
+        float(d.get("minutes") or 999),
+    ))
+    # must_have first; within group, largest overshoot is most informative
+    failed.sort(key=lambda d: (
+        _priority_rank.get(str(d.get("priority", "ignore")), 2),
+        -float(d.get("minutes") or 0),
+    ))
+
+    strengths: list[str] = []
+    for d in passed[:2]:
+        label = str(d.get("label") or "").strip()
+        minutes = d.get("minutes")
+        if label and minutes is not None:
+            strengths.append(f"Do {label} za {int(round(float(minutes)))} min")
+
+    compromises: list[str] = []
+    for d in failed[:2]:
+        label = str(d.get("label") or "").strip()
+        if label:
+            compromises.append(f"Delší dojezd do {label}")
+
+    return (strengths, compromises)
+
+
 def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> StructuredWizard:
     """Hydrate StructuredWizard from frontend-provided structured_wizard payload.
 
@@ -455,8 +686,20 @@ def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> Struct
 
     hf.location_polygon = bool(hf_d.get("location_polygon"))
     hf.location_commute = bool(hf_d.get("location_commute"))
-    hf.location_admin_area = hf_d.get("location_admin_area")
-    hf.location_admin_region = hf_d.get("location_admin_region")
+    # Fall back to the raw wizard.location section when structured payload
+    # lacks these (older frontend builds may not propagate them yet).
+    raw_location = ((profile.filter_json or {}).get("wizard") or {}).get("location") or {}
+    method_admin_raw = hf_d.get("method_admin")
+    if method_admin_raw is None:
+        method_admin_raw = raw_location.get("method_admin")
+    hf.method_admin = bool(method_admin_raw)
+    admin_area_raw = hf_d.get("location_admin_area")
+    if admin_area_raw is None:
+        admin_area_raw = raw_location.get("administrative_area")
+    hf.location_admin_area = _normalize_admin_area(admin_area_raw)
+    hf.location_admin_region = (
+        hf_d.get("location_admin_region") or raw_location.get("administrative_region")
+    )
 
     hf.latest_move_in = hf_d.get("latest_move_in")
     reno = hf_d.get("renovation_preference")
@@ -582,7 +825,8 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
     # Location
     hf.location_polygon = bool(location.get("method_polygon"))
     hf.location_commute = bool(location.get("method_commute"))
-    hf.location_admin_area = location.get("administrative_area")
+    hf.method_admin = bool(location.get("method_admin"))
+    hf.location_admin_area = _normalize_admin_area(location.get("administrative_area"))
     hf.location_admin_region = location.get("administrative_region")
 
     # Completion
@@ -643,16 +887,29 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
     # Standards — "prefer" level
     pref.prefer_recuperation = standards.get("recuperation") == "prefer"
     pref.prefer_air_conditioning = standards.get("air_conditioning") == "prefer"
-    pref.prefer_floor_heating = standards.get("floor_heating") == "prefer"
+    # floor_heating from legacy wizard, or derived from heating_type enum
+    _ht = standards.get("heating_type")
+    _ht_vals = _ht if isinstance(_ht, list) else ([_ht] if _ht else [])
+    pref.prefer_floor_heating = (
+        standards.get("floor_heating") == "prefer"
+        or "underfloor" in _ht_vals
+    )
     pref.prefer_exterior_blinds = standards.get("exterior_blinds") == "prefer"
     pref.prefer_smart_home = standards.get("smart_home") == "prefer"
 
     # Specific standard values (for scoring match, not for hard filtering)
-    pref.heating_type = standards.get("heating_type")
-    pref.heating_source = standards.get("heating_source")
-    pref.partition_type = standards.get("partitions")
-    pref.window_type = standards.get("window_type")
-    pref.window_material = standards.get("window_material")
+    # Wizard may send arrays (multi-select) — normalize to comma-separated strings
+    def _enum_val(v: object) -> str | None:
+        if isinstance(v, list):
+            return ",".join(str(x) for x in v) if v else None
+        return str(v) if v else None
+
+    pref.heating_type = _enum_val(standards.get("heating_type"))
+    pref.heating_source = _enum_val(standards.get("heating_source"))
+    pref.partition_type = _enum_val(standards.get("partitions"))
+    pref.window_type = _enum_val(standards.get("window_type"))
+    pref.window_material = _enum_val(standards.get("window_material"))
+    pref.flooring = _enum_val(standards.get("flooring"))
 
     # Project amenities
     pref.prefer_reception = project_amenities.get("reception")
@@ -900,8 +1157,25 @@ def compute_eligibility(
         elif unit_floor is None or project_derived_total_floors is None:
             _review("penthouse_only")
 
-    # -- Polygon (location) --
-    if hf.location_polygon and profile.polygon_geojson:
+    # ── Location hard filters ───────────────────────────────────────────
+    #
+    # Priority:
+    #   1. Polygon  — the primary "kde se vůbec hledá" hard filter.
+    #                 Applied whenever profile.polygon_geojson exists.
+    #   2. Commute  — enforced per-point inside compute_match / compute_flat_match
+    #                 (must_have points that exceed the time budget return 0).
+    #                 Not repeated here to avoid double-eval.
+    #   3. Admin_area — soft preference by default (ranking only, handled in
+    #                 `_admin_area_soft_adjustment`).  Becomes a hard filter
+    #                 ONLY when the broker explicitly opted in via
+    #                 `method_admin = True`.
+    #
+    # This order also guarantees that `reasons[0]` points at the polygon
+    # failure first when both polygon and admin_area would fail, which
+    # matches the product wording "polygon = hlavní hard filtr lokality".
+
+    # -- Polygon (primary location hard filter) --
+    if profile.polygon_geojson:
         _ensure_geo_helpers()
         poly = _parse_polygon_geojson(profile.polygon_geojson)
         if poly:
@@ -912,6 +1186,26 @@ def compute_eligibility(
                     _fail("outside_polygon")
             else:
                 _review("polygon_location")
+
+    # -- Administrative area (opt-in hard filter) --
+    # Only applied when the broker/client explicitly chose
+    # "Použít preferované oblasti i jako striktní požadavek".  Without that
+    # opt-in, `location_admin_area` acts as a ranking-only soft preference
+    # (see `_admin_area_soft_adjustment`).
+    if hf.method_admin and hf.location_admin_area:
+        proj_admin = getattr(project, "administrative_district_iga", None)
+        proj_district = getattr(project, "district", None)
+        candidates = {
+            str(v).strip().lower()
+            for v in (proj_admin, proj_district)
+            if v is not None and str(v).strip()
+        }
+        if not candidates:
+            _review("admin_area")
+        else:
+            targets = {a.strip().lower() for a in hf.location_admin_area if a.strip()}
+            if targets and not (targets & candidates):
+                _fail("outside_admin_area")
 
     # Determine status
     fail_reasons = [r for r in reasons if "(data missing)" not in r]
@@ -983,7 +1277,7 @@ def _legacy_compute_match(
                 float(project.gps_longitude),
                 poly,
             )
-            loc_fit = 100.0 if inside else 60.0
+            loc_fit = 100.0 if inside else 0.0
         else:
             loc_fit = 70.0
 
@@ -1623,11 +1917,18 @@ def compute_flat_match(
         w = flat_weights.get(aspect_key, 0.0)
         total += w * fit_val / 100.0  # weights sum to 100, fit is 0-100 → score is 0-100
 
-    total = max(0.0, min(100.0, total))
+    # Soft admin_area location boost — only active when method_admin==False
+    # (opt-in hard filter already excluded non-matching projects).  Capped
+    # to [-3, +6] so it nudges ranking without overpowering aspect weights.
+    admin_signal = _admin_area_signal(project, hf)
+    admin_adj = float(admin_signal.get("adj") or 0.0)
+    total = max(0.0, min(100.0, total + admin_adj))
 
     fits = {
         **aspect_fits,
         'commute_details': commute_details,
+        'admin_area_adj': admin_adj,
+        'admin_area_signal': admin_signal,
         # Backward-compatible fit fields
         'budget_fit': aspect_fits['price_distance'],
         'walkability_fit': aspect_fits['walkability'],
@@ -1806,6 +2107,42 @@ def compute_full_score(
         w = weights or DEFAULT_WEIGHTS
         score, fits = compute_match(unit, project, profile, w, db, scoring_config=scoring_config, aggregates=aggregates)
         strengths, compromises = config_driven_strengths_compromises(fits, profile)
+
+    # 2.5 Admin-area explainability — propagate soft location preference
+    # into strengths / compromises.  Flat path already stores the signal in
+    # `fits`; legacy path needs an on-demand computation.  Either way this
+    # runs once per unit and never touches the numerical score.
+    admin_signal = fits.get("admin_area_signal")
+    if admin_signal is None:
+        try:
+            _sw = build_structured_wizard(profile)
+            admin_signal = _admin_area_signal(project, _sw.hard_filters)
+            fits["admin_area_signal"] = admin_signal
+        except Exception:
+            admin_signal = None
+    if admin_signal:
+        _strength_txt, _compromise_txt = _admin_area_explain_texts(admin_signal)
+        if _strength_txt and _strength_txt not in strengths:
+            strengths = [_strength_txt, *strengths][:5]
+        if _compromise_txt and _compromise_txt not in compromises:
+            compromises = [_compromise_txt, *compromises][:5]
+
+    # 2.6 Commute explainability — replace generic "Dojezdové vzdálenosti" /
+    # "Dojezd" aspect label with specific per-point texts when cached travel
+    # times are available.  When no travel data exists the generic label from
+    # the aspect scorer remains unchanged.
+    _COMMUTE_GENERIC = {"Dojezdové vzdálenosti", "Dojezd"}
+    _comm_s, _comm_c = _commute_explain_texts(fits)
+    if _comm_s or _comm_c:
+        # Drop the generic label so specifics don't duplicate it
+        strengths = [s for s in strengths if s not in _COMMUTE_GENERIC]
+        compromises = [c for c in compromises if c not in _COMMUTE_GENERIC]
+        for _txt in _comm_s:
+            if _txt not in strengths:
+                strengths = [*strengths, _txt][:5]
+        for _txt in _comm_c:
+            if _txt not in compromises:
+                compromises = [*compromises, _txt][:5]
 
     # 3. Confidence
     conf = compute_confidence(unit, project, profile, fits)

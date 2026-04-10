@@ -159,7 +159,9 @@ export type WizardExtras = {
     method_polygon?: boolean;
     method_commute?: boolean;
     method_admin?: boolean;
-    administrative_area?: string | null;
+    /** Multi-value (Phase 5b).  Legacy profiles may still store a single
+     *  string — callers must normalize on read. */
+    administrative_area?: string | string[] | null;
     administrative_region?: string | null;
   };
   budget?: {
@@ -244,7 +246,7 @@ export type WizardExtras = {
     courtyard_garden?: "prefer" | "reject" | "ignore";
   };
   renovation_preference?: "any" | "prefer_new" | "only_new" | "prefer_renovation" | "only_renovation";
-  completion_standard?: "shell_and_core" | "white_wall" | "fit_out" | null;
+  completion_standard?: "doesnt_matter" | "shell_and_core" | "white_wall" | "fit_out" | null;
   completion_date?: string | null;
   energy_class?: "A" | "B" | "C" | "D" | "ignore" | null;
   preferred_developer?: string | null;

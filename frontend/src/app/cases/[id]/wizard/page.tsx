@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import clsx from "clsx";
 import { useCaseData } from "@/hooks/useCaseData";
 import { formatCurrencyCzk } from "@/lib/format";
+import { API_BASE } from "@/lib/api";
 import type { Priority } from "@/lib/caseTypes";
+import { normalizeAdminAreaList } from "@/lib/wizardTransform";
 import {
   WIZARD_STEPS,
   STANDARD_ENUMS,
@@ -15,9 +17,16 @@ import {
   ENUM_OPTION_LABELS,
   ENUM_FIELD_LABELS,
   STANDARD_FEATURE_LABELS,
+  isFieldVisible,
+  readFromDataPath,
   type WizardField,
 } from "@/lib/wizardModel";
-import { useWizardMetadata, getFieldOptions, getCompoundInfo } from "@/hooks/useWizardMetadata";
+import {
+  useWizardMetadata,
+  getFieldOptions,
+  getCompoundInfo,
+  getFieldSemantics,
+} from "@/hooks/useWizardMetadata";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -91,6 +100,256 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-200/50";
+
+/* ─── Location autocomplete (text input + dropdown) ───
+ *
+ *  Free-text input backed by GET /locations/suggest?scope=<scope>.
+ *  Dataset is tiny (2 regions, ~35 admin areas) so we fetch once per
+ *  scope, cache module-level, then filter client-side on each keystroke.
+ *  User can still type free text — suggestions are a quick-pick.  On
+ *  blur the dropdown closes after a short delay so a click on a
+ *  suggestion registers before the input loses focus.
+ */
+
+type LocationSuggestion = { value: string; count: number };
+
+const suggestionCache: Record<string, Promise<LocationSuggestion[]>> = {};
+
+function fetchLocationSuggestions(scope: string): Promise<LocationSuggestion[]> {
+  if (scope in suggestionCache) return suggestionCache[scope];
+  const promise = fetch(`${API_BASE}/locations/suggest?scope=${encodeURIComponent(scope)}&limit=50`)
+    .then((res) => (res.ok ? (res.json() as Promise<LocationSuggestion[]>) : []))
+    .catch(() => [] as LocationSuggestion[]);
+  suggestionCache[scope] = promise;
+  return promise;
+}
+
+function SuggestInput({
+  value,
+  onChange,
+  placeholder,
+  scope,
+}: {
+  value: string;
+  onChange: (next: string | null) => void;
+  placeholder?: string;
+  scope: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState<LocationSuggestion[]>([]);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLocationSuggestions(scope).then((list) => {
+      if (!cancelled) setAll(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+
+  const needle = value.trim().toLowerCase();
+  const filtered = needle
+    ? all.filter((s) => s.value.toLowerCase().includes(needle))
+    : all;
+  const display = filtered.slice(0, 12);
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        value={value}
+        onChange={(e) => {
+          onChange(e.target.value || null);
+          if (!open) setOpen(true);
+        }}
+        onFocus={() => {
+          if (blurTimer.current) clearTimeout(blurTimer.current);
+          setOpen(true);
+        }}
+        onBlur={() => {
+          // Defer close so a click on a suggestion row still fires.
+          blurTimer.current = setTimeout(() => setOpen(false), 120);
+        }}
+        className={cn("mt-1.5", inputClass)}
+        placeholder={placeholder}
+      />
+      {open && display.length > 0 && (
+        <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {display.map((s) => {
+            const selected = s.value.toLowerCase() === needle;
+            return (
+              <li key={s.value}>
+                <button
+                  type="button"
+                  onMouseDown={(e) => {
+                    // onMouseDown (not onClick) so it runs before onBlur.
+                    e.preventDefault();
+                    onChange(s.value);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors",
+                    selected ? "bg-sky-50 text-sky-900" : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span className="truncate">{s.value}</span>
+                  <span className="shrink-0 text-xs text-slate-400">{s.count}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/**
+ *  MultiSuggestInput — chip picker + autocomplete.
+ *
+ *  Broker/client selects multiple preferred areas (e.g. "Praha 5", "Praha 6").
+ *  Chips render above the input; clicking × removes one; Backspace on an
+ *  empty input removes the last chip.  Selection sources the same cached
+ *  dataset as SuggestInput; already-selected entries are greyed out.
+ *  Free-text entries are accepted on Enter/comma.
+ */
+function MultiSuggestInput({
+  values,
+  onChange,
+  placeholder,
+  scope,
+}: {
+  values: string[];
+  onChange: (next: string[]) => void;
+  placeholder?: string;
+  scope: string;
+}) {
+  const [draft, setDraft] = useState("");
+  const [open, setOpen] = useState(false);
+  const [all, setAll] = useState<LocationSuggestion[]>([]);
+  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchLocationSuggestions(scope).then((list) => {
+      if (!cancelled) setAll(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope]);
+
+  const selectedKeys = new Set(values.map((v) => v.toLowerCase()));
+
+  const addValue = (raw: string) => {
+    const s = raw.trim();
+    if (!s) return;
+    const key = s.toLowerCase();
+    if (selectedKeys.has(key)) {
+      setDraft("");
+      return;
+    }
+    onChange([...values, s]);
+    setDraft("");
+  };
+
+  const removeAt = (idx: number) => {
+    const next = values.slice();
+    next.splice(idx, 1);
+    onChange(next);
+  };
+
+  const needle = draft.trim().toLowerCase();
+  const filtered = needle
+    ? all.filter((s) => s.value.toLowerCase().includes(needle))
+    : all;
+  const display = filtered.slice(0, 12);
+
+  return (
+    <div className="relative">
+      <div
+        className={cn(
+          "mt-1.5 flex min-h-[2.75rem] flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 py-1.5 text-sm",
+          "focus-within:border-sky-300 focus-within:ring-2 focus-within:ring-sky-100",
+        )}
+      >
+        {values.map((v, i) => (
+          <span
+            key={`${v}-${i}`}
+            className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2.5 py-0.5 text-xs font-medium text-sky-800"
+          >
+            {v}
+            <button
+              type="button"
+              aria-label={`Odebrat ${v}`}
+              onClick={() => removeAt(i)}
+              className="flex h-4 w-4 items-center justify-center rounded-full text-sky-700 transition-colors hover:bg-sky-100 hover:text-sky-900"
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          type="text"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={() => {
+            if (blurTimer.current) clearTimeout(blurTimer.current);
+            setOpen(true);
+          }}
+          onBlur={() => {
+            blurTimer.current = setTimeout(() => setOpen(false), 120);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") {
+              e.preventDefault();
+              addValue(draft);
+            } else if (e.key === "Backspace" && draft === "" && values.length > 0) {
+              e.preventDefault();
+              removeAt(values.length - 1);
+            }
+          }}
+          placeholder={values.length === 0 ? placeholder : ""}
+          className="min-w-[8rem] flex-1 border-0 bg-transparent px-1 py-0.5 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+        />
+      </div>
+      {open && display.length > 0 && (
+        <ul className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          {display.map((s) => {
+            const already = selectedKeys.has(s.value.toLowerCase());
+            return (
+              <li key={s.value}>
+                <button
+                  type="button"
+                  disabled={already}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    if (already) return;
+                    addValue(s.value);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm transition-colors",
+                    already
+                      ? "cursor-not-allowed text-slate-300"
+                      : "text-slate-700 hover:bg-slate-50",
+                  )}
+                >
+                  <span className="truncate">{s.value}</span>
+                  <span className="shrink-0 text-xs text-slate-400">{s.count}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 /* ─── Main ─── */
 
@@ -290,129 +549,365 @@ export default function ClientWizardPage() {
     );
   };
 
+  /* ─── Generic dataPath accessors (top-level + section.key; profile.* and
+        selectedLayouts handled explicitly for now) ─── */
+
+  const readField = (f: WizardField): unknown => {
+    if (f.dataPath.startsWith("profile.")) {
+      const key = f.dataPath.slice("profile.".length);
+      return (profile as Record<string, unknown> | null)?.[key];
+    }
+    if (f.dataPath === "selectedLayouts") return selectedLayouts;
+    return readFromDataPath(wizardExtras as unknown as Record<string, unknown>, f.dataPath);
+  };
+
+  const writeField = (f: WizardField, value: unknown) => {
+    if (f.dataPath.startsWith("profile.")) {
+      const key = f.dataPath.slice("profile.".length);
+      setProfile((prev) => ({ ...(prev ?? {}), [key]: value } as any));
+      return;
+    }
+    if (f.dataPath === "selectedLayouts") {
+      setSelectedLayouts(value as string[]);
+      return;
+    }
+    const parts = f.dataPath.split(".");
+    setWizardExtras((prev) => {
+      if (parts.length === 1) {
+        return { ...prev, [parts[0]]: value } as any;
+      }
+      // 2-level nesting (section.key)
+      const [section, key] = parts;
+      const sec = (prev as Record<string, any>)[section] ?? {};
+      return { ...prev, [section]: { ...sec, [key]: value } } as any;
+    });
+  };
+
+  /* ─── Toggle field renderer (single-select option cards) ─── */
+
+  const renderToggleField = (f: WizardField) => {
+    if (!isFieldVisible(f, wizardExtras as unknown as Record<string, unknown>)) return null;
+    // Top-level toggles look up metadata by bare key; section-scoped ones
+    // could pass the section here later.
+    const sectionHint = f.dataPath.includes(".") ? f.dataPath.split(".")[0] : undefined;
+    const options = getFieldOptions(wizardMeta, f.key, sectionHint, f.options);
+    if (options.length === 0) return null;
+
+    const current = readField(f) as string | null | undefined;
+    const allowDeselect = f.allow_deselect !== false;
+    // Grid layout picks a column count by option count.  Matches the
+    // historical hardcoded layouts of the migrated toggle blocks
+    // (2 → 2 col, 3 → 3 col, 4 → 2/4 responsive, 5–6 → 3/6, 7+ → 2/3).
+    const gridClass =
+      options.length === 2
+        ? "grid-cols-2"
+        : options.length === 3
+        ? "grid-cols-3"
+        : options.length === 4
+        ? "grid-cols-2 sm:grid-cols-4"
+        : options.length <= 6
+        ? "grid-cols-3 sm:grid-cols-6"
+        : "grid-cols-2 sm:grid-cols-3";
+
+    return (
+      <div key={f.key}>
+        <div className={cn("grid gap-3", gridClass)}>
+          {options.map(({ value, label, desc, icon }: any) => {
+            const active = current === value;
+            return (
+              <OptionCard
+                key={value}
+                active={active}
+                onClick={() => {
+                  if (active) {
+                    if (allowDeselect) writeField(f, null);
+                    // else: no-op (clicking the active card does nothing)
+                    return;
+                  }
+                  writeField(f, value);
+                }}
+                icon={icon}
+                label={label}
+                desc={desc}
+              />
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  /* ─── Date field renderer ─── */
+
+  const renderDateField = (f: WizardField) => {
+    if (!isFieldVisible(f, wizardExtras as unknown as Record<string, unknown>)) return null;
+    const current = (readField(f) as string | null | undefined) ?? "";
+    return (
+      <div key={f.key} className="max-w-xs">
+        <FieldLabel>{f.label}</FieldLabel>
+        <input
+          type="date"
+          value={current}
+          onChange={(e) => writeField(f, e.target.value || null)}
+          className={cn("mt-1.5", inputClass)}
+        />
+      </div>
+    );
+  };
+
+  /* ─── Numeric field renderer ─── */
+
+  /**
+   * Generic numeric input.  Metadata (wizardMeta["section.key"]) provides:
+   *   - placeholder
+   *   - unit  (appended to the label as "(Kč)" / "(m²)" / "(%)")
+   *   - format: "currency" | "percent" | "plain"  → drives preview
+   *   - min / max                                  → HTML validation
+   *
+   * Falls back to the field definition (f.placeholder, f.unit, f.format)
+   * if metadata hasn't loaded yet, so the UI works on first render.
+   * Read/write goes through readField/writeField, which already supports
+   * profile.*, top-level, and section.key paths — so profile.budget_max
+   * and profile.area_min keep working without migration.
+   */
+  const renderNumericField = (f: WizardField) => {
+    if (!isFieldVisible(f, wizardExtras as unknown as Record<string, unknown>)) return null;
+
+    // Metadata keys for numeric fields are section-prefixed by their
+    // storage section (e.g. "profile.budget_max", "budget.max_price_tolerance_pct",
+    // "outdoor.min_outdoor_area_m2").  The wizardField.dataPath already
+    // encodes exactly that path, so we look up metadata by dataPath.
+    const meta = wizardMeta[f.dataPath] as
+      | {
+          placeholder?: string;
+          unit?: string;
+          format?: "currency" | "percent" | "plain";
+          min?: number;
+          max?: number;
+        }
+      | undefined;
+
+    const placeholder = meta?.placeholder ?? f.placeholder ?? "";
+    const unit = meta?.unit ?? f.unit ?? "";
+    const format = meta?.format ?? f.format ?? "plain";
+    const minVal = meta?.min;
+    const maxVal = meta?.max;
+
+    const current = readField(f);
+    const numericCurrent = typeof current === "number" ? current : null;
+    const inputValue = numericCurrent != null ? numericCurrent : "";
+    const labelText = unit ? `${f.label} (${unit})` : f.label;
+
+    return (
+      <div key={f.key}>
+        <FieldLabel>{labelText}</FieldLabel>
+        <input
+          type="number"
+          value={inputValue}
+          onChange={(e) => writeField(f, e.target.value ? Number(e.target.value) : null)}
+          className={cn("mt-1.5", inputClass)}
+          placeholder={placeholder}
+          min={minVal}
+          max={maxVal}
+        />
+        {format === "currency" && numericCurrent != null && numericCurrent > 0 && (
+          <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(numericCurrent)}</p>
+        )}
+      </div>
+    );
+  };
+
+  /* ─── Text field renderer ─── */
+
+  const renderTextField = (f: WizardField) => {
+    if (!isFieldVisible(f, wizardExtras as unknown as Record<string, unknown>)) return null;
+    // Metadata lookup: prefer section-prefixed key, fall back to bare key.
+    const sectionHint = f.dataPath.includes(".") ? f.dataPath.split(".")[0] : undefined;
+    const meta = sectionHint ? wizardMeta[`${sectionHint}.${f.key}`] : wizardMeta[f.key];
+    const placeholder = meta?.placeholder ?? f.placeholder ?? "";
+    const suggest = meta?.suggest;
+    const multi = !!meta?.multi;
+
+    if (suggest && multi) {
+      // Multi-value chip picker. Tolerates legacy string values on read.
+      const rawValue = readField(f) as string | string[] | null | undefined;
+      const list = normalizeAdminAreaList(rawValue);
+      return (
+        <div key={f.key}>
+          <FieldLabel>{f.label}</FieldLabel>
+          <MultiSuggestInput
+            values={list}
+            onChange={(next) => writeField(f, next.length ? next : null)}
+            placeholder={placeholder}
+            scope={suggest}
+          />
+        </div>
+      );
+    }
+
+    const current = (readField(f) as string | null | undefined) ?? "";
+    return (
+      <div key={f.key}>
+        <FieldLabel>{f.label}</FieldLabel>
+        {suggest ? (
+          <SuggestInput
+            value={current}
+            onChange={(next) => writeField(f, next)}
+            placeholder={placeholder}
+            scope={suggest}
+          />
+        ) : (
+          <input
+            type="text"
+            value={current}
+            onChange={(e) => writeField(f, e.target.value || null)}
+            className={cn("mt-1.5", inputClass)}
+            placeholder={placeholder}
+          />
+        )}
+      </div>
+    );
+  };
+
+  /* ─── Bool-toggle / status pill renderer ─── */
+
+  /**
+   * Render a boolean status field.  If the metadata carries
+   * `note: "edited_on_map"` the pill is read-only — the actual truth lives
+   * in a separate editor (map editor, commute editor).  For other bool
+   * fields the pill is clickable and toggles the value.
+   */
+  const renderBoolToggleField = (f: WizardField) => {
+    if (!isFieldVisible(f, wizardExtras as unknown as Record<string, unknown>)) return null;
+    const sectionHint = f.dataPath.includes(".") ? f.dataPath.split(".")[0] : undefined;
+    const meta = sectionHint ? wizardMeta[`${sectionHint}.${f.key}`] : wizardMeta[f.key];
+    const note = (meta as { note?: string } | undefined)?.note;
+    const readOnly = note === "edited_on_map";
+    const current = !!(readField(f) as boolean | null | undefined);
+
+    const statusLabel = current ? "Nastaveno" : "Nenastaveno";
+    const statusHint = readOnly
+      ? current
+        ? "Upravte na mapě"
+        : "Zatím nevybráno na mapě"
+      : null;
+
+    return (
+      <div
+        key={f.key}
+        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3"
+      >
+        <div>
+          <div className="text-sm font-medium text-slate-700">{f.label}</div>
+          {statusHint && (
+            <div className="mt-0.5 text-xs text-slate-500">{statusHint}</div>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={readOnly}
+          onClick={() => {
+            if (readOnly) return;
+            writeField(f, !current);
+          }}
+          className={cn(
+            "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+            current
+              ? "border-emerald-400 bg-emerald-50 text-emerald-800"
+              : "border-slate-200 bg-white text-slate-500",
+            !readOnly && "hover:border-slate-300",
+            readOnly && "cursor-default",
+          )}
+        >
+          {statusLabel}
+        </button>
+      </div>
+    );
+  };
+
   /* ─── Step renderers ─── */
 
-  const renderStep1 = () => (
-    <div className="space-y-8">
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">K čemu bydlení hledáte?</h3>
-        <div className="grid grid-cols-2 gap-3">
-          {([
-            { key: "own_use", label: "Vlastní bydlení", icon: "🏠", desc: "Bydlení pro sebe nebo rodinu" },
-            { key: "investment", label: "Investice", icon: "📈", desc: "Nákup za účelem investice" },
-          ] as const).map(({ key, label, icon, desc }) => (
-            <OptionCard
-              key={key}
-              active={profile?.purchase_purpose === key}
-              onClick={() => setProfile((prev) => ({ ...(prev ?? {}), purchase_purpose: key }))}
-              icon={icon}
-              label={label}
-              desc={desc}
-            />
-          ))}
-        </div>
+  const renderStep1 = () => {
+    const step1 = WIZARD_STEPS.find((s) => s.key === "about")!;
+    // All Step 1 fields are toggles.  Iterate groups → render each toggle
+    // field via the generic renderToggleField.
+    return (
+      <div className="space-y-8">
+        {step1.groups.map((group) => {
+          const toggleFields = group.fields.filter(
+            (f) => f.render === "toggle" && f.visibility !== "broker",
+          );
+          if (toggleFields.length === 0) return null;
+          return (
+            <div key={group.key}>
+              <h3 className="mb-4 text-base font-semibold text-slate-800">{group.heading}</h3>
+              {toggleFields.map((f) => renderToggleField(f))}
+            </div>
+          );
+        })}
       </div>
+    );
+  };
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Kdo bude v bytě bydlet?</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {([
-            { key: "family", label: "Rodina", icon: "👨‍👩‍👧‍👦" },
-            { key: "couple", label: "Pár", icon: "💑" },
-            { key: "single", label: "Jednotlivec", icon: "🧑" },
-            { key: "downsizing", label: "Downsizing", icon: "🏡" },
-          ] as const).map(({ key, label, icon }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.client_type === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, client_type: prev.client_type === key ? null : key }))}
-              icon={icon}
-              label={label}
-            />
-          ))}
-        </div>
-      </div>
+  const renderStep2 = () => {
+    const step2 = WIZARD_STEPS.find((s) => s.key === "budget")!;
+    const priceGroup = step2.groups.find((g) => g.key === "price");
+    const financingGroup = step2.groups.find((g) => g.key === "financing");
+    // Filter: numeric fields visible in the fullscreen (client) view.
+    // Broker-only numeric fields (max_payment_contract_pct,
+    // max_payment_construction_pct) stay out of this step — they belong to
+    // the broker quick-edit.
+    const priceFields =
+      priceGroup?.fields.filter(
+        (f) => f.render === "numeric" && f.visibility !== "broker",
+      ) ?? [];
+    const financingFields =
+      financingGroup?.fields.filter(
+        (f) => f.render === "toggle" && f.visibility !== "broker",
+      ) ?? [];
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Časový horizont</h3>
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
-          {([
-            { key: "now", label: "Hned" },
-            { key: "3m", label: "Do 3 měsíců" },
-            { key: "6m", label: "Do 6 měsíců" },
-            { key: "1y", label: "Do roka" },
-            { key: "2y+", label: "Za 2+ let" },
-            { key: "mapping", label: "Jen mapuji" },
-          ] as const).map(({ key, label }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.purchase_timeline === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, purchase_timeline: prev.purchase_timeline === key ? null : key }))}
-              label={label}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-
-  const renderStep2 = () => (
-    <div className="space-y-8">
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Jaký je váš rozpočet?</h3>
-        <div className="grid grid-cols-2 gap-4">
+    return (
+      <div className="space-y-8">
+        {priceGroup && (
           <div>
-            <FieldLabel>Ideální cena (Kč)</FieldLabel>
-            <input
-              type="number"
-              value={wizardExtras.budget?.ideal_price ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_price: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Např. 8 500 000"
-            />
-            {wizardExtras.budget?.ideal_price != null && (
-              <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>
-            )}
+            <h3 className="mb-4 text-base font-semibold text-slate-800">{priceGroup.heading}</h3>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {priceFields.map((f) => renderNumericField(f))}
+            </div>
           </div>
+        )}
+
+        {financingGroup && financingFields.length > 0 && (
           <div>
-            <FieldLabel>Maximální cena (Kč)</FieldLabel>
-            <input
-              type="number"
-              value={profile?.budget_max ?? ""}
-              onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), budget_max: e.target.value ? Number(e.target.value) : null }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Absolutní strop"
-            />
-            {profile?.budget_max != null && (
-              <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(profile.budget_max)}</p>
-            )}
+            <h3 className="mb-4 text-base font-semibold text-slate-800">{financingGroup.heading}</h3>
+            {financingFields.map((f) => renderToggleField(f))}
           </div>
-        </div>
+        )}
       </div>
+    );
+  };
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Jak budete financovat?</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {([
-            { key: "cash", label: "Hotově", desc: "Celá částka v hotovosti" },
-            { key: "mortgage", label: "Hypotéka", desc: "Financování hypotékou" },
-            { key: "combo", label: "Kombinace", desc: "Hotovost + hypotéka" },
-            { key: "unknown", label: "Nevím", desc: "Zatím nerozhodnutý/á" },
-          ] as const).map(({ key, label, desc }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.financing_type === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, financing_type: prev.financing_type === key ? null : key }))}
-              label={label}
-              desc={desc}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  const renderStep3 = () => {
+    const step3 = WIZARD_STEPS.find((s) => s.key === "layout")!;
+    const areaGroup = step3.groups.find((g) => g.key === "area");
+    const outdoorGroup = step3.groups.find((g) => g.key === "outdoor");
+    const floorGroup = step3.groups.find((g) => g.key === "floor");
+    // Numeric fields visible in the fullscreen (client) wizard.  Broker-only
+    // fields, if any are added later, will naturally be filtered out.
+    const areaFields =
+      areaGroup?.fields.filter(
+        (f) => f.render === "numeric" && f.visibility !== "broker",
+      ) ?? [];
+    const outdoorFields =
+      outdoorGroup?.fields.filter(
+        (f) => f.render === "numeric" && f.visibility !== "broker",
+      ) ?? [];
+    const floorFields =
+      floorGroup?.fields.filter(
+        (f) => f.render === "toggle" && f.visibility !== "broker",
+      ) ?? [];
 
-  const renderStep3 = () => (
+    return (
     <div className="space-y-8">
       <div>
         <h3 className="mb-4 text-base font-semibold text-slate-800">Jakou dispozici hledáte?</h3>
@@ -438,143 +933,90 @@ export default function ClientWizardPage() {
         </div>
       </div>
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Jak velký byt potřebujete?</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <FieldLabel>Ideální plocha (m²)</FieldLabel>
-            <input
-              type="number"
-              value={wizardExtras.budget?.ideal_area ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Např. 75"
-            />
-          </div>
-          <div>
-            <FieldLabel>Minimální plocha (m²)</FieldLabel>
-            <input
-              type="number"
-              value={profile?.area_min ?? ""}
-              onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), area_min: e.target.value ? Number(e.target.value) : null }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Absolutní minimum"
-            />
+      {areaGroup && (
+        <div>
+          <h3 className="mb-4 text-base font-semibold text-slate-800">{areaGroup.heading}</h3>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {areaFields.map((f) => renderNumericField(f))}
           </div>
         </div>
-      </div>
+      )}
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Venkovní prostor</h3>
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <FieldLabel>Minimální venkovní prostor (m²)</FieldLabel>
-            <input
-              type="number"
-              value={wizardExtras.budget?.min_outdoor_area_m2 ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), min_outdoor_area_m2: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Např. 5"
-            />
+      {outdoorGroup && (
+        <div>
+          <h3 className="mb-4 text-base font-semibold text-slate-800">{outdoorGroup.heading}</h3>
+          <p className="mb-4 text-sm text-slate-500">
+            Balkon, terasa nebo zahrada — pojmenování se u projektů liší, proto se ptáme jen na minimální plochu.
+          </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {outdoorFields.map((f) => renderNumericField(f))}
           </div>
         </div>
+      )}
 
-        <div className="mt-4">
-          <FieldLabel>Jaký typ venkovního prostoru preferujete?</FieldLabel>
-          <div className="mt-2 space-y-2">
-            {([
-              { key: "balcony", label: "Balkón" },
-              { key: "terrace", label: "Terasa" },
-              { key: "garden", label: "Zahrada" },
-            ] as const).map(({ key, label }) => (
-              <div key={key} className="flex items-center justify-between">
-                <span className="text-sm text-slate-700">{label}</span>
-                <PriorityPicker
-                  value={(wizardExtras.outdoor?.[key] as string) ?? ""}
-                  onChange={(v) => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), [key]: v as Priority } }))}
-                />
-              </div>
-            ))}
-          </div>
+      {floorGroup && floorFields.length > 0 && (
+        <div>
+          <h3 className="mb-4 text-base font-semibold text-slate-800">{floorGroup.heading}</h3>
+          {floorFields.map((f) => renderToggleField(f))}
         </div>
-      </div>
-
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Patro</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {([
-            { key: "ignore", label: "Neřeším" },
-            { key: "no_ground", label: "Ne přízemí" },
-            { key: "top_3", label: "Horní 3 patra" },
-            { key: "top_1", label: "Nejvyšší patro" },
-          ] as const).map(({ key, label }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.outdoor?.floor_rule === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, outdoor: { ...(prev.outdoor ?? {}), floor_rule: key } }))}
-              label={label}
-            />
-          ))}
-        </div>
-      </div>
+      )}
     </div>
-  );
+    );
+  };
 
-  const renderStep4 = () => (
-    <div className="space-y-8">
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Kde chcete bydlet?</h3>
-        <p className="mb-4 text-sm text-slate-500">
-          Zadejte preferované oblasti. Konkrétní lokality upřesníte s brokerem na mapě.
-        </p>
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <FieldLabel>Preferované obvody / městské části</FieldLabel>
-            <input
-              type="text"
-              value={wizardExtras.location?.administrative_area ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), administrative_area: e.target.value || null } }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Např. Praha 6, Praha 5"
-            />
-          </div>
-          <div>
-            <FieldLabel>Region / kraj</FieldLabel>
-            <input
-              type="text"
-              value={wizardExtras.location?.administrative_region ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), administrative_region: e.target.value || null } }))}
-              className={cn("mt-1.5", inputClass)}
-              placeholder="Např. Praha, Středočeský kraj"
-            />
-          </div>
-        </div>
-      </div>
+  const renderStep4 = () => {
+    const step4 = WIZARD_STEPS.find((s) => s.key === "location")!;
+    const areaGroup = step4.groups.find((g) => g.key === "area");
+    const characterGroup = step4.groups.find((g) => g.key === "character");
+    // Split area-group fields into two visual rows:
+    //   1) text inputs go into a 2-col grid
+    //   2) bool_toggle status pills go into a vertical stack
+    // Rendering is driven by `f.render` from wizardModel (metadata-driven
+    // dispatch, same pattern as renderStep8).
+    const textFields = areaGroup?.fields.filter((f) => f.render === "text") ?? [];
+    const boolFields = areaGroup?.fields.filter((f) => f.render === "bool_toggle") ?? [];
+    const characterFields =
+      characterGroup?.fields.filter(
+        (f) => f.render === "toggle" && f.visibility !== "broker",
+      ) ?? [];
 
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Charakter okolí</h3>
-        <div className="space-y-4">
+    return (
+      <div className="space-y-8">
+        {areaGroup && (
           <div>
-            <FieldLabel>Klidné bydlení vs. městský život</FieldLabel>
-            <div className="mt-2 grid grid-cols-3 gap-3">
-              {([
-                { key: "calm", label: "Klidné okolí" },
-                { key: "city", label: "Městský život" },
-                { key: "ignore", label: "Neřeším" },
-              ] as const).map(({ key, label }) => (
-                <OptionCard
-                  key={key}
-                  active={wizardExtras.character?.calm_vs_city === key}
-                  onClick={() => setWizardExtras((prev) => ({ ...prev, character: { ...(prev.character ?? {}), calm_vs_city: key } }))}
-                  label={label}
-                />
+            <h3 className="mb-4 text-base font-semibold text-slate-800">{areaGroup.heading}</h3>
+            {areaGroup.description && (
+              <p className="mb-4 text-sm text-slate-500">{areaGroup.description}</p>
+            )}
+            {textFields.length > 0 && (
+              <div className="grid gap-4 md:grid-cols-2">
+                {textFields.map((f) => renderTextField(f))}
+              </div>
+            )}
+            {boolFields.length > 0 && (
+              <div className="mt-4 space-y-2">
+                {boolFields.map((f) => renderBoolToggleField(f))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {characterGroup && characterFields.length > 0 && (
+          <div>
+            <h3 className="mb-4 text-base font-semibold text-slate-800">{characterGroup.heading}</h3>
+            <div className="space-y-4">
+              {characterFields.map((f) => (
+                <div key={f.key}>
+                  <FieldLabel>{f.label}</FieldLabel>
+                  <div className="mt-2">{renderToggleField(f)}</div>
+                </div>
               ))}
             </div>
           </div>
-        </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderStep5 = () => {
     const step5 = WIZARD_STEPS.find((s) => s.key === "standards")!;
@@ -620,35 +1062,76 @@ export default function ClientWizardPage() {
     );
   };
 
-  const renderNoiseField = (f: WizardField) => {
-    const sec = (wizardExtras as Record<string, any>).noise ?? {};
+  /**
+   * Generic renderer for fields that use a tri-state "negative constraint"
+   * semantics (noise-style: ignore / prefer / must, where higher severity
+   * means stricter filtering).  State labels are driven by the backend
+   * metadata (`custom_state_labels`); colors and visual layout are a UI
+   * concern and stay here.  If metadata is not (yet) loaded, we fall back to
+   * the hardcoded Czech labels to avoid blank UI on first render.
+   */
+  const NEGATIVE_CONSTRAINT_FALLBACK: Array<[string, string]> = [
+    ["ignore", "Neřeším"],
+    ["prefer", "Vadí mi"],
+    ["must", "Vyloučit"],
+  ];
+  const NEGATIVE_CONSTRAINT_COLORS: Record<string, string> = {
+    ignore: "border-slate-200 bg-white text-slate-600",
+    prefer: "border-amber-400 bg-amber-50 text-amber-800",
+    must: "border-rose-400 bg-rose-50 text-rose-800",
+  };
+
+  const renderNegativeConstraintField = (f: WizardField, section: string) => {
+    const sec = (wizardExtras as Record<string, any>)[section] ?? {};
     const val = (sec[f.key] as string) ?? "ignore";
-    const noiseOptions = [
-      { v: "ignore", label: "Neřeším", color: "border-slate-200 bg-white text-slate-600" },
-      { v: "prefer", label: "Vadí mi", color: "border-amber-400 bg-amber-50 text-amber-800" },
-      { v: "must", label: "Vyloučit", color: "border-rose-400 bg-rose-50 text-rose-800" },
-    ];
+    const semanticsMeta = getFieldSemantics(wizardMeta, f.key, section);
+    const states = semanticsMeta?.states ?? NEGATIVE_CONSTRAINT_FALLBACK;
+
     return (
-      <div key={f.key} className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
+      <div
+        key={f.key}
+        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3"
+      >
         <span className="text-sm font-medium text-slate-700">{f.label}</span>
         <div className="flex gap-1.5">
-          {noiseOptions.map(({ v, label, color }) => (
-            <button key={v} type="button"
-              onClick={() => setWizardExtras((prev) => ({
-                ...prev,
-                noise: { ...((prev as Record<string, any>).noise ?? {}), [f.key]: v as Priority },
-              }))}
-              className={cn(
-                "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                val === v ? color : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
-              )}>
-              {label}
-            </button>
-          ))}
+          {states.map(([stateKey, label]) => {
+            const active = val === stateKey;
+            const activeColor =
+              NEGATIVE_CONSTRAINT_COLORS[stateKey] ??
+              "border-slate-400 bg-slate-50 text-slate-800";
+            return (
+              <button
+                key={stateKey}
+                type="button"
+                onClick={() =>
+                  setWizardExtras((prev) => ({
+                    ...prev,
+                    [section]: {
+                      ...((prev as Record<string, any>)[section] ?? {}),
+                      [f.key]: stateKey as Priority,
+                    },
+                  }))
+                }
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                  active
+                    ? activeColor
+                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
+                )}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
     );
   };
+
+  // Kept as a thin wrapper so existing callers (renderStep7, summary, etc.)
+  // don't have to know about the generic semantics-based renderer.
+  const renderNoiseField = (f: WizardField) =>
+    renderNegativeConstraintField(f, "noise");
 
   const renderStep7 = () => {
     const step7 = WIZARD_STEPS.find((s) => s.key === "noise")!;
@@ -669,77 +1152,35 @@ export default function ClientWizardPage() {
     );
   };
 
-  const renderStep8 = () => (
-    <div className="space-y-8">
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Novostavba nebo rekonstrukce?</h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-          {([
-            { key: "any", label: "Nezáleží" },
-            { key: "prefer_new", label: "Raději novostavba" },
-            { key: "only_new", label: "Pouze novostavba" },
-            { key: "prefer_renovation", label: "Raději rekonstrukce" },
-            { key: "only_renovation", label: "Pouze rekonstrukce" },
-          ] as const).map(({ key, label }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.renovation_preference === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, renovation_preference: key }))}
-              label={label}
-            />
-          ))}
-        </div>
+  const renderStep8 = () => {
+    const step8 = WIZARD_STEPS.find((s) => s.key === "completion")!;
+    // Fullscreen client wizard hides broker-only fields (earliest/latest_move_in,
+    // assignment_important).  Filter at the field level so new broker fields
+    // added to wizardModel automatically stay out of the client view.
+    return (
+      <div className="space-y-8">
+        {step8.groups.map((group) => {
+          const visible = group.fields.filter((f) => f.visibility !== "broker");
+          if (visible.length === 0) return null;
+          return (
+            <div key={group.key}>
+              <h3 className="mb-4 text-base font-semibold text-slate-800">{group.heading}</h3>
+              {group.description && (
+                <p className="mb-2 text-sm text-slate-500">{group.description}</p>
+              )}
+              <div className="space-y-3">
+                {visible.map((f) => {
+                  if (f.render === "toggle") return renderToggleField(f);
+                  if (f.render === "date") return renderDateField(f);
+                  return null;
+                })}
+              </div>
+            </div>
+          );
+        })}
       </div>
-
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Kdy chcete bydlet?</h3>
-        <div className="grid grid-cols-3 gap-3">
-          {([
-            { key: "asap", label: "Co nejdříve" },
-            { key: "by_date", label: "Do konkrétního data" },
-            { key: "flexible", label: "Flexibilní" },
-          ] as const).map(({ key, label }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.move_in_timeline === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, move_in_timeline: prev.move_in_timeline === key ? null : key }))}
-              label={label}
-            />
-          ))}
-        </div>
-        {wizardExtras.move_in_timeline === "by_date" && (
-          <div className="mt-3 max-w-xs">
-            <FieldLabel>Nejpozději do</FieldLabel>
-            <input
-              type="date"
-              value={wizardExtras.completion_date ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, completion_date: e.target.value || null }))}
-              className={cn("mt-1.5", inputClass)}
-            />
-          </div>
-        )}
-      </div>
-
-      <div>
-        <h3 className="mb-4 text-base font-semibold text-slate-800">Standard dokončení</h3>
-        <div className="grid grid-cols-3 gap-3">
-          {([
-            { key: "shell_and_core", label: "Holá stavba", desc: "Bez vnitřního vybavení" },
-            { key: "white_wall", label: "Bílé stěny", desc: "Základní bílá povrchová úprava" },
-            { key: "fit_out", label: "Kompletní", desc: "Nastěhování ihned" },
-          ] as const).map(({ key, label, desc }) => (
-            <OptionCard
-              key={key}
-              active={wizardExtras.completion_standard === key}
-              onClick={() => setWizardExtras((prev) => ({ ...prev, completion_standard: prev.completion_standard === key ? null : key }))}
-              label={label}
-              desc={desc}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+    );
+  };
 
   const renderStep9 = () => {
     const w = wizardExtras;
@@ -747,15 +1188,22 @@ export default function ClientWizardPage() {
       { label: "Účel", value: profile?.purchase_purpose === "own_use" ? "Vlastní bydlení" : profile?.purchase_purpose === "investment" ? "Investice" : null },
       { label: "Typ klienta", value: w.client_type ?? null },
       { label: "Časový horizont", value: w.purchase_timeline ?? null },
-      { label: "Ideální cena", value: w.budget?.ideal_price ? formatCurrencyCzk(w.budget.ideal_price) : null },
       { label: "Max. cena", value: profile?.budget_max ? formatCurrencyCzk(profile.budget_max) : null },
+      { label: "Tolerance ceny", value: w.budget?.max_price_tolerance_pct != null ? `${w.budget.max_price_tolerance_pct} %` : null },
       { label: "Financování", value: w.financing_type ?? null },
       { label: "Dispozice", value: selectedLayouts.length ? selectedLayouts.join(", ") : null },
-      { label: "Ideální plocha", value: w.budget?.ideal_area ? `${w.budget.ideal_area} m²` : null },
       { label: "Min. plocha", value: profile?.area_min ? `${profile.area_min} m²` : null },
-      { label: "Min. venkovní prostor", value: w.budget?.min_outdoor_area_m2 ? `${w.budget.min_outdoor_area_m2} m²` : null },
+      { label: "Tolerance plochy", value: w.budget?.max_area_tolerance_pct != null ? `${w.budget.max_area_tolerance_pct} %` : null },
+      { label: "Min. venkovní prostor", value: w.outdoor?.min_outdoor_area_m2 ? `${w.outdoor.min_outdoor_area_m2} m²` : null },
+      { label: "Tolerance venkovní plochy", value: w.budget?.max_outdoor_tolerance_pct != null ? `${w.budget.max_outdoor_tolerance_pct} %` : null },
       { label: "Patro", value: w.outdoor?.floor_rule && w.outdoor.floor_rule !== "ignore" ? w.outdoor.floor_rule : null },
-      { label: "Lokalita", value: w.location?.administrative_area ?? null },
+      {
+        label: "Lokalita",
+        value: (() => {
+          const list = normalizeAdminAreaList(w.location?.administrative_area);
+          return list.length ? list.join(", ") : null;
+        })(),
+      },
       { label: "Novostavba/rekonstrukce", value: w.renovation_preference && w.renovation_preference !== "any" ? w.renovation_preference : null },
       { label: "Nastěhování", value: w.move_in_timeline ?? null },
     ];
@@ -845,12 +1293,18 @@ export default function ClientWizardPage() {
             <p className="mb-2 text-sm font-medium text-slate-700">Hluk</p>
             <div className="flex flex-wrap gap-1.5">
               {noise.map(([k, v]) => {
-                const noiseLabel = NOISE_LABELS[k] ?? k;
-                const levelLabel = v === "must" ? "vyloučit" : v === "prefer" ? "vadí mi" : v;
+                // Prefer metadata label; fall back to legacy static map.
+                const noiseLabel =
+                  wizardMeta[`noise.${k}`]?.label ?? NOISE_LABELS[k] ?? k;
+                // Prefer metadata custom_state_labels for severity label.
+                const semanticsMeta = getFieldSemantics(wizardMeta, k, "noise");
+                const stateLabel =
+                  semanticsMeta?.states.find(([sk]) => sk === v)?.[1] ??
+                  (v === "must" ? "Vyloučit" : v === "prefer" ? "Vadí mi" : v);
                 return (
                   <span key={k} className={cn("rounded-full px-2.5 py-1 text-xs",
                     v === "must" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-800")}>
-                    {noiseLabel}: {levelLabel}
+                    {noiseLabel}: {stateLabel.toLowerCase()}
                   </span>
                 );
               })}

@@ -16,6 +16,8 @@ import { ClientLocationMap } from "@/components/ClientLocationMap";
 import { AddressSearch } from "@/components/AddressSearch";
 import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
+import { QuickEdit } from "./QuickEdit";
+import { CommutePointsEditor, type CommutePoint } from "./CommutePointsEditor";
 import {
   ReamarButton,
   ReamarCard,
@@ -287,11 +289,8 @@ export default function BriefPage() {
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [viewMode, setViewMode] = useState<"quick" | "wizard">("wizard");
-  const [addingCommute, setAddingCommute] = useState(false);
-  const [newCommutePt, setNewCommutePt] = useState<{
-    label: string; address: string | null; lat: number | null; lng: number | null;
-    mode: "drive" | "transit"; max_minutes: number | null; priority: "must_have" | "prefer";
-  }>({ label: "", address: null, lat: null, lng: null, mode: "drive", max_minutes: 30, priority: "must_have" });
+  const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
+  const [nextCommuteLabel, setNextCommuteLabel] = useState<string>("");
 
   /* ── localStorage: view mode persistence ── */
 
@@ -426,7 +425,7 @@ export default function BriefPage() {
           <ul className="text-slate-600">
             {wizardExtras.location?.method_polygon && <li>Polygon</li>}
             {wizardExtras.location?.method_commute && <li>Dojíždění</li>}
-            {wizardExtras.location?.method_admin && <li>Obvod/okres</li>}
+            {wizardExtras.location?.method_admin && <li>Preferované oblasti jako striktní požadavek</li>}
           </ul>
           {locationPolygons.some((p) => p.length >= 3) && (
             <p className="text-slate-500">{projectsInsidePolygon} projektů v oblasti</p>
@@ -616,9 +615,9 @@ export default function BriefPage() {
       {/* Location method selection */}
       <div className="grid gap-4 md:grid-cols-3">
         {[
-          { key: "method_polygon", title: "Polygon na mapě", desc: "Vymezíte přesnou oblast, kde klient opravdu chce bydlet." },
-          { key: "method_commute", title: "Dojíždění do práce / školy", desc: "Lokalitu odvodíme podle dojezdových časů na klíčová místa." },
-          { key: "method_admin", title: "Obvod / okres / kraj", desc: "Pracujete s administrativními celky a známými názvy oblastí." },
+          { key: "method_polygon", title: "Oblast na mapě", desc: "Hlavní hard filtr lokality — co je mimo polygon, vypadne z doporučení." },
+          { key: "method_commute", title: "Dojíždění do práce / školy", desc: "Doplňkový hard filtr — must-have body musí být v časovém limitu." },
+          { key: "method_admin", title: "Preferované části jako striktní požadavek", desc: "Volitelný opt-in. Bez zaškrtnutí jsou preferované oblasti jen soft ranking uvnitř polygonu." },
         ].map(({ key, title, desc }) => {
           const checked = (wizardExtras.location as any)?.[key] ?? false;
           return (
@@ -644,7 +643,8 @@ export default function BriefPage() {
         })}
       </div>
       <p className="text-[11px] text-slate-500">
-        Můžete kombinovat více metod najednou.
+        Polygon je hlavní hard filtr lokality. Preferované oblasti uvnitř polygonu
+        ovlivňují řazení a stávají se striktním požadavkem jen s výslovným opt-in.
       </p>
 
       {/* Market info bar */}
@@ -654,7 +654,7 @@ export default function BriefPage() {
           <ul className="list-disc pl-4">
             {(wizardExtras.location?.method_polygon ?? true) && <li>Polygon v mapě</li>}
             {wizardExtras.location?.method_commute && <li>Dojíždění na klíčová místa</li>}
-            {wizardExtras.location?.method_admin && <li>Obvody / okresy / kraje</li>}
+            {wizardExtras.location?.method_admin && <li>Preferované oblasti jako striktní požadavek</li>}
           </ul>
         </div>
         <div className="space-y-1">
@@ -674,105 +674,211 @@ export default function BriefPage() {
         </div>
       </div>
 
-      {/* Polygon tool */}
-      {(wizardExtras.location?.method_polygon ?? true) && (
-        <ReamarSubtleCard className="space-y-3 p-3">
-          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Polygon na mapě</h5>
-          <p className="text-xs text-slate-600">
-            Klikáním do mapy zakreslíte oblasti, kde si klient dokáže bydlení reálně představit.
-          </p>
-          <ClientLocationMap
-            areas={locationPolygons}
-            activeAreaIndex={activeAreaIndex}
-            projects={locationProjects}
-            onChange={(next) => {
-              setLocationPolygons(next);
-              if (activeAreaIndex >= next.length) setActiveAreaIndex(Math.max(0, next.length - 1));
-            }}
-            onActiveAreaChange={setActiveAreaIndex}
-          />
-          <div className="flex items-center gap-2">
-            <AddressSearch
-              className="flex-1"
-              placeholder="Nakreslit okruh z adresy…"
-              onSelect={(result) => {
-                const R = 0.009;
-                const pts = Array.from({ length: 24 }, (_, i) => {
-                  const angle = (i / 24) * 2 * Math.PI;
-                  return {
-                    lat: result.lat + R * Math.sin(angle),
-                    lng: result.lng + (R / Math.cos((result.lat * Math.PI) / 180)) * Math.cos(angle),
-                  };
-                });
-                setLocationPolygons((prev) => {
-                  const next = [...prev, pts];
-                  setActiveAreaIndex(next.length - 1);
-                  return next;
-                });
-              }}
-            />
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <ReamarButton type="button" variant="subtle" size="sm" onClick={() => {
-                setLocationPolygons((prev) => { const next = [...prev, []]; setActiveAreaIndex(next.length - 1); return next; });
-              }}>
-                Přidat oblast
-              </ReamarButton>
-              {locationPolygons.length > 0 && (
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => {
-                  setLocationPolygons((prev) => {
-                    if (!prev.length) return prev;
-                    const next = prev.filter((_, idx) => idx !== activeAreaIndex);
-                    if (!next.length) { setActiveAreaIndex(0); return []; }
-                    setActiveAreaIndex(Math.min(activeAreaIndex, next.length - 1));
-                    return next;
-                  });
-                }}>
-                  Odebrat oblast
-                </ReamarButton>
-              )}
-              {locationPolygons.some((p) => p.length > 0) && (
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => { setLocationPolygons([]); setActiveAreaIndex(0); }}>
-                  Smazat vše
-                </ReamarButton>
-              )}
-            </div>
-            <div className="flex items-center gap-3">
-              {locationPolygons.some((p) => p.length >= 3) && (
-                <span className="text-[11px] text-slate-500">
-                  {projectsInsidePolygon}{" "}
-                  {projectsInsidePolygon === 1 ? "projekt" : projectsInsidePolygon >= 2 && projectsInsidePolygon <= 4 ? "projekty" : "projektů"}{" "}
-                  uvnitř oblasti
-                </span>
-              )}
-              {locationPolygons.length > 1 && (
-                <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
-                  <span>Aktivní oblast:</span>
-                  {locationPolygons.map((_, idx) => (
-                    <button key={idx} type="button" onClick={() => setActiveAreaIndex(idx)}
-                      className={cn("rounded-full px-2 py-0.5 text-[11px]",
-                        idx === activeAreaIndex ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700")}>
-                      {idx + 1}
-                    </button>
-                  ))}
+      {/* Unified map: polygon + commute */}
+      {(wizardExtras.location?.method_polygon || wizardExtras.location?.method_commute) && (() => {
+        const bothActive = !!(wizardExtras.location?.method_polygon && wizardExtras.location?.method_commute);
+        const effectiveMapMode = bothActive ? mapMode : wizardExtras.location?.method_commute ? "commute" : "polygon";
+        const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
+        const canAddMore = commutePoints.length < 4;
+        return (
+          <ReamarSubtleCard className="space-y-3 p-3">
+            <div className="flex items-center justify-between">
+              <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                {effectiveMapMode === "commute" ? "Mapa — body dojíždění" : "Polygon na mapě"}
+              </h5>
+              {bothActive && (
+                <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
+                  <button type="button"
+                    onClick={() => setMapMode("polygon")}
+                    className={cn("px-2.5 py-1 transition-colors",
+                      mapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                    Polygon
+                  </button>
+                  <button type="button"
+                    onClick={() => setMapMode("commute")}
+                    className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
+                      mapMode === "commute" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                    Dojezdové body
+                  </button>
                 </div>
               )}
             </div>
-          </div>
-        </ReamarSubtleCard>
-      )}
+
+            {effectiveMapMode === "polygon" && (
+              <p className="text-xs text-slate-600">
+                Klikáním do mapy zakreslíte oblasti, kde si klient dokáže bydlení reálně představit.
+              </p>
+            )}
+
+            {effectiveMapMode === "commute" && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] text-slate-500">
+                  Vyberte typ místa a klikněte do mapy, nebo zadejte adresu v editoru níže.
+                </p>
+                {canAddMore ? (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {["Práce", "Škola", "Školka", "Vlastní"].map((preset) => (
+                      <button key={preset} type="button"
+                        onClick={() => setNextCommuteLabel(nextCommuteLabel === preset ? "" : preset)}
+                        className={cn(
+                          "rounded-full border px-3 py-0.5 text-[11px] font-medium transition-colors",
+                          nextCommuteLabel === preset
+                            ? "border-violet-600 bg-violet-600 text-white"
+                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                        )}>
+                        {preset}
+                      </button>
+                    ))}
+                    {nextCommuteLabel && (
+                      <span className="self-center text-[11px] text-slate-400">→ klikněte do mapy</span>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">Dosažen limit 4 bodů dojíždění.</p>
+                )}
+              </div>
+            )}
+
+            <ClientLocationMap
+              areas={locationPolygons}
+              activeAreaIndex={activeAreaIndex}
+              projects={locationProjects}
+              onChange={(next) => {
+                setLocationPolygons(next);
+                if (activeAreaIndex >= next.length) setActiveAreaIndex(Math.max(0, next.length - 1));
+              }}
+              onActiveAreaChange={setActiveAreaIndex}
+              mapMode={effectiveMapMode}
+              commutePoints={commutePoints}
+              onCommuteClick={canAddMore ? (lat, lng) => {
+                const label = nextCommuteLabel || "Vlastní";
+                setWizardExtras((prev) => ({
+                  ...prev,
+                  commute: {
+                    ...(prev.commute ?? {}),
+                    points: [
+                      ...(prev.commute?.points ?? []),
+                      { id: `cp-${Date.now()}`, label, lat, lng, mode: "transit" as const, max_minutes: 30, priority: "prefer" as const },
+                    ],
+                  },
+                }));
+                setNextCommuteLabel("");
+              } : undefined}
+            />
+
+            {effectiveMapMode === "polygon" && (
+              <>
+                <div className="flex items-center gap-2">
+                  <AddressSearch
+                    className="flex-1"
+                    placeholder="Nakreslit okruh z adresy…"
+                    onSelect={(result) => {
+                      const R = 0.009;
+                      const pts = Array.from({ length: 24 }, (_, i) => {
+                        const angle = (i / 24) * 2 * Math.PI;
+                        return {
+                          lat: result.lat + R * Math.sin(angle),
+                          lng: result.lng + (R / Math.cos((result.lat * Math.PI) / 180)) * Math.cos(angle),
+                        };
+                      });
+                      setLocationPolygons((prev) => {
+                        const next = [...prev, pts];
+                        setActiveAreaIndex(next.length - 1);
+                        return next;
+                      });
+                    }}
+                  />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <ReamarButton type="button" variant="subtle" size="sm" onClick={() => {
+                      setLocationPolygons((prev) => { const next = [...prev, []]; setActiveAreaIndex(next.length - 1); return next; });
+                    }}>
+                      Přidat oblast
+                    </ReamarButton>
+                    {locationPolygons.length > 0 && (
+                      <ReamarButton type="button" variant="ghost" size="sm" onClick={() => {
+                        setLocationPolygons((prev) => {
+                          if (!prev.length) return prev;
+                          const next = prev.filter((_, idx) => idx !== activeAreaIndex);
+                          if (!next.length) { setActiveAreaIndex(0); return []; }
+                          setActiveAreaIndex(Math.min(activeAreaIndex, next.length - 1));
+                          return next;
+                        });
+                      }}>
+                        Odebrat oblast
+                      </ReamarButton>
+                    )}
+                    {locationPolygons.some((p) => p.length > 0) && (
+                      <ReamarButton type="button" variant="ghost" size="sm" onClick={() => { setLocationPolygons([]); setActiveAreaIndex(0); }}>
+                        Smazat vše
+                      </ReamarButton>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    {locationPolygons.some((p) => p.length >= 3) && (
+                      <span className="text-[11px] text-slate-500">
+                        {projectsInsidePolygon}{" "}
+                        {projectsInsidePolygon === 1 ? "projekt" : projectsInsidePolygon >= 2 && projectsInsidePolygon <= 4 ? "projekty" : "projektů"}{" "}
+                        uvnitř oblasti
+                      </span>
+                    )}
+                    {locationPolygons.length > 1 && (
+                      <div className="flex flex-wrap items-center gap-1 text-[11px] text-slate-600">
+                        <span>Aktivní oblast:</span>
+                        {locationPolygons.map((_, idx) => (
+                          <button key={idx} type="button" onClick={() => setActiveAreaIndex(idx)}
+                            className={cn("rounded-full px-2 py-0.5 text-[11px]",
+                              idx === activeAreaIndex ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-700")}>
+                            {idx + 1}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </ReamarSubtleCard>
+        );
+      })()}
 
       {/* Admin areas */}
       {wizardExtras.location?.method_admin && (
         <ReamarSubtleCard className="space-y-3 p-3">
-          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Obvod / okres / kraj</h5>
+          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Preferované části — striktní požadavek
+          </h5>
+          <p className="text-[10px] text-slate-500">
+            Tato karta je aktivní proto, že je zapnutý opt-in. Seznam níže se aplikuje
+            jako tvrdý filtr uvnitř polygonu.
+          </p>
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <label className={reamarLabelClass}>Preferované obvody / okresy</label>
-              <input type="text" value={wizardExtras.location?.administrative_area ?? ""}
-                onChange={(e) => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), administrative_area: e.target.value || null } }))}
-                className={cn("mt-1 text-xs", reamarInputClass)} placeholder="Např. Praha 6, Praha-západ" />
+              <input
+                type="text"
+                value={(() => {
+                  const raw = wizardExtras.location?.administrative_area;
+                  if (Array.isArray(raw)) return raw.join(", ");
+                  return raw ?? "";
+                })()}
+                onChange={(e) => {
+                  const next = e.target.value
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean);
+                  setWizardExtras((prev) => ({
+                    ...prev,
+                    location: {
+                      ...(prev.location ?? {}),
+                      administrative_area: next.length ? next : null,
+                    },
+                  }));
+                }}
+                className={cn("mt-1 text-xs", reamarInputClass)}
+                placeholder="Např. Praha 6, Praha-západ"
+              />
             </div>
             <div>
               <label className={reamarLabelClass}>Region / kraj</label>
@@ -784,15 +890,17 @@ export default function BriefPage() {
         </ReamarSubtleCard>
       )}
 
-      {/* Commute placeholder */}
+      {/* Commute points editor */}
       {wizardExtras.location?.method_commute && (
-        <ReamarSubtleCard className="space-y-2 border-dashed p-3">
-          <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">Dojíždění do práce / školy</h5>
-          <p className="text-xs text-slate-600">
-            Dojezdové vzdálenosti na klíčová místa fungují jako hard filter s odchylkou 20 %.
-            Čím blíže k bodům, tím vyšší skóre.
-          </p>
-        </ReamarSubtleCard>
+        <CommutePointsEditor
+          points={(wizardExtras.commute?.points ?? []) as CommutePoint[]}
+          onChange={(next) =>
+            setWizardExtras((prev) => ({
+              ...prev,
+              commute: { ...(prev.commute ?? {}), points: next },
+            }))
+          }
+        />
       )}
     </div>
   );
@@ -1492,9 +1600,17 @@ export default function BriefPage() {
                 <p>Polygon {locationPolygons.some((p) => p.length >= 3) ? `· ${projectsInsidePolygon} projektů` : "· není zakreslen"}</p>
               )}
               {wizardExtras.location?.method_commute && <p>Dojíždění</p>}
-              {wizardExtras.location?.method_admin && (
-                <p>Obvod/okres: {wizardExtras.location?.administrative_area ?? "—"}</p>
-              )}
+              {(() => {
+                const raw = wizardExtras.location?.administrative_area;
+                const list = Array.isArray(raw) ? raw : raw ? [raw] : [];
+                if (!list.length) return null;
+                const hard = !!wizardExtras.location?.method_admin;
+                return (
+                  <p>
+                    Preferované části{hard ? " (striktní)" : " (soft)"}: {list.join(", ")}
+                  </p>
+                );
+              })()}
               {!wizardExtras.location?.method_polygon && !wizardExtras.location?.method_commute && !wizardExtras.location?.method_admin && (
                 <p className="text-slate-400">Žádná metoda lokality není nastavena.</p>
               )}
@@ -1509,122 +1625,15 @@ export default function BriefPage() {
           {/* Commute points */}
           <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dojíždění <FilterBadge /></p>
-
-            {(wizardExtras.commute?.points ?? []).length === 0 && !addingCommute && (
-              <p className="text-xs text-slate-400">Žádné body dojíždění.</p>
-            )}
-
-            {(wizardExtras.commute?.points ?? []).map((pt, idx) => (
-              <div key={pt.id} className="flex items-start gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <div className="min-w-0 flex-1 space-y-1">
-                  <p className="text-xs font-medium text-slate-800">{pt.label || `Bod ${idx + 1}`}</p>
-                  {pt.address && <p className="text-[11px] text-slate-500">{pt.address}</p>}
-                  <div className="flex items-center gap-2">
-                    <select value={pt.mode}
-                      onChange={(e) => setWizardExtras((prev) => ({
-                        ...prev,
-                        commute: { ...prev.commute, points: (prev.commute?.points ?? []).map((p) => p.id === pt.id ? { ...p, mode: e.target.value as "drive" | "transit" } : p) },
-                      }))}
-                      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-700">
-                      <option value="drive">Auto</option>
-                      <option value="transit">MHD</option>
-                    </select>
-                    <span className="text-[11px] text-slate-400">max</span>
-                    <input type="number" value={pt.max_minutes ?? ""}
-                      onChange={(e) => setWizardExtras((prev) => ({
-                        ...prev,
-                        commute: { ...prev.commute, points: (prev.commute?.points ?? []).map((p) => p.id === pt.id ? { ...p, max_minutes: e.target.value ? Number(e.target.value) : null } : p) },
-                      }))}
-                      className="w-14 rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px]"
-                      placeholder="min" />
-                    <span className="text-[11px] text-slate-400">min</span>
-                    <select value={pt.priority}
-                      onChange={(e) => setWizardExtras((prev) => ({
-                        ...prev,
-                        commute: { ...prev.commute, points: (prev.commute?.points ?? []).map((p) => p.id === pt.id ? { ...p, priority: e.target.value as "must_have" | "prefer" } : p) },
-                      }))}
-                      className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[11px] text-slate-700">
-                      <option value="must_have">Musí</option>
-                      <option value="prefer">Preferovaný</option>
-                    </select>
-                  </div>
-                </div>
-                <button type="button"
-                  onClick={() => setWizardExtras((prev) => ({
-                    ...prev,
-                    commute: { ...prev.commute, points: (prev.commute?.points ?? []).filter((p) => p.id !== pt.id) },
-                  }))}
-                  className="mt-0.5 text-[11px] text-slate-400 hover:text-rose-500">✕</button>
-              </div>
-            ))}
-
-            {/* Add commute point form */}
-            {addingCommute ? (
-              <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/40 p-3">
-                <p className="text-[11px] font-semibold text-indigo-700">Nový bod dojíždění</p>
-                <input type="text" value={newCommutePt.label}
-                  onChange={(e) => setNewCommutePt((prev) => ({ ...prev, label: e.target.value }))}
-                  className={cn(reamarInputClass, "text-xs")} placeholder="Název (např. Práce, Škola)" />
-                <AddressSearch className="w-full" placeholder="Adresa / místo…"
-                  onSelect={(r) => setNewCommutePt((prev) => ({ ...prev, address: r.label ?? null, lat: r.lat, lng: r.lng }))} />
-                {newCommutePt.address && (
-                  <p className="text-[11px] text-slate-600">✓ {newCommutePt.address}</p>
-                )}
-                <div className="flex items-center gap-2">
-                  <select value={newCommutePt.mode}
-                    onChange={(e) => setNewCommutePt((prev) => ({ ...prev, mode: e.target.value as "drive" | "transit" }))}
-                    className="rounded border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-700">
-                    <option value="drive">Auto</option>
-                    <option value="transit">MHD</option>
-                  </select>
-                  <span className="text-xs text-slate-500">max</span>
-                  <input type="number" value={newCommutePt.max_minutes ?? ""}
-                    onChange={(e) => setNewCommutePt((prev) => ({ ...prev, max_minutes: e.target.value ? Number(e.target.value) : null }))}
-                    className="w-16 rounded border border-slate-200 bg-white px-2 py-1 text-xs"
-                    placeholder="30" />
-                  <span className="text-xs text-slate-500">min</span>
-                  <select value={newCommutePt.priority}
-                    onChange={(e) => setNewCommutePt((prev) => ({ ...prev, priority: e.target.value as "must_have" | "prefer" }))}
-                    className="rounded border border-slate-200 bg-white px-1.5 py-1 text-xs text-slate-700">
-                    <option value="must_have">Musí</option>
-                    <option value="prefer">Preferovaný</option>
-                  </select>
-                </div>
-                <div className="flex gap-2 pt-1">
-                  <ReamarButton type="button" variant="secondary" size="sm"
-                    onClick={() => {
-                      if (!newCommutePt.label.trim()) return;
-                      const pt = {
-                        id: `cp-${Date.now()}`,
-                        label: newCommutePt.label.trim(),
-                        address: newCommutePt.address,
-                        lat: newCommutePt.lat,
-                        lng: newCommutePt.lng,
-                        mode: newCommutePt.mode,
-                        max_minutes: newCommutePt.max_minutes,
-                        priority: newCommutePt.priority,
-                      };
-                      setWizardExtras((prev) => ({
-                        ...prev,
-                        commute: { ...prev.commute, points: [...(prev.commute?.points ?? []), pt] },
-                      }));
-                      setAddingCommute(false);
-                      setNewCommutePt({ label: "", address: null, lat: null, lng: null, mode: "drive", max_minutes: 30, priority: "must_have" });
-                    }}>
-                    Přidat bod
-                  </ReamarButton>
-                  <ReamarButton type="button" variant="ghost" size="sm"
-                    onClick={() => { setAddingCommute(false); setNewCommutePt({ label: "", address: null, lat: null, lng: null, mode: "drive", max_minutes: 30, priority: "must_have" }); }}>
-                    Zrušit
-                  </ReamarButton>
-                </div>
-              </div>
-            ) : (
-              <button type="button" onClick={() => setAddingCommute(true)}
-                className="text-xs text-indigo-600 hover:underline">
-                + Přidat bod dojíždění
-              </button>
-            )}
+            <CommutePointsEditor
+              points={(wizardExtras.commute?.points ?? []) as CommutePoint[]}
+              onChange={(next) =>
+                setWizardExtras((prev) => ({
+                  ...prev,
+                  commute: { ...(prev.commute ?? {}), points: next },
+                }))
+              }
+            />
           </div>
         </div>
 
@@ -1922,6 +1931,9 @@ export default function BriefPage() {
                     Aktivovat klienta
                   </ReamarButton>
                 )}
+                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => window.open(`/cases/${clientId}/wizard`, "_blank")}>
+                  Spustit wizard
+                </ReamarButton>
                 <ReamarButton type="button" variant="ghost" size="sm" onClick={() => router.push(`/clients/${clientId}/present`)}>
                   Schůzka →
                 </ReamarButton>
@@ -1937,7 +1949,24 @@ export default function BriefPage() {
 
           {/* Content: Quick Edit or Wizard */}
           {viewMode === "quick" ? (
-            renderQuickEdit()
+            <QuickEdit
+              profile={profile}
+              setProfile={setProfile}
+              wizardExtras={wizardExtras}
+              setWizardExtras={setWizardExtras}
+              selectedLayouts={selectedLayouts}
+              setSelectedLayouts={setSelectedLayouts}
+              LAYOUT_OPTIONS={LAYOUT_OPTIONS}
+              locationPolygons={locationPolygons}
+              projectsInsidePolygon={projectsInsidePolygon}
+              recs={recs}
+              autoSaveStatus={autoSaveStatus}
+              recomputing={recomputing}
+              handleRecompute={handleRecompute}
+              mustHaveSummary={mustHaveSummary}
+              preferSummary={preferSummary}
+              onSwitchToWizard={(step) => { setViewMode("wizard"); setWizardStep(step); }}
+            />
           ) : (
             <>
               {/* Two-column layout */}

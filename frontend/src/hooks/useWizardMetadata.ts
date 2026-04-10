@@ -34,6 +34,23 @@ export type FieldMetadata = {
   options?: MetadataOption[];
   compound?: CompoundInfo;
   note?: string;
+  /** Rendering semantics hint. "negative_constraint" = noise-style tri-state
+   *  (ignore / prefer / must) where higher severity = more restrictive filter. */
+  semantics?: "negative_constraint" | string;
+  /** Labels for semantic states, keyed by state token. Used with `semantics`. */
+  custom_state_labels?: Record<string, string>;
+  /** Autocomplete hint for text fields — when set, the frontend renders an
+   *  input + dropdown backed by GET /locations/suggest?scope=<suggest>.
+   *  Free-text entry is still allowed; suggestions are a quick-pick. */
+  suggest?: string;
+  /** Multi-value text field — paired with `suggest`, renders chip selector. */
+  multi?: boolean;
+  /** Numeric field display hints (used by renderNumericField). */
+  placeholder?: string;
+  unit?: string;
+  format?: "currency" | "percent" | "plain";
+  min?: number;
+  max?: number;
 };
 
 export type WizardMetadataResponse = {
@@ -133,4 +150,27 @@ export function getCompoundInfo(
   }
   const bare = fields[fieldKey];
   return bare?.compound;
+}
+
+/**
+ * Get semantic rendering hint for a field: `semantics` + ordered state labels.
+ *
+ * Returns undefined for fields that use the default priority picker.
+ * Returns `{ semantics, states }` when the field declares a non-default
+ * rendering mode such as `negative_constraint` (noise-style tri-state).
+ *
+ * `states` is an ordered array of `[stateKey, label]` pairs, preserving the
+ * order declared in the backend metadata (Python dict insertion order).
+ */
+export function getFieldSemantics(
+  fields: Record<string, FieldMetadata>,
+  fieldKey: string,
+  sectionPrefix?: string,
+): { semantics: string; states: Array<[string, string]> } | undefined {
+  const meta =
+    (sectionPrefix && fields[`${sectionPrefix}.${fieldKey}`]) || fields[fieldKey];
+  if (!meta?.semantics || !meta.custom_state_labels) return undefined;
+  const states = Object.entries(meta.custom_state_labels);
+  if (states.length === 0) return undefined;
+  return { semantics: meta.semantics, states };
 }

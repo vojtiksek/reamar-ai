@@ -19,12 +19,29 @@ L.Icon.Default.mergeOptions({
 type Point = { lat: number; lng: number };
 type Area = Point[];
 
+/** Minimal subset needed for map rendering — keeps this component
+ *  independent of wizard-layer types. */
+export type CommuteMarkerPoint = {
+  id: string;
+  label: string;
+  lat: number | null;
+  lng: number | null;
+};
+
 type EditorProps = {
   areas: Area[];
   onChange: (areas: Area[]) => void;
   activeAreaIndex: number;
   onActiveAreaChange: (index: number) => void;
   projects: LocationProjectPoint[];
+  /** Controls click behaviour and which toolbar is shown.
+   *  "polygon" (default): clicks add polygon vertices during draw mode.
+   *  "commute": clicks call onCommuteClick regardless of draw mode. */
+  mapMode?: "polygon" | "commute";
+  /** Commute point markers to display on the map. */
+  commutePoints?: CommuteMarkerPoint[];
+  /** Called when user clicks the map while mapMode === "commute". */
+  onCommuteClick?: (lat: number, lng: number) => void;
 };
 
 function FitBounds({ areas }: { areas: Area[] }) {
@@ -71,6 +88,29 @@ const vertexIcon = L.divIcon({
   iconSize: [10, 10],
   iconAnchor: [5, 5],
 });
+
+/** Numbered pin icon for commute points. Shows first letter of label (or index). */
+function getCommuteMarkerIcon(label: string, index: number): DivIcon {
+  const letter = label.trim()
+    ? label.trim()[0].toUpperCase()
+    : String(index + 1);
+  return L.divIcon({
+    className: "",
+    html: `<div style="width:26px;height:26px;border-radius:50%;background:#7c3aed;color:#fff;font-size:12px;font-weight:700;display:flex;align-items:center;justify-content:center;border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,0.35);">${letter}</div>`,
+    iconSize: [26, 26],
+    iconAnchor: [13, 13],
+  });
+}
+
+/** Captures map clicks when in commute mode (always enabled, no draw toggle). */
+function CommuteClickCapture({ onClick }: { onClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
 
 function pointInPolygon(point: Point, polygon: Area): boolean {
   if (polygon.length < 3) return false;
@@ -134,6 +174,9 @@ export function ClientLocationMapInner({
   activeAreaIndex,
   onActiveAreaChange,
   projects,
+  mapMode = "polygon",
+  commutePoints = [],
+  onCommuteClick,
 }: EditorProps) {
   const [drawing, setDrawing] = useState(false);
   const [draftPolygon, setDraftPolygon] = useState<Point[]>([]);
@@ -182,47 +225,56 @@ export function ClientLocationMapInner({
 
   return (
     <div className="space-y-2">
-      {/* Toolbar — same pattern as main map */}
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => {
-            if (!drawing) handleStartDrawing();
-            else handleCancelDrawing();
-          }}
-          className={
-            "rounded-full border px-3 py-1.5 text-xs font-medium transition " +
-            (drawing
-              ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
-              : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
-          }
-        >
-          {drawing ? "Zrušit kreslení" : "Kreslit oblast"}
-        </button>
-        {drawing && draftPolygon.length >= 3 && (
+      {/* Polygon-mode toolbar (hidden in commute mode) */}
+      {mapMode === "polygon" && (
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
-            onClick={handleSaveArea}
-            className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+            onClick={() => {
+              if (!drawing) handleStartDrawing();
+              else handleCancelDrawing();
+            }}
+            className={
+              "rounded-full border px-3 py-1.5 text-xs font-medium transition " +
+              (drawing
+                ? "border-sky-600 bg-sky-600 text-white hover:bg-sky-700"
+                : "border-slate-200 bg-white text-slate-800 hover:bg-slate-50")
+            }
           >
-            Uložit oblast
+            {drawing ? "Zrušit kreslení" : "Kreslit oblast"}
           </button>
-        )}
-        {!drawing && savedPolygon.length >= 3 && (
-          <button
-            type="button"
-            onClick={handleClearArea}
-            className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
-          >
-            Zrušit oblast
-          </button>
-        )}
-        {drawing && (
-          <span className="text-[11px] text-slate-500">
-            Klikejte na mapu pro přidání bodů ({draftPolygon.length} bodů)
-          </span>
-        )}
-      </div>
+          {drawing && draftPolygon.length >= 3 && (
+            <button
+              type="button"
+              onClick={handleSaveArea}
+              className="rounded-full border border-emerald-500 bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+            >
+              Uložit oblast
+            </button>
+          )}
+          {!drawing && savedPolygon.length >= 3 && (
+            <button
+              type="button"
+              onClick={handleClearArea}
+              className="text-xs text-slate-600 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+            >
+              Zrušit oblast
+            </button>
+          )}
+          {drawing && (
+            <span className="text-[11px] text-slate-500">
+              Klikejte na mapu pro přidání bodů ({draftPolygon.length} bodů)
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Commute-mode hint */}
+      {mapMode === "commute" && (
+        <p className="text-[11px] text-violet-700">
+          Kliknutím na mapu přidáte bod dojíždění s vybraným typem.
+        </p>
+      )}
 
       <div className="aspect-[4/3] overflow-hidden rounded-lg border border-slate-200">
         <MapContainer center={center} zoom={12} style={{ height: "100%", width: "100%" }}>
@@ -230,7 +282,14 @@ export function ClientLocationMapInner({
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
             attribution="&copy; OpenStreetMap contributors"
           />
-          <ClickCapture drawing={drawing} onClick={handleMapClick} />
+          {/* Polygon-mode click capture */}
+          {mapMode === "polygon" && (
+            <ClickCapture drawing={drawing} onClick={handleMapClick} />
+          )}
+          {/* Commute-mode click capture */}
+          {mapMode === "commute" && onCommuteClick && (
+            <CommuteClickCapture onClick={onCommuteClick} />
+          )}
 
           {/* Saved polygons (all areas) */}
           {!drawing &&
@@ -360,6 +419,23 @@ export function ClientLocationMapInner({
                 );
               });
           })()}
+          {/* Commute point markers — shown in both modes for visual context */}
+          {commutePoints
+            .filter((cp) => cp.lat !== null && cp.lng !== null)
+            .map((cp, idx) => (
+              <Marker
+                key={`commute-${cp.id}`}
+                position={[cp.lat as number, cp.lng as number]}
+                icon={getCommuteMarkerIcon(cp.label, idx)}
+              >
+                <Popup>
+                  <div className="space-y-0.5 text-xs">
+                    <div className="font-semibold text-violet-800">{cp.label || `Bod ${idx + 1}`}</div>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
+
           <FitBounds areas={areas} />
         </MapContainer>
       </div>

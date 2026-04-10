@@ -207,6 +207,39 @@ export default function ClientDetailPage() {
   const [areaMarket, setAreaMarket] = useState<AreaMarketAnalysis | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
 
+  // ── Portal invite ──
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  const handlePortalInvite = async () => {
+    if (!client) return;
+    setInviteLoading(true);
+    setInviteLink(null);
+    try {
+      const res = await fetch(`${API_BASE}/clients/${client.id}/portal-invite`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Chyba" }));
+        alert(err.detail ?? "Nepoda\u0159ilo se vytvo\u0159it pozv\u00e1nku");
+        return;
+      }
+      const data = await res.json();
+      setInviteLink(data.magic_link_url);
+    } finally {
+      setInviteLoading(false);
+    }
+  };
+
+  const copyInviteLink = () => {
+    if (!inviteLink) return;
+    navigator.clipboard.writeText(inviteLink);
+    setInviteCopied(true);
+    setTimeout(() => setInviteCopied(false), 2000);
+  };
+
   // ── Notes ──
   type NoteItem = {
     id: number;
@@ -233,7 +266,7 @@ export default function ClientDetailPage() {
       method_polygon?: boolean;
       method_commute?: boolean;
       method_admin?: boolean;
-      administrative_area?: string | null;
+      administrative_area?: string | string[] | null;
       administrative_region?: string | null;
     };
     budget?: {
@@ -954,7 +987,41 @@ export default function ClientDetailPage() {
                         Hledat jednotky
                       </ReamarButton>
                     )}
+                    {client.email && (
+                      <ReamarButton
+                        variant="subtle"
+                        size="sm"
+                        onClick={handlePortalInvite}
+                        disabled={inviteLoading}
+                      >
+                        {inviteLoading ? "Generuji..." : "Pozvat do port\u00e1lu"}
+                      </ReamarButton>
+                    )}
                   </div>
+                  {/* Portal invite link */}
+                  {inviteLink && (
+                    <div className="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+                      <input
+                        type="text"
+                        readOnly
+                        value={inviteLink}
+                        className="flex-1 bg-transparent text-xs text-slate-700 outline-none"
+                        onFocus={(e) => e.target.select()}
+                      />
+                      <button
+                        onClick={copyInviteLink}
+                        className="shrink-0 rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+                      >
+                        {inviteCopied ? "Zkop\u00edrov\u00e1no!" : "Kop\u00edrovat"}
+                      </button>
+                      <button
+                        onClick={() => setInviteLink(null)}
+                        className="shrink-0 text-slate-400 hover:text-slate-600"
+                      >
+                        \u2715
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Contact + Notes row */}
@@ -1499,16 +1566,24 @@ export default function ClientDetailPage() {
                               </label>
                               <input
                                 type="text"
-                                value={wizardExtras.location?.administrative_area ?? ""}
-                                onChange={(e) =>
+                                value={(() => {
+                                  const raw = wizardExtras.location?.administrative_area;
+                                  if (Array.isArray(raw)) return raw.join(", ");
+                                  return raw ?? "";
+                                })()}
+                                onChange={(e) => {
+                                  const next = e.target.value
+                                    .split(",")
+                                    .map((s) => s.trim())
+                                    .filter(Boolean);
                                   setWizardExtras((prev) => ({
                                     ...prev,
                                     location: {
                                       ...(prev.location ?? {}),
-                                      administrative_area: e.target.value || null,
+                                      administrative_area: next.length ? next : null,
                                     },
-                                  }))
-                                }
+                                  }));
+                                }}
                                 className={cn("mt-1 text-xs", reamarInputClass)}
                                 placeholder="Např. Praha 6, Praha-západ, okres Beroun"
                               />

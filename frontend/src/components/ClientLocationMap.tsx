@@ -1,6 +1,9 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import type { CommuteMarkerPoint } from "./ClientLocationMapInner";
+
+export type { CommuteMarkerPoint };
 
 type Point = { lat: number; lng: number };
 type Area = Point[];
@@ -21,6 +24,9 @@ type EditorProps = {
   activeAreaIndex: number;
   onActiveAreaChange: (index: number) => void;
   projects: LocationProjectPoint[];
+  mapMode?: "polygon" | "commute";
+  commutePoints?: CommuteMarkerPoint[];
+  onCommuteClick?: (lat: number, lng: number) => void;
 };
 
 const InnerMap = dynamic<EditorProps>(

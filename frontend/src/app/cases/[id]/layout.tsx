@@ -78,6 +78,11 @@ export default function CaseLayout({ children }: { children: React.ReactNode }) 
   const action = data ? nextAction(data) : "—";
   const budgetStr = data?.budget_max ? `do ${formatCurrencyCzk(data.budget_max)}` : "—";
 
+  // Fullscreen wizard — skip case shell entirely
+  if (pathname?.includes("/wizard")) {
+    return <>{children}</>;
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-4">
       <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-[0_2px_8px_rgba(0,0,0,0.06)]">

@@ -7,7 +7,7 @@ from typing import Annotated, Any
 from decimal import Decimal
 import json
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Header
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Header, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
@@ -82,7 +82,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes
-from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard
+from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard, _admin_area_soft_adjustment
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -1268,6 +1268,11 @@ def _wizard_preferences_adjustment(
             adj += 4.0 if is_new_build else -3.0
         elif pref.prefer_renovation:
             adj += 4.0 if unit.renovation else -3.0
+
+    # ── Administrative area — soft location preference ────────────────────
+    # Active only when method_admin == False (opt-in hard filter handles
+    # the must-have case separately in compute_eligibility).
+    adj += _admin_area_soft_adjustment(project, hf)
 
     return adj
 
@@ -3512,6 +3517,59 @@ def search_projects(
     )
     rows = db.execute(stmt).scalars().all()
     return [r for r in rows if r]
+
+
+@app.get(
+    "/locations/suggest",
+    summary="Location autocomplete for wizard admin_area / admin_region",
+    description=(
+        "Returns distinct location values from the projects table for use as "
+        "wizard autocomplete.  scope=area unions administrative_district_iga "
+        "(Prague admin districts) and district (okres names); scope=region "
+        "returns distinct region_iga values.  Empty q returns top-N by "
+        "project count (quick-pick on focus).  This is purely a suggestion "
+        "source — the wizard still accepts free-text values so the data "
+        "model contract is unchanged."
+    ),
+)
+def suggest_locations(
+    db: DbSession,
+    scope: Annotated[str, Query(description="area | region")],
+    q: Annotated[str, Query(description="Optional prefix/substring filter")] = "",
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[dict]:
+    if scope not in ("area", "region"):
+        raise HTTPException(status_code=422, detail="scope must be 'area' or 'region'")
+
+    term = (q or "").strip()
+    like = f"%{term}%" if term else None
+
+    # Pick the columns to union for each scope.  Both scopes read from
+    # projects only — brokers think in projects, and admin labels are
+    # carried on the project row, not the unit row.
+    if scope == "region":
+        columns = [Project.region_iga]
+    else:  # area
+        columns = [Project.administrative_district_iga, Project.district]
+
+    # Aggregate (value, count) across the selected columns in a single
+    # pass per column, then merge in Python.  Two small queries are
+    # cheaper and more readable than a SQL UNION + GROUP BY here.
+    merged: dict[str, int] = {}
+    for col in columns:
+        stmt = select(col, func.count()).where(col.is_not(None))
+        if like is not None:
+            stmt = stmt.where(col.ilike(like))
+        stmt = stmt.group_by(col)
+        for value, count in db.execute(stmt).all():
+            if not value:
+                continue
+            merged[value] = merged.get(value, 0) + int(count or 0)
+
+    # Sort by count desc, then alphabetically for stable ordering within
+    # the same frequency bucket.
+    ordered = sorted(merged.items(), key=lambda kv: (-kv[1], kv[0].lower()))
+    return [{"value": v, "count": c} for v, c in ordered[:limit]]
 
 
 @app.get(
@@ -7028,6 +7086,196 @@ def delete_future_project(
     db.commit()
 
 
+# --- Future Project CSV Import ---
+
+FUTURE_PROJECT_CORE_FIELDS: dict[str, str] = {
+    "name": "str",
+    "developer": "str",
+    "address": "str",
+    "city": "str",
+    "municipal_district": "str",
+    "region": "str",
+    "stage": "str",
+    "total_units": "int",
+    "date_sale_start": "str",
+    "construction_completion": "str",
+    "project_type": "str",
+    "url": "str",
+    "renovation": "bool",
+    "gps_latitude": "float",
+    "gps_longitude": "float",
+}
+
+
+class CsvPreviewResponse(BaseModel):
+    headers: list[str]
+    sample_rows: list[list[str]]
+    total_rows: int
+
+
+class CsvImportMapping(BaseModel):
+    csv_header: str
+    target_field: str  # core field name, "public_data_json.<key>", "internal_data_json.<key>", or "__skip__"
+
+
+class CsvImportRequest(BaseModel):
+    headers: list[str]
+    rows: list[list[str]]
+    mapping: list[CsvImportMapping]
+
+
+class CsvImportResult(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str]
+
+
+@app.post("/future-projects/import-preview", response_model=CsvPreviewResponse)
+async def fp_import_preview(
+    file: UploadFile = File(...),
+    broker: Any = Depends(get_current_broker),
+):
+    import csv, io
+    content = (await file.read()).decode("utf-8-sig")
+    # Auto-detect delimiter
+    sample = content[:2000]
+    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    reader = csv.reader(io.StringIO(content), delimiter=delimiter)
+    all_rows = list(reader)
+    if not all_rows:
+        raise HTTPException(status_code=400, detail="CSV is empty")
+    headers = all_rows[0]
+    data_rows = all_rows[1:]
+    sample_rows = data_rows[:10]
+    return CsvPreviewResponse(headers=headers, sample_rows=sample_rows, total_rows=len(data_rows))
+
+
+@app.post("/future-projects/import", response_model=CsvImportResult)
+def fp_import(
+    body: CsvImportRequest,
+    db: DbSession,
+    broker: Any = Depends(get_current_broker),
+):
+    # Build header→index map
+    h_idx = {h: i for i, h in enumerate(body.headers)}
+    # Build mapping instructions
+    mappings: list[tuple[int, str, str]] = []  # (csv_col_index, target, type)
+    for m in body.mapping:
+        if m.target_field == "__skip__" or m.csv_header not in h_idx:
+            continue
+        mappings.append((h_idx[m.csv_header], m.target_field, ""))
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for row_num, row in enumerate(body.rows, start=2):  # row 1 = header
+        core: dict[str, Any] = {}
+        public_data: dict[str, Any] = {}
+        internal_data: dict[str, Any] = {}
+
+        for col_idx, target, _ in mappings:
+            if col_idx >= len(row):
+                continue
+            val = row[col_idx].strip()
+            if not val:
+                continue
+
+            if target.startswith("public_data_json."):
+                key = target[len("public_data_json."):]
+                public_data[key] = val
+            elif target.startswith("internal_data_json."):
+                key = target[len("internal_data_json."):]
+                internal_data[key] = val
+            elif target in FUTURE_PROJECT_CORE_FIELDS:
+                ftype = FUTURE_PROJECT_CORE_FIELDS[target]
+                try:
+                    if ftype == "int":
+                        core[target] = int(float(val))
+                    elif ftype == "float":
+                        core[target] = float(val.replace(",", "."))
+                    elif ftype == "bool":
+                        core[target] = val.lower() in ("true", "1", "ano", "yes")
+                    else:
+                        core[target] = val
+                except (ValueError, TypeError):
+                    errors.append(f"Row {row_num}: invalid value '{val}' for {target}")
+                    continue
+
+        if "name" not in core or not core["name"]:
+            errors.append(f"Row {row_num}: missing required field 'name'")
+            continue
+
+        # Duplicate check: first by slug, then by name
+        slug = _slugify(core["name"])
+        existing = db.execute(
+            select(FutureProject).where(FutureProject.slug == slug)
+        ).scalar_one_or_none()
+        if not existing:
+            existing = db.execute(
+                select(FutureProject).where(FutureProject.name == core["name"])
+            ).scalar_one_or_none()
+
+        if existing:
+            # Update existing project with new values
+            changed = False
+            for field in FUTURE_PROJECT_CORE_FIELDS:
+                if field in core and field != "name":
+                    old_val = getattr(existing, field, None)
+                    new_val = core[field]
+                    if old_val != new_val:
+                        setattr(existing, field, new_val)
+                        changed = True
+            if public_data:
+                merged = dict(existing.public_data_json or {})
+                merged.update(public_data)
+                if merged != (existing.public_data_json or {}):
+                    existing.public_data_json = merged
+                    changed = True
+            if internal_data:
+                merged = dict(existing.internal_data_json or {})
+                merged.update(internal_data)
+                if merged != (existing.internal_data_json or {}):
+                    existing.internal_data_json = merged
+                    changed = True
+            if changed:
+                db.add(existing)
+                updated += 1
+            else:
+                skipped += 1
+            continue
+
+        fp = FutureProject(
+            name=core["name"],
+            slug=slug,
+            developer=core.get("developer"),
+            address=core.get("address"),
+            city=core.get("city"),
+            municipal_district=core.get("municipal_district"),
+            region=core.get("region"),
+            stage=core.get("stage"),
+            total_units=core.get("total_units"),
+            date_sale_start=core.get("date_sale_start"),
+            construction_completion=core.get("construction_completion"),
+            project_type=core.get("project_type"),
+            url=core.get("url"),
+            renovation=core.get("renovation"),
+            gps_latitude=core.get("gps_latitude"),
+            gps_longitude=core.get("gps_longitude"),
+            public_data_json=public_data or None,
+            internal_data_json=internal_data or None,
+        )
+        db.add(fp)
+        created += 1
+
+    if created > 0:
+        db.commit()
+
+    return CsvImportResult(created=created, updated=updated, skipped=skipped, errors=errors)
+
+
 # --- Future Project Interests ---
 
 class InterestItem(BaseModel):
@@ -7263,6 +7511,203 @@ def portal_me(
     )
 
 
+# --- Portal: My Preferences ---
+
+
+class PortalPreferenceItem(BaseModel):
+    key: str
+    label: str
+    value: str  # human-readable value
+    filter_type: str  # "max" | "min" | "in" | "bool" | "exclude_floor"
+    raw_value: float | None = None  # numeric value for filtering
+
+
+class PortalPreferencesResponse(BaseModel):
+    items: list[PortalPreferenceItem]
+
+
+@app.get("/portal/my-preferences", response_model=PortalPreferencesResponse)
+def portal_my_preferences(
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> PortalPreferencesResponse:
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalar_one_or_none()
+    if not profile:
+        return PortalPreferencesResponse(items=[])
+
+    sw = build_structured_wizard(profile)
+    hf = sw.hard_filters
+    pref = sw.preferences
+    items: list[PortalPreferenceItem] = []
+
+    if hf.budget_max:
+        label_val = f"do {hf.budget_max / 1_000_000:.1f} mil. K\u010d"
+        if hf.budget_max_tolerance_pct:
+            label_val += f" (\u00b1{int(hf.budget_max_tolerance_pct)}%)"
+        effective = hf.budget_max
+        if hf.budget_max_tolerance_pct:
+            effective = int(hf.budget_max * (1 + hf.budget_max_tolerance_pct / 100))
+        items.append(PortalPreferenceItem(
+            key="budget_max", label="Rozpo\u010det", value=label_val,
+            filter_type="max", raw_value=float(effective),
+        ))
+
+    if hf.area_min:
+        label_val = f"od {hf.area_min:.0f} m\u00b2"
+        if hf.area_min_tolerance_pct:
+            label_val += f" (\u00b1{int(hf.area_min_tolerance_pct)}%)"
+        effective = hf.area_min
+        if hf.area_min_tolerance_pct:
+            effective = hf.area_min * (1 - hf.area_min_tolerance_pct / 100)
+        items.append(PortalPreferenceItem(
+            key="area_min", label="Min. plocha", value=label_val,
+            filter_type="min", raw_value=float(effective),
+        ))
+
+    if hf.layouts:
+        items.append(PortalPreferenceItem(
+            key="layouts", label="Dispozice", value=", ".join(hf.layouts),
+            filter_type="in", raw_value=None,
+        ))
+
+    if hf.outdoor_area_min:
+        label_val = f"od {hf.outdoor_area_min:.0f} m\u00b2"
+        effective = hf.outdoor_area_min
+        if hf.outdoor_area_min_tolerance_pct:
+            effective = hf.outdoor_area_min * (1 - hf.outdoor_area_min_tolerance_pct / 100)
+            label_val += f" (\u00b1{int(hf.outdoor_area_min_tolerance_pct)}%)"
+        items.append(PortalPreferenceItem(
+            key="outdoor_area_min", label="Min. venkovn\u00ed plocha", value=label_val,
+            filter_type="min", raw_value=float(effective),
+        ))
+
+    if hf.exclude_ground_floor:
+        items.append(PortalPreferenceItem(
+            key="exclude_ground_floor", label="Bez p\u0159\u00edzem\u00ed", value="ano",
+            filter_type="exclude_floor", raw_value=1.0,
+        ))
+
+    if hf.penthouse_only:
+        items.append(PortalPreferenceItem(
+            key="penthouse_only", label="Jen penthouse", value="ano",
+            filter_type="bool", raw_value=None,
+        ))
+
+    if pref.ground_floor_sensitive and not hf.exclude_ground_floor:
+        items.append(PortalPreferenceItem(
+            key="prefer_no_ground", label="Raději bez přízemí", value="preference",
+            filter_type="exclude_floor", raw_value=1.0,
+        ))
+
+    if hf.renovation_preference == "only_new":
+        items.append(PortalPreferenceItem(
+            key="only_new", label="Pouze novostavby", value="ano",
+            filter_type="bool", raw_value=None,
+        ))
+    elif hf.renovation_preference == "only_renovation":
+        items.append(PortalPreferenceItem(
+            key="only_renovation", label="Pouze rekonstrukce", value="ano",
+            filter_type="bool", raw_value=None,
+        ))
+
+    # ── Standards ──
+    if hf.must_recuperation or pref.prefer_recuperation:
+        level = "vy\u017eadov\u00e1no" if hf.must_recuperation else "preference"
+        items.append(PortalPreferenceItem(
+            key="recuperation", label="Rekuperace", value=level,
+            filter_type="feature", raw_value=None,
+        ))
+
+    if hf.must_air_conditioning or pref.prefer_air_conditioning:
+        level = "vy\u017eadov\u00e1no" if hf.must_air_conditioning else "preference"
+        items.append(PortalPreferenceItem(
+            key="air_conditioning", label="Klimatizace", value=level,
+            filter_type="feature", raw_value=None,
+        ))
+
+    if hf.must_floor_heating or pref.prefer_floor_heating:
+        level = "vy\u017eadov\u00e1no" if hf.must_floor_heating else "preference"
+        items.append(PortalPreferenceItem(
+            key="floor_heating", label="Podlahov\u00e9 topen\u00ed", value=level,
+            filter_type="feature", raw_value=None,
+        ))
+
+    if hf.must_exterior_blinds or pref.prefer_exterior_blinds:
+        level = "vy\u017eadov\u00e1no" if hf.must_exterior_blinds else "preference"
+        items.append(PortalPreferenceItem(
+            key="exterior_blinds", label="Venkovn\u00ed \u017ealuzie", value=level,
+            filter_type="feature", raw_value=None,
+        ))
+
+    # ── Noise ──
+    if hf.must_no_main_road or pref.prefer_no_main_road:
+        level = "vy\u017eadov\u00e1no" if hf.must_no_main_road else "preference"
+        items.append(PortalPreferenceItem(
+            key="no_main_road", label="Bez hlavn\u00ed silnice", value=level,
+            filter_type="noise_distance", raw_value=150.0,
+        ))
+
+    if hf.must_no_tram or pref.prefer_no_tram:
+        level = "vy\u017eadov\u00e1no" if hf.must_no_tram else "preference"
+        items.append(PortalPreferenceItem(
+            key="no_tram", label="Bez tramvaje", value=level,
+            filter_type="noise_distance", raw_value=100.0,
+        ))
+
+    if hf.must_no_railway or pref.prefer_no_railway:
+        level = "vyžadováno" if hf.must_no_railway else "preference"
+        items.append(PortalPreferenceItem(
+            key="no_railway", label="Bez železnice", value=level,
+            filter_type="noise_distance", raw_value=300.0,
+        ))
+
+    # ── Amenities ──
+    _amenity_prefs = [
+        ("bike_room", hf.must_bike_room, None, "Kolárna"),
+        ("stroller_room", hf.must_stroller_room, None, "Kočárkárna"),
+        ("fitness", hf.must_fitness, pref.prefer_fitness, "Fitness"),
+        ("courtyard_garden", hf.must_courtyard_garden, pref.prefer_courtyard_garden, "Vnitroblok / zahrada"),
+        ("reception", hf.must_reception, pref.prefer_reception, "Recepce"),
+        ("concierge", hf.must_concierge, None, "Concierge"),
+    ]
+    for key, must, prefer_val, label in _amenity_prefs:
+        if must:
+            items.append(PortalPreferenceItem(
+                key=key, label=label, value="vyžadováno",
+                filter_type="amenity", raw_value=None,
+            ))
+        elif prefer_val and prefer_val == "prefer":
+            items.append(PortalPreferenceItem(
+                key=key, label=label, value="preference",
+                filter_type="amenity", raw_value=None,
+            ))
+
+    # ── Attribute enums ──
+    _enum_prefs = [
+        ("windows", "Okna", pref.window_material),
+        ("heating", "Topení", pref.heating_type),
+        ("heating_source", "Zdroj vytápění", pref.heating_source),
+        ("partition_walls", "Příčky", pref.partition_type),
+        ("flooring", "Podlahy", pref.flooring),
+    ]
+    for key, label, val in _enum_prefs:
+        if val:
+            items.append(PortalPreferenceItem(
+                key=key, label=label, value=val,
+                filter_type="enum", raw_value=None,
+            ))
+
+    if pref.prefer_smart_home:
+        items.append(PortalPreferenceItem(
+            key="smart_home", label="Smart home", value="preference",
+            filter_type="feature", raw_value=None,
+        ))
+
+    return PortalPreferencesResponse(items=items)
+
+
 # --- Portal: Future Projects ---
 
 class PortalFutureProjectItem(BaseModel):
@@ -7355,3 +7800,191 @@ def portal_create_interest(
     db.commit()
     db.refresh(interest)
     return PortalInterestResponse(status="created", interest_id=interest.id)
+
+
+# ── Portal: Recommendations ────────────────────────────────────────────
+
+
+class PortalRecommendationItem(BaseModel):
+    rec_id: int
+    project_id: int | None = None
+    project_name: str | None = None
+    unit_external_id: str | None = None
+    layout: str | None = None
+    layout_label: str | None = None
+    floor_area_m2: float | None = None
+    exterior_area_m2: float | None = None
+    price_czk: int | None = None
+    price_per_m2_czk: int | None = None
+    floor: int | None = None
+    score: float | None = None
+    top_strengths: list[str] = []
+    top_compromises: list[str] = []
+    district: str | None = None
+    project_lat: float | None = None
+    project_lng: float | None = None
+    # Standards / features (booleans)
+    has_recuperation: bool = False
+    has_air_conditioning: bool = False
+    has_floor_heating: bool = False
+    has_exterior_blinds: bool = False
+    has_parking: bool = False
+    has_smart_home: bool = False
+    # Standards / features (enum values)
+    heating: str | None = None
+    heating_source: str | None = None
+    windows: str | None = None
+    partition_walls: str | None = None
+    flooring: str | None = None
+    orientation: str | None = None
+    cooling: str | None = None
+    energy_class: str | None = None
+    # Project amenities
+    has_bike_room: bool = False
+    has_stroller_room: bool = False
+    has_fitness: bool = False
+    has_courtyard_garden: bool = False
+    has_reception: bool = False
+    has_concierge: bool = False
+    # Noise distances (meters)
+    distance_to_primary_road_m: float | None = None
+    distance_to_tram_tracks_m: float | None = None
+    distance_to_railway_m: float | None = None
+    feedback: RecommendationFeedbackOut | None = None
+
+
+def _check_recuperation(project: Project) -> bool:
+    val = getattr(project, "recuperation", None)
+    return bool(val) and str(val).lower() not in ("false", "0", "ne", "no", "")
+
+
+def _check_floor_heating(unit: Unit, project: Project) -> bool:
+    h = getattr(unit, "heating", None) or getattr(project, "heating", None)
+    if not h:
+        return False
+    return any(k in str(h).lower() for k in ("podlah", "underfloor", "floor"))
+
+
+def _check_exterior_blinds(unit: Unit) -> bool:
+    eb = getattr(unit, "exterior_blinds", None)
+    if not eb:
+        return False
+    return str(eb).lower() not in ("false", "0", "")
+
+
+@app.get("/portal/recommendations", response_model=list[PortalRecommendationItem])
+def portal_list_recommendations(
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> list[PortalRecommendationItem]:
+    recs = db.execute(
+        select(ClientRecommendation, Unit, Project)
+        .join(Unit, ClientRecommendation.unit_id == Unit.id)
+        .join(Project, ClientRecommendation.project_id == Project.id)
+        .outerjoin(ClientRecommendationFeedback)
+        .options(selectinload(ClientRecommendation.feedback))
+        .where(
+            ClientRecommendation.client_id == client.id,
+            ClientRecommendation.hidden_by_broker.is_(False),
+        )
+        .order_by(ClientRecommendation.score.desc())
+    ).all()
+    items: list[PortalRecommendationItem] = []
+    for rec, unit, project in recs:
+        reason = rec.reason_json or {}
+        raw_layout = str(unit.layout) if unit.layout is not None else None
+        layout_label = _layout_group(raw_layout) or (raw_layout if raw_layout is not None else None)
+        items.append(
+            PortalRecommendationItem(
+                rec_id=rec.id,
+                project_id=project.id,
+                project_name=project.name,
+                unit_external_id=unit.external_id,
+                layout=unit.layout,
+                layout_label=layout_label,
+                floor_area_m2=float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None,
+                exterior_area_m2=float(unit.exterior_area_m2) if unit.exterior_area_m2 is not None else None,
+                price_czk=unit.price_czk,
+                price_per_m2_czk=unit.price_per_m2_czk,
+                floor=unit.floor,
+                score=rec.score,
+                top_strengths=reason.get("top_strengths") or [],
+                top_compromises=reason.get("top_compromises") or [],
+                district=project.district,
+                project_lat=float(project.gps_latitude) if project.gps_latitude is not None else None,
+                project_lng=float(project.gps_longitude) if project.gps_longitude is not None else None,
+                has_recuperation=_check_recuperation(project),
+                has_air_conditioning=bool(getattr(unit, "air_conditioning", None)),
+                has_floor_heating=_check_floor_heating(unit, project),
+                has_exterior_blinds=_check_exterior_blinds(unit),
+                has_parking=bool(getattr(unit, "parking_indoor_price_czk", None) or getattr(unit, "parking_outdoor_price_czk", None)),
+                has_smart_home=bool(getattr(unit, "smart_home", None)),
+                # Enum attributes (unit-level overrides project-level)
+                heating=getattr(unit, "heating", None) or getattr(project, "heating", None),
+                heating_source=getattr(project, "heating_source", None),
+                windows=getattr(unit, "windows", None) or getattr(project, "windows", None),
+                partition_walls=getattr(unit, "partition_walls", None) or getattr(project, "partition_walls", None),
+                flooring=getattr(unit, "floors", None),
+                orientation=getattr(unit, "orientation", None),
+                cooling=getattr(project, "cooling", None),
+                energy_class=getattr(project, "energy_class", None),
+                # Project amenities
+                has_bike_room=bool(getattr(project, "bike_room", None)),
+                has_stroller_room=bool(getattr(project, "stroller_room", None)),
+                has_fitness=bool(getattr(project, "fitness", None)),
+                has_courtyard_garden=bool(getattr(project, "courtyard_garden", None)),
+                has_reception=bool(getattr(project, "reception", None)),
+                has_concierge=bool(getattr(project, "concierge", None)),
+                distance_to_primary_road_m=getattr(project, "distance_to_primary_road_m", None),
+                distance_to_tram_tracks_m=getattr(project, "distance_to_tram_tracks_m", None),
+                distance_to_railway_m=getattr(project, "distance_to_railway_m", None),
+                feedback=RecommendationFeedbackOut(
+                    feedback_type=rec.feedback.feedback_type,
+                    dislike_reason=rec.feedback.dislike_reason,
+                    note=rec.feedback.note,
+                    updated_at=rec.feedback.updated_at,
+                ) if rec.feedback else None,
+            )
+        )
+    return items
+
+
+@app.put("/portal/recommendations/{rec_id}/feedback", response_model=RecommendationFeedbackOut)
+def portal_upsert_recommendation_feedback(
+    rec_id: int,
+    body: RecommendationFeedbackIn,
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+) -> RecommendationFeedbackOut:
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client.id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if body.feedback_type not in ALLOWED_FEEDBACK_TYPES:
+        raise HTTPException(status_code=422, detail=f"feedback_type must be one of {sorted(ALLOWED_FEEDBACK_TYPES)}")
+    if body.feedback_type != "disliked":
+        body.dislike_reason = None
+    fb = db.execute(
+        select(ClientRecommendationFeedback).where(
+            ClientRecommendationFeedback.recommendation_id == rec_id
+        )
+    ).scalar_one_or_none()
+    if fb:
+        fb.feedback_type = body.feedback_type
+        fb.dislike_reason = body.dislike_reason
+        fb.note = body.note
+    else:
+        fb = ClientRecommendationFeedback(
+            recommendation_id=rec_id,
+            feedback_type=body.feedback_type,
+            dislike_reason=body.dislike_reason,
+            note=body.note,
+        )
+    db.add(fb)
+    db.commit()
+    db.refresh(fb)
+    return RecommendationFeedbackOut(
+        feedback_type=fb.feedback_type,
+        dislike_reason=fb.dislike_reason,
+        note=fb.note,
+        updated_at=fb.updated_at,
+    )
