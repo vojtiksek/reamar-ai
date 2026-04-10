@@ -3473,6 +3473,17 @@ def get_unit_local_price_diff_debug(
     )
 
 
+@app.get("/wizard-metadata")
+def get_wizard_metadata_endpoint():
+    """Return wizard field metadata — canonical options, labels, types.
+
+    Frontend uses this to populate wizard field options instead of hardcoded values.
+    Static data, no DB needed — safe to cache aggressively.
+    """
+    from .wizard_metadata import get_wizard_metadata
+    return get_wizard_metadata()
+
+
 @app.get("/filters")
 def get_filters(db: DbSession):
     """Return filter definitions from field_catalog.csv (Filterable == ANO). Cached in memory; options from DB for enum."""

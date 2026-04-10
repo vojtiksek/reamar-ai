@@ -189,9 +189,15 @@ export type WizardExtras = {
     high_standard?: Priority;
     elevator?: Priority;
     window_type?: string | null;
-    heating_type?: string | null;
-    partitions?: string | null;
-    heating_source?: string | null;
+    heating_type?: string | string[] | null;
+    partitions?: string | string[] | null;
+    heating_source?: string | string[] | null;
+    window_material?: string | string[] | null;
+    flooring?: string | string[] | null;
+    // Compound detail fields
+    air_conditioning_type?: string | null;
+    exterior_blinds_accept_prep?: boolean | null;
+    [key: string]: Priority | string | string[] | boolean | null | undefined;
   };
   outdoor?: {
     outdoor_space?: Priority;
