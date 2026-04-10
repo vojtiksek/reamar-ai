@@ -66,6 +66,14 @@ body {
   padding: 1.25rem 1.25rem 2.5rem;
 }
 
+/* Fullscreen wizard: hide global nav and remove app-shell padding */
+.app-shell:has(.wizard-fullscreen) {
+  padding: 0;
+}
+.app-shell:has(.wizard-fullscreen) > .glass-header {
+  display: none;
+}
+
 @layer components {
   .glass-header {
     background: #FFFFFF;

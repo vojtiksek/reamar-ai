@@ -88,9 +88,14 @@ export default function AdminFutureProjectsPage() {
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-slate-900">Správa budoucích projektů</h2>
-        <ReamarButton variant="primary" size="sm" onClick={() => { setCreating(true); setEditing(null); setDetailId(null); }}>
-          + Nový projekt
-        </ReamarButton>
+        <div className="flex gap-2">
+          <a href="/admin/future-projects/import">
+            <ReamarButton variant="secondary" size="sm">Import CSV</ReamarButton>
+          </a>
+          <ReamarButton variant="primary" size="sm" onClick={() => { setCreating(true); setEditing(null); setDetailId(null); }}>
+            + Nový projekt
+          </ReamarButton>
+        </div>
       </div>
 
       {(creating || editing) && (
