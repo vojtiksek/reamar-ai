@@ -27,6 +27,7 @@ type EditorProps = {
   mapMode?: "polygon" | "commute";
   commutePoints?: CommuteMarkerPoint[];
   onCommuteClick?: (lat: number, lng: number) => void;
+  tall?: boolean;
 };
 
 const InnerMap = dynamic<EditorProps>(

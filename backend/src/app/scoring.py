@@ -6,8 +6,11 @@ Public API:
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field, asdict
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from sqlalchemy.orm import Session
 
@@ -263,7 +266,7 @@ def normalize_wizard(wizard: dict) -> dict:
         if floor_rule == "no_ground" and not outdoor.get("ground_floor_sensitive"):
             outdoor["ground_floor_sensitive"] = "must"
         elif floor_rule in ("top_3", "top_1") and not outdoor.get("preferred_floor"):
-            outdoor["preferred_floor"] = "high"
+            outdoor["preferred_floor"] = "top_3" if floor_rule == "top_3" else "top_floor"
     w["outdoor"] = outdoor
 
     # ── 3. budget.min_outdoor_area_m2 → outdoor.min_outdoor_area_m2 ───────────
@@ -273,14 +276,9 @@ def normalize_wizard(wizard: dict) -> dict:
     if budget.get("min_outdoor_area_m2") is not None and outdoor.get("min_outdoor_area_m2") is None:
         w["outdoor"] = {**w.get("outdoor", {}), "min_outdoor_area_m2": budget["min_outdoor_area_m2"]}
 
-    # ── 4. "bonus" → "prefer" ─────────────────────────────────────────────────
-    # IntensityPicker in step 6 emits "bonus" as a third intensity level.
-    # The scoring engine only understands "must" | "prefer" | "ignore".
-    # Map "bonus" → "prefer" so it is not silently treated as "ignore".
-    for section in ("standards", "noise", "house_amenities", "project_amenities", "outdoor"):
-        sub = w.get(section)
-        if isinstance(sub, dict):
-            w[section] = {k: ("prefer" if v == "bonus" else v) for k, v in sub.items()}
+    # NOTE: "bonus" is a valid Priority in the wizard UI but is NOT mapped here.
+    # The structured_wizard path (wizardTransform.ts isPrefer()) treats "bonus"
+    # as false (equivalent to "ignore"). This is intentional post-clean-slate.
 
     return w
 
@@ -432,15 +430,12 @@ class StructuredWizard:
 def _normalize_admin_area(raw: Any) -> list[str]:
     """Coerce a wizard administrative_area value into a clean list[str].
 
-    Backward-compat: legacy profiles store a single string; new profiles
-    store a list of strings; empty/None becomes an empty list.  All entries
-    are stripped and blanks are dropped while preserving order.
+    admin_area is always list[str] in structured_wizard payloads.
+    Empty/None becomes an empty list.  All entries are stripped and blanks
+    are dropped while preserving order and deduplicating.
     """
     if raw is None:
         return []
-    if isinstance(raw, str):
-        v = raw.strip()
-        return [v] if v else []
     if isinstance(raw, (list, tuple)):
         out: list[str] = []
         seen: set[str] = set()
@@ -686,20 +681,9 @@ def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> Struct
 
     hf.location_polygon = bool(hf_d.get("location_polygon"))
     hf.location_commute = bool(hf_d.get("location_commute"))
-    # Fall back to the raw wizard.location section when structured payload
-    # lacks these (older frontend builds may not propagate them yet).
-    raw_location = ((profile.filter_json or {}).get("wizard") or {}).get("location") or {}
-    method_admin_raw = hf_d.get("method_admin")
-    if method_admin_raw is None:
-        method_admin_raw = raw_location.get("method_admin")
-    hf.method_admin = bool(method_admin_raw)
-    admin_area_raw = hf_d.get("location_admin_area")
-    if admin_area_raw is None:
-        admin_area_raw = raw_location.get("administrative_area")
-    hf.location_admin_area = _normalize_admin_area(admin_area_raw)
-    hf.location_admin_region = (
-        hf_d.get("location_admin_region") or raw_location.get("administrative_region")
-    )
+    hf.method_admin = bool(hf_d.get("method_admin"))
+    hf.location_admin_area = _normalize_admin_area(hf_d.get("location_admin_area"))
+    hf.location_admin_region = hf_d.get("location_admin_region")
 
     hf.latest_move_in = hf_d.get("latest_move_in")
     reno = hf_d.get("renovation_preference")
@@ -793,6 +777,10 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
         return _hydrate_from_structured(sw_payload, profile)
 
     # ── Fallback: transform from raw wizard ─────────────────────────────
+    logger.warning(
+        "build_structured_wizard: profile %s has no structured_wizard payload — using raw wizard fallback",
+        getattr(profile, "id", "unknown"),
+    )
     wizard = normalize_wizard(filter_json.get("wizard") or {})
     budget_section = wizard.get("budget") or {}
     outdoor_section = wizard.get("outdoor") or {}
@@ -956,11 +944,11 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
     # Walkability
     pref.walkability_active = bool(profile.walkability_preferences_json)
 
-    # Skip categories
+    # Skip categories — wizard uses "surroundings" for noise+walkability combined
     pref.skip_standards = bool(skip.get("standards"))
     pref.skip_amenities = bool(skip.get("amenities"))
-    pref.skip_noise = bool(skip.get("noise"))
-    pref.skip_walkability = bool(skip.get("walkability"))
+    pref.skip_noise = bool(skip.get("noise") or skip.get("surroundings"))
+    pref.skip_walkability = bool(skip.get("walkability") or skip.get("surroundings"))
 
     # ── Metadata ────────────────────────────────────────────────────────────
     meta.client_type = wizard.get("client_type")

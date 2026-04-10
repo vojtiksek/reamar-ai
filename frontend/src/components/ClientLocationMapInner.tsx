@@ -42,24 +42,44 @@ type EditorProps = {
   commutePoints?: CommuteMarkerPoint[];
   /** Called when user clicks the map while mapMode === "commute". */
   onCommuteClick?: (lat: number, lng: number) => void;
+  /** When true, renders the map at a fixed tall height instead of aspect-[4/3]. */
+  tall?: boolean;
 };
 
-function FitBounds({ areas }: { areas: Area[] }) {
+function FitBounds({ areas, commutePoints }: { areas: Area[]; commutePoints: CommuteMarkerPoint[] }) {
   const map = useMap();
   const hasFit = useRef(false);
   useEffect(() => {
     if (hasFit.current) return;
+    // Prefer fitting on polygon areas first
     const allPoints = areas.flat();
-    if (!allPoints.length) return;
-    const lats = allPoints.map((p) => p.lat);
-    const lngs = allPoints.map((p) => p.lng);
-    const bounds: LatLngBoundsExpression = [
-      [Math.min(...lats), Math.min(...lngs)],
-      [Math.max(...lats), Math.max(...lngs)],
-    ];
-    map.fitBounds(bounds, { padding: [20, 20] });
+    if (allPoints.length) {
+      const lats = allPoints.map((p) => p.lat);
+      const lngs = allPoints.map((p) => p.lng);
+      const bounds: LatLngBoundsExpression = [
+        [Math.min(...lats), Math.min(...lngs)],
+        [Math.max(...lats), Math.max(...lngs)],
+      ];
+      map.fitBounds(bounds, { padding: [20, 20] });
+      hasFit.current = true;
+      return;
+    }
+    // No polygon — fall back to commute points
+    const located = commutePoints.filter((cp) => cp.lat !== null && cp.lng !== null);
+    if (!located.length) return;
+    if (located.length === 1) {
+      map.setView([located[0].lat as number, located[0].lng as number], 13);
+    } else {
+      const lats = located.map((cp) => cp.lat as number);
+      const lngs = located.map((cp) => cp.lng as number);
+      const bounds: LatLngBoundsExpression = [
+        [Math.min(...lats), Math.min(...lngs)],
+        [Math.max(...lats), Math.max(...lngs)],
+      ];
+      map.fitBounds(bounds, { padding: [60, 60] });
+    }
     hasFit.current = true;
-  }, [areas, map]);
+  }, [areas, commutePoints, map]);
   return null;
 }
 
@@ -177,6 +197,7 @@ export function ClientLocationMapInner({
   mapMode = "polygon",
   commutePoints = [],
   onCommuteClick,
+  tall = false,
 }: EditorProps) {
   const [drawing, setDrawing] = useState(false);
   const [draftPolygon, setDraftPolygon] = useState<Point[]>([]);
@@ -276,7 +297,7 @@ export function ClientLocationMapInner({
         </p>
       )}
 
-      <div className="aspect-[4/3] overflow-hidden rounded-lg border border-slate-200">
+      <div className={`${tall ? "h-[520px]" : "aspect-[4/3]"} overflow-hidden rounded-lg border border-slate-200`}>
         <MapContainer center={center} zoom={12} style={{ height: "100%", width: "100%" }}>
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -436,7 +457,7 @@ export function ClientLocationMapInner({
               </Marker>
             ))}
 
-          <FitBounds areas={areas} />
+          <FitBounds areas={areas} commutePoints={commutePoints} />
         </MapContainer>
       </div>
     </div>

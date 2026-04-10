@@ -374,7 +374,7 @@ const COMMUTE_LOCATION: WizardField = {
 // the area list only boosts ranking inside the polygon.
 const METHOD_ADMIN: WizardField = {
   key: "method_admin",
-  label: "Použít preferované oblasti i jako striktní požadavek",
+  label: "Hledat pouze v preferovaných oblastech",
   render: "bool_toggle",
   role: "hard_filter",
   visibility: "both",
@@ -615,9 +615,9 @@ export const WIZARD_STEPS: WizardStep[] = [
         key: "area",
         heading: "Kde chcete bydlet?",
         description:
-          "Oblast na mapě určuje, kde se vůbec hledá. Uvnitř této oblasti " +
-          "pak můžete zvýraznit preferované části — ty ovlivňují jen pořadí " +
-          "výsledků, pokud nezaškrtnete volbu pro striktní požadavek.",
+          "Oblast na mapě určuje, kde se vůbec hledá. Uvnitř oblasti " +
+          "můžete zvýraznit preferované části — ty ovlivňují jen pořadí. " +
+          "Aktivujte níže, pokud chcete preferované oblasti jako tvrdý filtr.",
         fields: [POLYGON_LOCATION, COMMUTE_LOCATION, ADMIN_AREA, METHOD_ADMIN, ADMIN_REGION],
       },
       { key: "character", heading: "Charakter okolí", fields: [CALM_VS_CITY] },

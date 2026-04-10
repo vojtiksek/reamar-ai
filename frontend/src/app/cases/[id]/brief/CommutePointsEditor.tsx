@@ -56,6 +56,8 @@ export type CommutePoint = {
 type Props = {
   points: CommutePoint[];
   onChange: (next: CommutePoint[]) => void;
+  /** Maximum number of points allowed. When reached, the add-new section is hidden. */
+  maxPoints?: number;
 };
 
 // ────────────────────────────────────────────────────────────────────────
@@ -88,7 +90,7 @@ const newId = () =>
 // Component
 // ────────────────────────────────────────────────────────────────────────
 
-export function CommutePointsEditor({ points, onChange }: Props) {
+export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
   // `pendingLabel` is the label the next added point will take (from preset
   // click).  Reset to "" after the point is added.
   const [pendingLabel, setPendingLabel] = useState<string>("");
@@ -244,6 +246,11 @@ export function CommutePointsEditor({ points, onChange }: Props) {
       )}
 
       {/* Add-new-point flow ───────────────────────────────────────── */}
+      {maxPoints != null && points.length >= maxPoints ? (
+        <p className="text-[11px] text-slate-400">
+          Dosažen limit {maxPoints} bodů — odeberte bod pro přidání nového.
+        </p>
+      ) : (
       <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2.5">
         <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-[11px] font-medium text-slate-500">
@@ -287,6 +294,7 @@ export function CommutePointsEditor({ points, onChange }: Props) {
           Preferovaně). Můžete je upravit kdykoli níže.
         </p>
       </div>
+      )}
 
       {points.length === 0 && (
         <p className="text-[11px] italic text-slate-500">

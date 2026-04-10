@@ -207,7 +207,7 @@ export function buildStructuredWizard(
     budget_max_tolerance_pct: budget.max_price_tolerance_pct ?? null,
     area_min: prof.area_min ?? null,
     area_min_tolerance_pct: budget.max_area_tolerance_pct ?? null,
-    outdoor_area_min: outdoor.min_outdoor_area_m2 ?? null,
+    outdoor_area_min: budget.min_outdoor_area_m2 ?? outdoor.min_outdoor_area_m2 ?? null,
     outdoor_area_min_tolerance_pct: budget.max_outdoor_tolerance_pct ?? null,
 
     // Layouts
@@ -315,8 +315,11 @@ export function buildStructuredWizard(
     prefer_no_railway: isPrefer(noise.railway),
     prefer_no_airport: isPrefer(noise.airport),
 
-    // Floor
-    preferred_floor: outdoor.preferred_floor ?? null,
+    // Floor — derive from floor_rule enum (wizard never sets preferred_floor directly)
+    preferred_floor:
+      floorRule === "top_3" ? "top_3" :
+      floorRule === "top_1" ? "top_floor" :
+      outdoor.preferred_floor ?? null,
     ground_floor_sensitive:
       isPrefer(outdoor.ground_floor_sensitive) ||
       floorRule === "top_3",
@@ -344,11 +347,11 @@ export function buildStructuredWizard(
       Object.keys(prof.walkability_preferences_json).length > 0
     ),
 
-    // Skip
+    // Skip — wizard uses "surroundings" for noise+walkability combined
     skip_standards: !!skip.standards,
     skip_amenities: !!skip.amenities,
-    skip_noise: !!skip.noise,
-    skip_walkability: !!skip.walkability,
+    skip_noise: !!skip.noise || !!skip.surroundings,
+    skip_walkability: !!skip.walkability || !!skip.surroundings,
   };
 
   // ── Metadata ─────────────────────────────────────────────────────────

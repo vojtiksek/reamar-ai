@@ -675,8 +675,8 @@ export default function BriefPage() {
       </div>
 
       {/* Unified map: polygon + commute */}
-      {(wizardExtras.location?.method_polygon || wizardExtras.location?.method_commute) && (() => {
-        const bothActive = !!(wizardExtras.location?.method_polygon && wizardExtras.location?.method_commute);
+      {((wizardExtras.location?.method_polygon ?? true) || wizardExtras.location?.method_commute) && (() => {
+        const bothActive = !!((wizardExtras.location?.method_polygon ?? true) && wizardExtras.location?.method_commute);
         const effectiveMapMode = bothActive ? mapMode : wizardExtras.location?.method_commute ? "commute" : "polygon";
         const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
         const canAddMore = commutePoints.length < 4;
@@ -689,7 +689,7 @@ export default function BriefPage() {
               {bothActive && (
                 <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
                   <button type="button"
-                    onClick={() => setMapMode("polygon")}
+                    onClick={() => { setMapMode("polygon"); setNextCommuteLabel(""); }}
                     className={cn("px-2.5 py-1 transition-colors",
                       mapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
                     Polygon
@@ -734,7 +734,7 @@ export default function BriefPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-[11px] text-slate-400">Dosažen limit 4 bodů dojíždění.</p>
+                  <p className="text-[11px] text-slate-400">4 body jsou maximum — odeberte bod v editoru níže.</p>
                 )}
               </div>
             )}
@@ -900,6 +900,7 @@ export default function BriefPage() {
               commute: { ...(prev.commute ?? {}), points: next },
             }))
           }
+          maxPoints={4}
         />
       )}
     </div>
@@ -1633,6 +1634,7 @@ export default function BriefPage() {
                   commute: { ...(prev.commute ?? {}), points: next },
                 }))
               }
+              maxPoints={4}
             />
           </div>
         </div>

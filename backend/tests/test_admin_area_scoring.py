@@ -121,12 +121,11 @@ class TestNormalizeAdminArea:
     def test_none_returns_empty_list(self):
         assert _normalize_admin_area(None) == []
 
-    def test_empty_string_returns_empty_list(self):
+    def test_string_ignored_post_clean_slate(self):
+        # Post-clean-slate: admin_area is always list[str] in structured_wizard.
+        # Plain string input is no longer supported — returns empty list.
+        assert _normalize_admin_area("Praha 6") == []
         assert _normalize_admin_area("") == []
-
-    def test_string_returns_single_element_list(self):
-        result = _normalize_admin_area("Praha 6")
-        assert result == ["Praha 6"]
 
     def test_list_passthrough(self):
         result = _normalize_admin_area(["Praha 6", "Praha 7"])
@@ -137,14 +136,10 @@ class TestNormalizeAdminArea:
         # whitespace-only entries are stripped; only non-empty survive
         assert "Praha 6" in result
 
-    def test_legacy_single_string_normalized(self):
-        # Simulates old wizard format where admin area was stored as plain string
-        assert _normalize_admin_area("Praha 2") == ["Praha 2"]
-
-    def test_integer_coerced(self):
-        # Defensive: unexpected int should not crash
+    def test_unexpected_type_returns_empty(self):
+        # Defensive: unexpected types return empty list without crashing
         result = _normalize_admin_area(42)
-        assert isinstance(result, list)
+        assert result == []
 
 
 # ---------------------------------------------------------------------------
@@ -500,17 +495,19 @@ class TestFullScoreAdminExplainability:
 # ---------------------------------------------------------------------------
 
 class TestBackwardCompat:
-    """Legacy string values from old wizard must be treated as single-element list."""
+    """Post-clean-slate: only list[str] admin_area is supported."""
 
     def test_legacy_string_stored_as_admin_area(self):
-        """Simulates a client record created before Phase 5b multi-value support."""
+        """Post-clean-slate: plain string admin_area in raw wizard fallback is ignored.
+        All new profiles use structured_wizard with list[str] admin_area.
+        """
         profile = _Profile()
-        # Override filter_json with old string format
+        # Old string format in raw wizard (no structured_wizard key)
         profile.filter_json = {
             "wizard": {
                 "hard_filters": {},
                 "location": {
-                    "administrative_area": "Praha 6",  # string, not list
+                    "administrative_area": "Praha 6",  # string — no longer supported
                     "method_admin": False,
                 },
             }
@@ -518,7 +515,8 @@ class TestBackwardCompat:
         from app.scoring import build_structured_wizard
         sw = build_structured_wizard(profile)
         assert isinstance(sw.hard_filters.location_admin_area, list)
-        assert "Praha 6" in sw.hard_filters.location_admin_area
+        # String is not coerced — result is empty (string compat removed)
+        assert sw.hard_filters.location_admin_area == []
 
     def test_null_admin_area_does_not_crash(self):
         profile = _Profile()
