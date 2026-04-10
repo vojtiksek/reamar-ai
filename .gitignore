@@ -35,6 +35,13 @@ yarn-error.log*
 **/*.sql
 **/*.dump
 **/*.bak
+**/*.bak.*
+
+# node_modules symlink at repo root (→ frontend/node_modules)
+node_modules
+
+# Data export CSVs at backend root
+backend/*.csv
 
 # Large data
 backend/data/*.geojson
