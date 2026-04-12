@@ -90,12 +90,31 @@ export default function PresentationPage() {
         const items = data as RecommendationItem[];
         setRecs(items);
         const pinned = items.filter((r) => r.pinned_by_broker);
-        setRoles(Object.fromEntries(pinned.map((r, i) => [r.rec_id, assignRole(i)])));
+        // Sort by persisted shortlist_order before assigning roles.
+        const sorted = [...pinned].sort((a, b) => {
+          const ao = a.shortlist_order ?? 999999;
+          const bo = b.shortlist_order ?? 999999;
+          if (ao !== bo) return ao - bo;
+          return b.score - a.score;
+        });
+        // Prefer persisted shortlist_role; fall back to positional for legacy records.
+        setRoles(Object.fromEntries(
+          sorted.map((r, i) => [r.rec_id, (r.shortlist_role as ShortlistRole) || assignRole(i)])
+        ));
       })
       .finally(() => setLoading(false));
   }, [token, clientId]);
 
-  const pinned = useMemo(() => recs.filter((r) => r.pinned_by_broker), [recs]);
+  // Sort pinned by persisted shortlist_order (nulls last), then score.
+  const pinned = useMemo(() => {
+    const p = recs.filter((r) => r.pinned_by_broker);
+    return [...p].sort((a, b) => {
+      const ao = a.shortlist_order ?? 999999;
+      const bo = b.shortlist_order ?? 999999;
+      if (ao !== bo) return ao - bo;
+      return b.score - a.score;
+    });
+  }, [recs]);
   const notesCount = pinned.filter((r) => Boolean(r.broker_note)).length;
   const reviewCount = pinned.filter((r) => r.eligibility === "review").length;
   const readiness = readinessState(pinned, notesCount, reviewCount, !!shareUrl);
@@ -269,7 +288,9 @@ export default function PresentationPage() {
                   <div className="grid gap-3 md:grid-cols-2">
                     <div className="rounded-xl bg-emerald-50/70 p-3">
                       <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Proč doporučujeme</p>
-                      {rec.top_strengths && rec.top_strengths.length > 0 ? (
+                      {rec.shortlist_reason ? (
+                        <p className="text-sm text-emerald-900">{rec.shortlist_reason}</p>
+                      ) : rec.top_strengths && rec.top_strengths.length > 0 ? (
                         <ul className="space-y-1 text-sm text-emerald-900">
                           {rec.top_strengths.slice(0, 3).map((s, i) => (
                             <li key={i}>+ {s}</li>

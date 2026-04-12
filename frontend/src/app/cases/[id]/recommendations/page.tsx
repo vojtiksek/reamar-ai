@@ -10,6 +10,7 @@ const RecommendationsMap = dynamic(() => import("./RecommendationsMap"), { ssr: 
 import { useCaseData } from "@/hooks/useCaseData";
 import { formatCurrencyCzk } from "@/lib/format";
 import { FitDot } from "@/components/case/ScoreUtils";
+import { FunnelCard } from "@/components/case/FunnelCard";
 import { ReamarButton, ReamarCard, reamarInputClass } from "@/components/ui/reamar-ui";
 import { API_BASE } from "@/lib/api";
 import type {
@@ -610,6 +611,7 @@ type ProjectGroup = {
   liked_count: number;
   pinned_count: number;
   disliked_count: number;
+  construction_completion: string | null;
 };
 
 function buildProjectGroups(recs: RecommendationItem[]): ProjectGroup[] {
@@ -640,6 +642,7 @@ function buildProjectGroups(recs: RecommendationItem[]): ProjectGroup[] {
       liked_count: units.filter((u) => u.feedback?.feedback_type === "liked").length,
       pinned_count: units.filter((u) => u.pinned_by_broker).length,
       disliked_count: units.filter((u) => u.feedback?.feedback_type === "disliked").length,
+      construction_completion: sorted[0].construction_completion ?? null,
     });
   }
   groups.sort((a, b) => b.best_score - a.best_score);
@@ -714,6 +717,9 @@ function ProjectGroupCard({
               )}
               {group.ext_area_range[0] != null && group.ext_area_range[0]! > 0 && (
                 <span>ext. {group.ext_area_range[0] === group.ext_area_range[1] ? `${Math.round(group.ext_area_range[0]!)} m²` : `${Math.round(group.ext_area_range[0]!)}–${Math.round(group.ext_area_range[1]!)} m²`}</span>
+              )}
+              {group.construction_completion && parseInt(group.construction_completion.slice(0, 4)) >= 2024 && (
+                <span>Dokončení: {group.construction_completion}</span>
               )}
             </div>
           </div>
@@ -1013,6 +1019,7 @@ export default function RecommendationsPage() {
   const {
     client,
     recs,
+    recsFunnel,
     loading,
     error,
     hydrated,
@@ -1145,6 +1152,9 @@ export default function RecommendationsPage() {
           <div className="rounded-xl bg-rose-50 p-3"><p className="text-[11px] uppercase tracking-wide text-rose-700">✕ Nechci</p><p className="mt-1 text-2xl font-semibold text-rose-900">{dislikedCount}</p></div>
         </div>
       </ReamarCard>
+
+      {/* Filter funnel (Phase 7b) */}
+      {recsFunnel && <FunnelCard funnel={recsFunnel} />}
 
       {/* Quick filters */}
       <QuickFilterBar filter={quickFilter} onChange={(f) => { setQuickFilter(f); localStorage.setItem("reamar_recs_filter", f); }} counts={filterCounts} />

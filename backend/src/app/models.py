@@ -462,6 +462,9 @@ class ClientRecommendation(Base):
     pinned_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     hidden_by_broker: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     broker_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shortlist_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    shortlist_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shortlist_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'suggested'"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

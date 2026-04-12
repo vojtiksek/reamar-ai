@@ -9,6 +9,8 @@ import type { Priority } from "@/lib/caseTypes";
 import { normalizeAdminAreaList } from "@/lib/wizardTransform";
 import { ClientLocationMap } from "@/components/ClientLocationMap";
 import { CommutePointsEditor, type CommutePoint } from "../brief/CommutePointsEditor";
+import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
+import { DEFAULT_PREFERENCES } from "@/lib/walkabilityPreferences";
 import {
   WIZARD_STEPS,
   STANDARD_ENUMS,
@@ -98,6 +100,23 @@ function PriorityPicker({ value, onChange }: { value: string; onChange: (v: stri
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="block text-sm font-medium text-slate-700">{children}</label>;
+}
+
+/** Minimal role badges matching brief/QuickEdit styling. */
+function FilterBadge() {
+  return <span className="ml-1.5 inline-block rounded-sm bg-emerald-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-700">Filtr</span>;
+}
+function PrefBadge() {
+  return <span className="ml-1.5 inline-block rounded-sm bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-violet-700">Preference</span>;
+}
+function CtxBadge() {
+  return <span className="ml-1.5 inline-block rounded-sm bg-slate-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-slate-500">Kontext</span>;
+}
+function RoleBadge({ role }: { role: import("@/lib/wizardModel").FieldRole }) {
+  if (role === "hard_filter") return <FilterBadge />;
+  if (role === "preference") return <PrefBadge />;
+  if (role === "context") return <CtxBadge />;
+  return null;
 }
 
 const inputClass =
@@ -362,6 +381,7 @@ export default function ClientWizardPage() {
     selectedLayouts, setSelectedLayouts,
     loading,
     hydrated,
+    token,
     wizardExtras, setWizardExtras,
     locationPolygons, setLocationPolygons,
     activeAreaIndex, setActiveAreaIndex,
@@ -371,6 +391,7 @@ export default function ClientWizardPage() {
     handleSaveProfile,
     handleNextStep,
     autoSaveStatus,
+    walkPrefs, setWalkPrefs,
   } = useCaseData();
 
   const { fields: wizardMeta } = useWizardMetadata();
@@ -391,6 +412,7 @@ export default function ClientWizardPage() {
     try {
       const res = await fetch(`${API_BASE}/clients/${clientId}/recommendations/recompute`, {
         method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
         const data: { created?: number; total_candidates?: number } = await res.json();
@@ -463,7 +485,7 @@ export default function ClientWizardPage() {
     const options = getFieldOptions(wizardMeta, f.key, section, f.options);
     return (
       <div key={f.key} className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-        <span className="mb-2 block text-sm font-medium text-slate-700">{f.label}</span>
+        <span className="mb-2 flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></span>
         <div className="flex flex-wrap gap-1.5">
           {options.map((opt) => {
             const active = selected.includes(opt.value);
@@ -497,7 +519,7 @@ export default function ClientWizardPage() {
     return (
       <div key={f.key} className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-medium text-slate-700">{f.label}</span>
+          <span className="flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></span>
           <PriorityPicker
             value={priority}
             onChange={(v) => setWizardExtras((prev) => ({
@@ -727,7 +749,7 @@ export default function ClientWizardPage() {
 
     return (
       <div key={f.key}>
-        <FieldLabel>{labelText}</FieldLabel>
+        <label className="flex items-center text-sm font-medium text-slate-700">{labelText}<RoleBadge role={f.role} /></label>
         <input
           type="number"
           value={inputValue}
@@ -761,7 +783,7 @@ export default function ClientWizardPage() {
       const list = normalizeAdminAreaList(rawValue);
       return (
         <div key={f.key}>
-          <FieldLabel>{f.label}</FieldLabel>
+          <label className="flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></label>
           <MultiSuggestInput
             values={list}
             onChange={(next) => writeField(f, next.length ? next : null)}
@@ -775,7 +797,7 @@ export default function ClientWizardPage() {
     const current = (readField(f) as string | null | undefined) ?? "";
     return (
       <div key={f.key}>
-        <FieldLabel>{f.label}</FieldLabel>
+        <label className="flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></label>
         {suggest ? (
           <SuggestInput
             value={current}
@@ -825,7 +847,7 @@ export default function ClientWizardPage() {
         className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3"
       >
         <div>
-          <div className="text-sm font-medium text-slate-700">{f.label}</div>
+          <div className="flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></div>
           {statusHint && (
             <div className="mt-0.5 text-xs text-slate-500">{statusHint}</div>
           )}
@@ -1348,6 +1370,34 @@ export default function ClientWizardPage() {
             </div>
           </div>
         ))}
+
+        {/* Walkability preferences — mirrors brief/page.tsx renderStep5 */}
+        <div className="space-y-4 rounded-lg bg-slate-50 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí <PrefBadge /></h5>
+            <div className="flex gap-1">
+              {[
+                { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+                { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
+                { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+              ].map(({ label, prefs }) => (
+                <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
+                  className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <WalkabilityPreferencesGroup title="Služby a příroda"
+            items={[{ key: "supermarket", label: "Supermarket" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
+            prefs={walkPrefs} onChange={setWalkPrefs} />
+          <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
+            items={[{ key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
+            prefs={walkPrefs} onChange={setWalkPrefs} />
+          <WalkabilityPreferencesGroup title="Doprava"
+            items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
+            prefs={walkPrefs} onChange={setWalkPrefs} />
+        </div>
       </div>
     );
   };

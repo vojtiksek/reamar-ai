@@ -21,6 +21,7 @@ import type {
   RecommendationItem,
   RecommendationFeedbackType,
   RecommendationDislikeReason,
+  RecommendationFunnel,
   MarketFitAnalysis,
   AreaMarketAnalysis,
   NoteItem,
@@ -42,6 +43,7 @@ export function useCaseData() {
   const [error, setError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
+  const [recsFunnel, setRecsFunnel] = useState<RecommendationFunnel | null>(null);
   const [profileSavedMessage, setProfileSavedMessage] = useState<string | null>(null);
   const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -87,6 +89,19 @@ export function useCaseData() {
     const stored = loadWalkPrefs();
     setWalkPrefs(stored);
   }, []);
+
+  // Restore last recompute funnel from sessionStorage for cross-page navigation
+  // (e.g. recompute on /brief → navigate to /recommendations). The storage key
+  // is scoped per client id so switching clients doesn't leak stale data.
+  useEffect(() => {
+    if (typeof window === "undefined" || !clientId) return;
+    try {
+      const raw = sessionStorage.getItem(`reamar_funnel_${clientId}`);
+      if (raw) setRecsFunnel(JSON.parse(raw) as RecommendationFunnel);
+    } catch {
+      // ignore malformed cache
+    }
+  }, [clientId]);
 
   useEffect(() => {
     setHydrated(true);
@@ -430,6 +445,20 @@ export function useCaseData() {
         },
       });
       if (!res.ok) throw new Error(await res.text());
+      const recomputePayload = await res.json().catch(() => null);
+      const funnel = (recomputePayload?.funnel ?? null) as RecommendationFunnel | null;
+      setRecsFunnel(funnel);
+      if (typeof window !== "undefined") {
+        try {
+          if (funnel) {
+            sessionStorage.setItem(`reamar_funnel_${clientId}`, JSON.stringify(funnel));
+          } else {
+            sessionStorage.removeItem(`reamar_funnel_${clientId}`);
+          }
+        } catch {
+          // ignore quota errors
+        }
+      }
       await fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -597,6 +626,7 @@ export function useCaseData() {
     profile, setProfile,
     selectedLayouts, setSelectedLayouts,
     recs, setRecs,
+    recsFunnel,
     loading,
     error,
     profileSaving,

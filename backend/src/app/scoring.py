@@ -207,6 +207,9 @@ DEFAULT_THRESHOLDS = {
     'default_visible_limit': 50,
     'max_strong_picks': 0,   # 0 = unlimited
     'max_review_picks': 0,   # 0 = unlimited
+    # Availability visibility settings
+    'hide_stale_reservations': 1,  # 1 = hide reserved units with is_stale_reservation=true
+    'not_seen_max_days': 180,      # include not_seen units last seen within N days (0 = exclude all)
 }
 
 

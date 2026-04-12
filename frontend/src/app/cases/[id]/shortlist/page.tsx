@@ -55,73 +55,113 @@ type ShortlistProjectGroup = {
   price_range: [number | null, number | null];
   layouts: string[];
   best_score: number;
+  min_order: number; // for group-level sort
 };
 
-function buildShortlistGroups(pinned: RecommendationItem[]): ShortlistProjectGroup[] {
-  const map = new Map<number | null, RecommendationItem[]>();
-  for (const r of pinned) {
+/** Build project groups preserving the broker's custom ordering.
+ *  Group order = position of first unit from each project in orderedPinned.
+ *  Unit order within a group = position in orderedPinned. */
+function buildShortlistGroups(orderedPinned: RecommendationItem[]): ShortlistProjectGroup[] {
+  const groupOrder = new Map<number | null, number>(); // project_id → first index
+  const groupUnits = new Map<number | null, RecommendationItem[]>();
+
+  for (let i = 0; i < orderedPinned.length; i++) {
+    const r = orderedPinned[i];
     const key = r.project_id ?? null;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(r);
+    if (!groupOrder.has(key)) {
+      groupOrder.set(key, i);
+      groupUnits.set(key, []);
+    }
+    groupUnits.get(key)!.push(r);
   }
+
   const groups: ShortlistProjectGroup[] = [];
-  for (const [pid, units] of map) {
-    const sorted = [...units].sort((a, b) => b.score - a.score);
+  for (const [pid, units] of groupUnits) {
     const prices = units.map((u) => u.price_czk).filter((p): p is number => p != null);
     const layouts = [...new Set(units.map((u) => u.layout_label).filter(Boolean))] as string[];
     groups.push({
       project_id: pid,
-      project_name: sorted[0].project_name ?? sorted[0].unit_external_id ?? "Neznámý projekt",
-      district: sorted[0].district ?? null,
-      units: sorted,
+      project_name: units[0].project_name ?? units[0].unit_external_id ?? "Neznámý projekt",
+      district: units[0].district ?? null,
+      units,
       price_range: [prices.length ? Math.min(...prices) : null, prices.length ? Math.max(...prices) : null],
       layouts,
-      best_score: sorted[0].score,
+      best_score: Math.max(...units.map((u) => u.score)),
+      min_order: groupOrder.get(pid)!,
     });
   }
-  groups.sort((a, b) => b.best_score - a.best_score);
+  groups.sort((a, b) => a.min_order - b.min_order);
   return groups;
 }
 
-/* ───────── Unit card (shared between both views) ───────── */
+/* ───────── Unit card ───────── */
 
 function ShortlistUnitCard({
   rec,
   index,
+  totalCount,
   roles,
   reasons,
   editingNote,
   noteText,
   onRoleChange,
+  onReasonBlur,
   onReasonChange,
   onEditNote,
   onSaveNote,
   onCancelNote,
   onNoteTextChange,
   onUnpin,
+  onMoveUp,
+  onMoveDown,
   compact,
 }: {
   rec: RecommendationItem;
   index: number;
+  totalCount: number;
   roles: Record<number, ShortlistRole>;
   reasons: Record<number, string>;
   editingNote: number | null;
   noteText: string;
   onRoleChange: (recId: number, role: ShortlistRole) => void;
+  onReasonBlur: (recId: number) => void;
   onReasonChange: (recId: number, text: string) => void;
   onEditNote: (recId: number) => void;
   onSaveNote: (recId: number) => void;
   onCancelNote: () => void;
   onNoteTextChange: (text: string) => void;
   onUnpin: (recId: number) => void;
+  onMoveUp: (recId: number) => void;
+  onMoveDown: (recId: number) => void;
   compact?: boolean;
 }) {
   const fbLabel = feedbackLabel(rec.feedback?.feedback_type);
+
+  /** Order controls — small up/down arrows */
+  const orderControls = (
+    <div className="flex flex-col gap-0.5">
+      <button
+        type="button"
+        disabled={index === 0}
+        onClick={() => onMoveUp(rec.rec_id)}
+        title="Přesunout výše"
+        className="rounded px-1 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-20"
+      >▲</button>
+      <button
+        type="button"
+        disabled={index === totalCount - 1}
+        onClick={() => onMoveDown(rec.rec_id)}
+        title="Přesunout níže"
+        className="rounded px-1 py-0.5 text-[10px] text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-20"
+      >▼</button>
+    </div>
+  );
 
   if (compact) {
     return (
       <div className="border-t border-slate-100 px-5 py-3">
         <div className="flex items-start justify-between gap-4">
+          <div className="flex shrink-0 items-center gap-1">{orderControls}</div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[10px] font-semibold text-white">#{index + 1}</span>
@@ -148,16 +188,12 @@ function ShortlistUnitCard({
                 )}>{fbLabel}</span>
               )}
             </div>
-            {/* Inline note + reason row */}
             <div className="mt-2 flex flex-wrap gap-3 text-xs">
-              {rec.top_strengths?.[0] && (
-                <span className="text-emerald-700">+ {rec.top_strengths[0]}</span>
-              )}
-              {rec.top_compromises?.[0] && (
-                <span className="text-amber-700">! {rec.top_compromises[0]}</span>
+              {reasons[rec.rec_id] && (
+                <span className="text-slate-600">„{reasons[rec.rec_id]}"</span>
               )}
               {rec.broker_note && (
-                <span className="text-slate-500 italic">„{rec.broker_note}"</span>
+                <span className="text-slate-400 italic">Pozn.: {rec.broker_note}</span>
               )}
             </div>
           </div>
@@ -171,7 +207,6 @@ function ShortlistUnitCard({
             <button onClick={() => onUnpin(rec.rec_id)} className="text-xs text-slate-400 hover:text-rose-600" title="Odebrat">✕</button>
           </div>
         </div>
-        {/* Inline note editor */}
         {editingNote === rec.rec_id && (
           <div className="mt-2 space-y-2 pl-8">
             <textarea className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm" rows={2} value={noteText} onChange={(e) => onNoteTextChange(e.target.value)} placeholder="Interní poznámka…" />
@@ -188,7 +223,10 @@ function ShortlistUnitCard({
   // Full card (units view)
   return (
     <ReamarCard className="p-5">
-      <div className="flex items-start justify-between gap-4">
+      <div className="flex items-start gap-3">
+        {/* Order controls on the left */}
+        <div className="flex shrink-0 flex-col items-center gap-1 pt-1">{orderControls}</div>
+
         <div className="min-w-0 flex-1 space-y-3">
           <div>
             <div className="flex flex-wrap items-center gap-2">
@@ -211,10 +249,12 @@ function ShortlistUnitCard({
             <div className="rounded-xl bg-slate-50 p-3">
               <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Proč je ve výběru</p>
               <textarea
-                value={reasons[rec.rec_id] || ""}
+                value={reasons[rec.rec_id] ?? ""}
                 onChange={(e) => onReasonChange(rec.rec_id, e.target.value)}
+                onBlur={() => onReasonBlur(rec.rec_id)}
                 className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
                 rows={3}
+                placeholder="Proč tuto jednotku doporučujeme…"
               />
             </div>
             <div className="rounded-xl bg-slate-50 p-3">
@@ -281,6 +321,8 @@ export default function ShortlistPage() {
   const [noteText, setNoteText] = useState("");
   const [roles, setRoles] = useState<Record<number, ShortlistRole>>({});
   const [reasons, setReasons] = useState<Record<number, string>>({});
+  // Ordered list of rec_ids representing broker's custom shortlist order.
+  const [orderedIds, setOrderedIds] = useState<number[]>([]);
   const [viewMode, setViewMode] = useState<ShortlistViewMode>(() => {
     if (typeof window === "undefined") return "projects";
     const saved = localStorage.getItem("reamar_shortlist_view");
@@ -303,20 +345,79 @@ export default function ShortlistPage() {
         const items = data as RecommendationItem[];
         setRecs(items);
         const pinned = items.filter((r) => r.pinned_by_broker);
-        setRoles(Object.fromEntries(pinned.map((r, i) => [r.rec_id, i === 0 ? "top_pick" : i === 1 ? "alternative" : i === 2 ? "fallback" : "wild_card"] as const)));
-        setReasons(Object.fromEntries(pinned.map((r) => [r.rec_id, r.top_strengths?.[0] || "Dobrý celkový fit"] )));
+        // Sort by persisted shortlist_order (nulls last), then by score.
+        const sorted = [...pinned].sort((a, b) => {
+          const ao = a.shortlist_order ?? 999999;
+          const bo = b.shortlist_order ?? 999999;
+          if (ao !== bo) return ao - bo;
+          return b.score - a.score;
+        });
+        setOrderedIds(sorted.map((r) => r.rec_id));
+        // Use persisted role; fall back to unset (select will show "Alternativa" visually).
+        setRoles(Object.fromEntries(
+          pinned
+            .filter((r) => r.shortlist_role)
+            .map((r) => [r.rec_id, r.shortlist_role as ShortlistRole])
+        ));
+        // Use persisted reason; empty string if not set.
+        setReasons(Object.fromEntries(
+          pinned.map((r) => [r.rec_id, r.shortlist_reason ?? ""])
+        ));
       })
       .finally(() => setLoading(false));
   }, [token, clientId]);
 
-  const pinned = useMemo(() => recs.filter((r) => r.pinned_by_broker), [recs]);
-  const groups = useMemo(() => buildShortlistGroups(pinned), [pinned]);
-  const reviewCount = pinned.filter((r) => r.eligibility === "review").length;
-  const notesCount = pinned.filter((r) => Boolean(r.broker_note)).length;
+  /** Persist any shortlist metadata field(s) for a single rec. */
+  const patchShortlist = async (
+    recId: number,
+    payload: { shortlist_role?: string | null; shortlist_reason?: string | null; shortlist_order?: number | null },
+  ) => {
+    if (!token) return;
+    await fetch(`${API_BASE}/clients/${clientId}/recommendations/${recId}/shortlist`, {
+      method: "PATCH",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  };
+
+  const handleRoleChange = (recId: number, role: ShortlistRole) => {
+    setRoles((prev) => ({ ...prev, [recId]: role }));
+    patchShortlist(recId, { shortlist_role: role });
+  };
+
+  const handleReasonChange = (recId: number, text: string) => {
+    setReasons((prev) => ({ ...prev, [recId]: text }));
+  };
+
+  /** Persist reason when the textarea loses focus. */
+  const handleReasonBlur = (recId: number) => {
+    patchShortlist(recId, { shortlist_reason: reasons[recId] ?? "" });
+  };
+
+  const handleMoveUp = (recId: number) => {
+    const idx = orderedIds.indexOf(recId);
+    if (idx <= 0) return;
+    const next = [...orderedIds];
+    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+    setOrderedIds(next);
+    patchShortlist(next[idx - 1], { shortlist_order: idx - 1 });
+    patchShortlist(next[idx], { shortlist_order: idx });
+  };
+
+  const handleMoveDown = (recId: number) => {
+    const idx = orderedIds.indexOf(recId);
+    if (idx >= orderedIds.length - 1) return;
+    const next = [...orderedIds];
+    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+    setOrderedIds(next);
+    patchShortlist(next[idx], { shortlist_order: idx });
+    patchShortlist(next[idx + 1], { shortlist_order: idx + 1 });
+  };
 
   const handleUnpin = async (recId: number) => {
     if (!token) return;
     setRecs((prev) => prev.map((r) => (r.rec_id === recId ? { ...r, pinned_by_broker: false } : r)));
+    setOrderedIds((prev) => prev.filter((id) => id !== recId));
     await fetch(`${API_BASE}/clients/${clientId}/recommendations/${recId}/pin`, {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
@@ -352,23 +453,37 @@ export default function ShortlistPage() {
     }
   };
 
+  // Derive the ordered pinned list from orderedIds + recs.
+  const orderedPinned = useMemo(() => {
+    const byId = new Map(recs.map((r) => [r.rec_id, r]));
+    return orderedIds.map((id) => byId.get(id)).filter((r): r is RecommendationItem => r != null && r.pinned_by_broker);
+  }, [orderedIds, recs]);
+
+  const groups = useMemo(() => buildShortlistGroups(orderedPinned), [orderedPinned]);
+  const reviewCount = orderedPinned.filter((r) => r.eligibility === "review").length;
+  const notesCount = orderedPinned.filter((r) => Boolean(r.broker_note)).length;
+
   const cardProps = {
+    totalCount: orderedPinned.length,
     roles,
     reasons,
     editingNote,
     noteText,
-    onRoleChange: (recId: number, role: ShortlistRole) => setRoles((prev) => ({ ...prev, [recId]: role })),
-    onReasonChange: (recId: number, text: string) => setReasons((prev) => ({ ...prev, [recId]: text })),
+    onRoleChange: handleRoleChange,
+    onReasonChange: handleReasonChange,
+    onReasonBlur: handleReasonBlur,
     onEditNote: (recId: number) => { setEditingNote(recId); setNoteText(recs.find((r) => r.rec_id === recId)?.broker_note || ""); },
     onSaveNote: handleSaveNote,
     onCancelNote: () => setEditingNote(null),
     onNoteTextChange: setNoteText,
     onUnpin: handleUnpin,
+    onMoveUp: handleMoveUp,
+    onMoveDown: handleMoveDown,
   };
 
   if (loading) return <p className="text-sm text-slate-600 p-6">Načítání…</p>;
 
-  if (pinned.length === 0) {
+  if (orderedPinned.length === 0) {
     return (
       <ReamarCard className="p-8 text-center">
         <div className="mx-auto max-w-md space-y-3">
@@ -380,17 +495,12 @@ export default function ShortlistPage() {
     );
   }
 
-  // Build a flat index map: rec_id → global position across all groups
+  // Global position lookup for the # badge
   const globalIndexMap = useMemo(() => {
     const map = new Map<number, number>();
-    let idx = 0;
-    for (const g of groups) {
-      for (const u of g.units) {
-        map.set(u.rec_id, idx++);
-      }
-    }
+    orderedPinned.forEach((r, i) => map.set(r.rec_id, i));
     return map;
-  }, [groups]);
+  }, [orderedPinned]);
 
   return (
     <div className="space-y-6">
@@ -426,7 +536,7 @@ export default function ShortlistPage() {
 
       {/* Readiness panel */}
       <div className="grid gap-3 md:grid-cols-4">
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Ve výběru</p><p className="mt-1 text-2xl font-semibold text-slate-900">{pinned.length}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Ve výběru</p><p className="mt-1 text-2xl font-semibold text-slate-900">{orderedPinned.length}</p></ReamarCard>
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Projektů</p><p className="mt-1 text-2xl font-semibold text-slate-900">{groups.length}</p></ReamarCard>
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Poznámky</p><p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount}</p></ReamarCard>
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Sdílený odkaz</p><p className="mt-1 text-sm font-medium text-slate-900">{shareUrl ? "Připravený" : "Ještě nevytvořen"}</p></ReamarCard>
@@ -440,12 +550,18 @@ export default function ShortlistPage() {
         </div>
       )}
 
+      {/* Review warning */}
+      {reviewCount > 0 && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+          ⚠ {reviewCount} {reviewCount === 1 ? "položka vyžaduje" : "položky vyžadují"} ověření před schůzkou.
+        </div>
+      )}
+
       {/* Projects view */}
       {viewMode === "projects" && (
         <div className="space-y-4">
           {groups.map((group) => (
             <ReamarCard key={group.project_id ?? "unknown"} className="overflow-hidden">
-              {/* Project header */}
               <div className="border-b border-slate-100 bg-gradient-to-r from-slate-50 to-white px-5 py-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -468,19 +584,18 @@ export default function ShortlistPage() {
                   </div>
                 </div>
               </div>
-              {/* Units inside project */}
               {group.units.map((rec) => (
-                  <ShortlistUnitCard key={rec.rec_id} rec={rec} index={globalIndexMap.get(rec.rec_id) ?? 0} compact {...cardProps} />
+                <ShortlistUnitCard key={rec.rec_id} rec={rec} index={globalIndexMap.get(rec.rec_id) ?? 0} compact {...cardProps} />
               ))}
             </ReamarCard>
           ))}
         </div>
       )}
 
-      {/* Units view (original flat list) */}
+      {/* Units view */}
       {viewMode === "units" && (
         <div className="space-y-4">
-          {pinned.map((rec, index) => (
+          {orderedPinned.map((rec, index) => (
             <ShortlistUnitCard key={rec.rec_id} rec={rec} index={index} {...cardProps} />
           ))}
         </div>

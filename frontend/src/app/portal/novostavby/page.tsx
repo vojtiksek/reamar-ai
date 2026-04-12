@@ -61,6 +61,14 @@ type Rec = {
   distance_to_tram_tracks_m: number | null;
   distance_to_railway_m: number | null;
   feedback: Feedback | null;
+  // Broker curation metadata
+  pinned_by_broker: boolean;
+  shortlist_order: number | null;
+  shortlist_reason: string | null;
+  shortlist_role: string | null;
+  // Project metadata
+  construction_completion: string | null;
+  project_url: string | null;
 };
 
 type ProjectGroup = {
@@ -80,6 +88,9 @@ type ProjectGroup = {
   best_match: MatchInfo | null;
   avg_price_per_m2: number | null;
   avg_area: number | null;
+  has_shortlisted: boolean;
+  best_shortlist_order: number | null;
+  construction_completion: string | null;
 };
 
 type ProjectSortKey = "score" | "match" | "price" | "price_m2" | "area";
@@ -107,8 +118,14 @@ function sortProjectGroups(groups: ProjectGroup[], key: ProjectSortKey): Project
     case "area":
       sorted.sort((a, b) => (b.avg_area ?? 0) - (a.avg_area ?? 0));
       break;
-    default: // "score"
-      sorted.sort((a, b) => b.best_score - a.best_score);
+    default: // "score" / "Doporučeno" — broker-shortlisted projects first
+      sorted.sort((a, b) => {
+        if (a.has_shortlisted !== b.has_shortlisted) return a.has_shortlisted ? -1 : 1;
+        if (a.has_shortlisted && b.has_shortlisted) {
+          return (a.best_shortlist_order ?? 999999) - (b.best_shortlist_order ?? 999999);
+        }
+        return b.best_score - a.best_score;
+      });
   }
   return sorted;
 }
@@ -124,7 +141,7 @@ type PreferenceItem = {
 type ViewMode = "projects" | "units" | "map" | "cards";
 type SortKey = "score" | "match_count" | "price_czk" | "price_per_m2_czk" | "floor_area_m2" | "exterior_area_m2";
 type SortDir = "asc" | "desc";
-type QuickFilter = "all" | "liked" | "hide_disliked" | "undecided";
+type QuickFilter = "all" | "broker_pick" | "liked" | "hide_disliked" | "undecided";
 
 // ── Helpers ────────────────────────────────────────────────────────────
 
@@ -140,6 +157,13 @@ function formatLayout(layout: string | null | undefined): string {
   if (!m) return layout;
   return m[2] ? `${m[1]}+${m[2]}` : `${m[1]}kk`;
 }
+
+const SHORTLIST_ROLE_LABELS: Record<string, string> = {
+  top_pick: "Top volba",
+  alternative: "Alternativa",
+  fallback: "Záloha",
+  wild_card: "Divoká karta",
+};
 
 function formatScore(score: number | null | undefined): string {
   if (score == null) return "—";
@@ -189,9 +213,24 @@ function buildProjectGroups(recs: Rec[], matchMap: Map<number, MatchInfo>): Proj
         }
         return best;
       })(),
+      has_shortlisted: units.some((u) => u.pinned_by_broker),
+      best_shortlist_order: (() => {
+        const orders = units
+          .filter((u) => u.pinned_by_broker && u.shortlist_order != null)
+          .map((u) => u.shortlist_order as number);
+        return orders.length ? Math.min(...orders) : null;
+      })(),
+      construction_completion: sorted[0].construction_completion ?? null,
     });
   }
-  groups.sort((a, b) => b.best_score - a.best_score);
+  // Default: pinned projects first (by best_shortlist_order), then by score
+  groups.sort((a, b) => {
+    if (a.has_shortlisted !== b.has_shortlisted) return a.has_shortlisted ? -1 : 1;
+    if (a.has_shortlisted && b.has_shortlisted) {
+      return (a.best_shortlist_order ?? 999999) - (b.best_shortlist_order ?? 999999);
+    }
+    return b.best_score - a.best_score;
+  });
   return groups;
 }
 
@@ -201,6 +240,8 @@ function applyFilter(recs: Rec[], filter: QuickFilter): Rec[] {
       return recs.filter((r) => r.feedback?.feedback_type === "liked");
     case "hide_disliked":
       return recs.filter((r) => r.feedback?.feedback_type !== "disliked");
+    case "broker_pick":
+      return recs.filter((r) => r.pinned_by_broker);
     case "undecided":
       return recs.filter((r) => !r.feedback);
     default:
@@ -416,6 +457,7 @@ function computeMatchInfo(rec: Rec, prefs: PreferenceItem[]): MatchInfo {
 
 const FILTERS: { key: QuickFilter; label: string }[] = [
   { key: "all", label: "Vše" },
+  { key: "broker_pick", label: "Výběr makléře" },
   { key: "liked", label: "Líbí se" },
   { key: "hide_disliked", label: "Skrýt nechci" },
   { key: "undecided", label: "Bez rozhodnutí" },
@@ -690,6 +732,7 @@ export default function PortalNovostavbyPage() {
   const filterCounts = useMemo<Record<QuickFilter, number>>(
     () => ({
       all: allRecs.length,
+      broker_pick: allRecs.filter((r) => r.pinned_by_broker).length,
       liked: allRecs.filter((r) => r.feedback?.feedback_type === "liked").length,
       hide_disliked: allRecs.filter((r) => r.feedback?.feedback_type !== "disliked").length,
       undecided: allRecs.filter((r) => !r.feedback).length,
@@ -789,9 +832,13 @@ export default function PortalNovostavbyPage() {
               localStorage.setItem("portal_recs_filter", f.key);
             }}
             className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition ${
-              quickFilter === f.key
-                ? "bg-slate-800 text-white"
-                : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+              f.key === "broker_pick"
+                ? quickFilter === f.key
+                  ? "bg-violet-700 text-white"
+                  : "border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                : quickFilter === f.key
+                  ? "bg-slate-800 text-white"
+                  : "bg-slate-100 text-slate-600 hover:bg-slate-200"
             }`}
           >
             {f.label} ({filterCounts[f.key]})
@@ -907,6 +954,11 @@ export default function PortalNovostavbyPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <p className="font-semibold text-slate-800 truncate">{g.project_name}</p>
+                      {g.has_shortlisted && (
+                        <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                          ★{g.best_shortlist_order != null ? ` #${g.best_shortlist_order}` : ""} Výběr makléře
+                        </span>
+                      )}
                       {g.liked_count > 0 && (
                         <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
                           {g.liked_count}× líbí se
@@ -936,6 +988,9 @@ export default function PortalNovostavbyPage() {
                           m²
                         </span>
                       )}
+                      {g.construction_completion && parseInt(g.construction_completion.slice(0, 4)) >= 2024 && (
+                        <span className="text-slate-400">Dokončení: {g.construction_completion}</span>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -950,6 +1005,19 @@ export default function PortalNovostavbyPage() {
                 {/* Expanded units */}
                 {expanded && (
                   <div className="border-t border-slate-100">
+                    {g.units[0]?.project_url && g.units[0].project_url.startsWith("http") && (
+                      <div className="border-b border-slate-50 px-4 py-2">
+                        <a
+                          href={g.units[0].project_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-[11px] text-slate-400 transition-colors hover:text-slate-600"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          Web projektu →
+                        </a>
+                      </div>
+                    )}
                     {g.units.map((r) => (
                       <div
                         key={r.rec_id}
@@ -958,8 +1026,13 @@ export default function PortalNovostavbyPage() {
                         }`}
                       >
                         <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap gap-x-3 text-xs text-slate-700">
+                          <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
                             <span className="font-medium">{r.unit_external_id ?? `#${r.rec_id}`}</span>
+                            {r.pinned_by_broker && (
+                              <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                                ★{r.shortlist_order != null ? ` #${r.shortlist_order}` : ""} {r.shortlist_role ? SHORTLIST_ROLE_LABELS[r.shortlist_role] ?? r.shortlist_role : "Výběr"}
+                              </span>
+                            )}
                             {r.layout && <span>{formatLayout(r.layout)}</span>}
                             {r.floor_area_m2 != null && <span>{r.floor_area_m2} m²</span>}
                             {r.exterior_area_m2 != null && r.exterior_area_m2 > 0 && (
@@ -970,6 +1043,11 @@ export default function PortalNovostavbyPage() {
                             )}
                             {r.floor != null && <span>{r.floor}. p.</span>}
                           </div>
+                          {r.pinned_by_broker && r.shortlist_reason && (
+                            <p className="mt-1 text-[11px] text-violet-700 italic">
+                              {r.shortlist_reason}
+                            </p>
+                          )}
                           {r.top_strengths.length > 0 && (
                             <p className="mt-0.5 text-[10px] text-emerald-600">
                               {r.top_strengths.slice(0, 3).join(" · ")}
@@ -1030,9 +1108,21 @@ export default function PortalNovostavbyPage() {
                         : ""
                   }`}
                 >
-                  <td className="max-w-[200px] truncate px-2 py-2 font-medium text-slate-800">
-                    {r.project_name ?? "Projekt"}
-                    <span className="ml-1 text-slate-400">{r.unit_external_id ?? ""}</span>
+                  <td className="max-w-[220px] px-2 py-2 font-medium text-slate-800">
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className="truncate">{r.project_name ?? "Projekt"}</span>
+                      <span className="text-slate-400">{r.unit_external_id ?? ""}</span>
+                      {r.pinned_by_broker && (
+                        <span className="shrink-0 rounded-full bg-violet-100 px-1 py-0 text-[10px] font-semibold text-violet-700">
+                          ★{r.shortlist_order != null ? ` #${r.shortlist_order}` : ""}
+                        </span>
+                      )}
+                    </div>
+                    {r.pinned_by_broker && r.shortlist_reason && (
+                      <p className="mt-0.5 max-w-[200px] truncate text-[10px] italic text-violet-600" title={r.shortlist_reason}>
+                        {r.shortlist_reason}
+                      </p>
+                    )}
                   </td>
                   <td className="px-2 py-2 text-slate-600">{formatLayout(r.layout)}</td>
                   <td className="px-2 py-2 text-slate-600">
@@ -1089,17 +1179,29 @@ export default function PortalNovostavbyPage() {
                     ? "ring-1 ring-emerald-300"
                     : fbType === "disliked"
                       ? "opacity-60"
-                      : ""
+                      : r.pinned_by_broker
+                        ? "ring-1 ring-violet-200"
+                        : ""
                 }`}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <p className="font-semibold text-slate-800 truncate">
-                      {r.project_name ?? "Projekt"}
-                      {r.district && (
-                        <span className="ml-1.5 text-xs font-normal text-slate-500">{r.district}</span>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-slate-800 truncate">
+                        {r.project_name ?? "Projekt"}
+                        {r.district && (
+                          <span className="ml-1.5 text-xs font-normal text-slate-500">{r.district}</span>
+                        )}
+                      </p>
+                      {r.pinned_by_broker && (
+                        <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                          ★{r.shortlist_order != null ? ` #${r.shortlist_order}` : ""} {r.shortlist_role ? SHORTLIST_ROLE_LABELS[r.shortlist_role] ?? r.shortlist_role : "Výběr"}
+                        </span>
                       )}
-                    </p>
+                    </div>
+                    {r.pinned_by_broker && r.shortlist_reason && (
+                      <p className="mt-1 text-[11px] text-violet-700 italic">{r.shortlist_reason}</p>
+                    )}
                     <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-600">
                       {r.layout && <span>{formatLayout(r.layout)}</span>}
                       {r.floor_area_m2 != null && <span>{r.floor_area_m2} m²</span>}
@@ -1110,6 +1212,19 @@ export default function PortalNovostavbyPage() {
                         <span>{(r.price_czk / 1_000_000).toFixed(1)} mil. Kč</span>
                       )}
                       {r.floor != null && <span>{r.floor}. patro</span>}
+                      {r.construction_completion && parseInt(r.construction_completion.slice(0, 4)) >= 2024 && (
+                        <span className="text-slate-400">Dokončení: {r.construction_completion}</span>
+                      )}
+                      {r.project_url && r.project_url.startsWith("http") && (
+                        <a
+                          href={r.project_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-slate-400 transition-colors hover:text-slate-600"
+                        >
+                          Web →
+                        </a>
+                      )}
                     </div>
                     {r.top_strengths.length > 0 && (
                       <p className="mt-1 text-[11px] text-emerald-600">

@@ -32,6 +32,8 @@ type PinnedRec = {
   floor_area_m2?: number | null;
   price_czk?: number | null;
   score: number;
+  shortlist_order?: number | null;
+  shortlist_reason?: string | null;
   feedback?: RecommendationFeedback | null;
 };
 
@@ -123,9 +125,11 @@ export default function PresentPage() {
       .then(([client, recs, profile]) => {
         setClientName(client?.name ?? "Klient");
         setBudgetMax(profile?.budget_max ?? null);
-        const pinned: PinnedRec[] = (Array.isArray(recs) ? recs : []).filter(
-          (r: PinnedRec) => r.pinned_by_broker
-        );
+        const pinned: PinnedRec[] = (Array.isArray(recs) ? recs : [])
+          .filter((r: PinnedRec) => r.pinned_by_broker)
+          .sort((a: PinnedRec, b: PinnedRec) =>
+            (a.shortlist_order ?? 999999) - (b.shortlist_order ?? 999999) || b.score - a.score
+          );
         setPinnedRecs(pinned);
         if (pinned.length > 0 && pinned[0].unit_external_id) {
           setSelectedId(pinned[0].unit_external_id);
@@ -314,7 +318,7 @@ export default function PresentPage() {
             </p>
           ) : (
             <ul className="divide-y divide-slate-100">
-              {pinnedRecs.map((rec, recIdx) => {
+              {pinnedRecs.map((rec) => {
                 const isSelected = rec.unit_external_id === selectedId;
                 const fb = rec.feedback?.feedback_type;
                 return (
@@ -330,30 +334,6 @@ export default function PresentPage() {
                           ? "border-rose-300 hover:bg-rose-50/30"
                           : "border-transparent hover:bg-slate-50"
                       }`}>
-                      <div className="flex shrink-0 flex-col px-1">
-                        <button
-                          type="button"
-                          disabled={recIdx === 0}
-                          className="text-[10px] text-slate-300 hover:text-slate-600 disabled:opacity-20"
-                          onClick={() => setPinnedRecs((prev) => {
-                            if (recIdx <= 0) return prev;
-                            const next = [...prev];
-                            [next[recIdx - 1], next[recIdx]] = [next[recIdx], next[recIdx - 1]];
-                            return next;
-                          })}
-                        >▲</button>
-                        <button
-                          type="button"
-                          disabled={recIdx === pinnedRecs.length - 1}
-                          className="text-[10px] text-slate-300 hover:text-slate-600 disabled:opacity-20"
-                          onClick={() => setPinnedRecs((prev) => {
-                            if (recIdx >= prev.length - 1) return prev;
-                            const next = [...prev];
-                            [next[recIdx], next[recIdx + 1]] = [next[recIdx + 1], next[recIdx]];
-                            return next;
-                          })}
-                        >▼</button>
-                      </div>
                       <button
                         type="button"
                         onClick={() => rec.unit_external_id && setSelectedId(rec.unit_external_id)}
@@ -448,6 +428,14 @@ export default function PresentPage() {
                   )}
                 </div>
               </div>
+
+              {/* Shortlist reason */}
+              {selectedRec?.shortlist_reason && (
+                <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-violet-400">Proč doporučujeme</p>
+                  <p className="mt-1 text-sm text-slate-700">{selectedRec.shortlist_reason}</p>
+                </div>
+              )}
 
               {/* Reserved / sold warning */}
               {(unit.availability_status === "reserved" || unit.availability_status === "sold") && (

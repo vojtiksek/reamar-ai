@@ -58,6 +58,8 @@ type Thresholds = {
   default_visible_limit: number;
   max_strong_picks?: number;
   max_review_picks?: number;
+  hide_stale_reservations: number;  // 1 = hide reserved > 60 days, 0 = keep
+  not_seen_max_days: number;        // include not_seen units last seen within N days
 };
 
 type StudioConfig = {
@@ -122,6 +124,14 @@ const THRESHOLD_FIELDS: {
     min: 0,
     max: 500,
     step: 5,
+  },
+  {
+    key: "not_seen_max_days",
+    label: "Not seen — max. dní od posledního výskytu",
+    help: "Jednotky se statusem not_seen, viděné naposledy před méně než N dny, vstoupí do scoringu. 0 = not_seen vyloučit.",
+    min: 0,
+    max: 730,
+    step: 30,
   },
 ];
 
@@ -538,6 +548,8 @@ export default function ScoringStudioPage() {
     review_pick_min_score: 55,
     hide_below_score: 0,
     default_visible_limit: 50,
+    hide_stale_reservations: 1,
+    not_seen_max_days: 180,
   });
   const [weights, setWeights] = useState<Weights>({});
 
@@ -1373,6 +1385,30 @@ export default function ScoringStudioPage() {
             })}
           </div>
 
+          {/* Stale reservation toggle */}
+          <ReamarCard className="p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Skrýt staré rezervace (is_stale_reservation)
+                </h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  Jednotky rezervované déle než 60 dní (dle BuiltMind API) se budou chovat jako prodané — nebudou vstupovat do scoringu.
+                  V databázi je aktuálně ~827 takových jednotek.
+                </p>
+              </div>
+              <Toggle
+                checked={!!thresholds.hide_stale_reservations}
+                onChange={(v) =>
+                  setThresholds((prev) => ({
+                    ...prev,
+                    hide_stale_reservations: v ? 1 : 0,
+                  }))
+                }
+              />
+            </div>
+          </ReamarCard>
+
           {/* Visual summary */}
           <ReamarCard className="p-4">
             <h3 className="text-sm font-semibold text-slate-900 mb-2">
@@ -1412,6 +1448,32 @@ export default function ScoringStudioPage() {
                   {thresholds.default_visible_limit || "neomezeno"}
                 </strong>{" "}
                 doporučení celkem
+              </li>
+              <li className="pt-1 border-t border-slate-100 mt-1">
+                {thresholds.hide_stale_reservations ? (
+                  <span>
+                    Staré rezervace (<code className="text-xs">is_stale_reservation=true</code>) jsou{" "}
+                    <span className="text-rose-600 font-medium">skryté</span> ze scoringu
+                  </span>
+                ) : (
+                  <span>
+                    Staré rezervace jsou zahrnuté ve scoringu (jako rezervované)
+                  </span>
+                )}
+              </li>
+              <li>
+                {(thresholds.not_seen_max_days ?? 0) > 0 ? (
+                  <span>
+                    Jednotky <code className="text-xs">not_seen</code>, viděné naposledy před méně než{" "}
+                    <strong>{thresholds.not_seen_max_days}</strong> dny, jsou{" "}
+                    <span className="text-emerald-700 font-medium">zahrnuty</span> ve scoringu
+                  </span>
+                ) : (
+                  <span>
+                    Jednotky <code className="text-xs">not_seen</code> jsou ze scoringu{" "}
+                    <span className="text-rose-600 font-medium">vyloučeny</span>
+                  </span>
+                )}
               </li>
             </ul>
           </ReamarCard>

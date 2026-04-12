@@ -28,6 +28,27 @@ export type ClientProfile = {
   scoring_weights_json?: Record<string, number> | null;
 };
 
+export type RecommendationFunnelStep = {
+  key:
+    | "budget"
+    | "area"
+    | "property_type"
+    | "layout"
+    | "location"
+    | "other"
+    | "scoring"
+    | "visible_limit";
+  label: string;
+  removed: number;
+  remaining: number;
+};
+
+export type RecommendationFunnel = {
+  total: number;
+  steps: RecommendationFunnelStep[];
+  final: number;
+};
+
 export type RecommendationFeedbackType = "liked" | "saved" | "disliked";
 export type RecommendationDislikeReason =
   | "price"
@@ -89,8 +110,12 @@ export type RecommendationItem = {
   top_strengths?: string[];
   top_compromises?: string[];
   broker_note?: string | null;
+  shortlist_role?: string | null;
+  shortlist_reason?: string | null;
+  shortlist_order?: number | null;
   reason?: Record<string, unknown> | null;
   feedback?: RecommendationFeedback | null;
+  construction_completion?: string | null;
 };
 
 export type MarketFitBlocker = {

@@ -3,7 +3,13 @@
 import clsx from "clsx";
 import type { Dispatch, SetStateAction } from "react";
 
-import type { ClientProfile, Priority, WizardExtras } from "@/lib/caseTypes";
+import type {
+  ClientProfile,
+  Priority,
+  RecommendationFunnel,
+  WizardExtras,
+} from "@/lib/caseTypes";
+import { FunnelCard } from "@/components/case/FunnelCard";
 import { formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
 import {
   WIZARD_STEPS,
@@ -76,13 +82,16 @@ export type QuickEditProps = {
   locationPolygons: { lat: number; lng: number }[][];
   projectsInsidePolygon: number;
   recs: { length: number };
+  recsFunnel?: RecommendationFunnel | null;
   autoSaveStatus: string;
   recomputing: boolean;
   handleRecompute: () => void;
   mustHaveSummary: string[];
   preferSummary: string[];
-  // For "edit in wizard" links
-  onSwitchToWizard: (step: number) => void;
+  // Opens the full-screen wizard. The `step` argument is kept for backwards
+  // compatibility with internal callers but is ignored — the full-screen wizard
+  // manages its own step state and does not support deep-linking yet.
+  onSwitchToWizard: (step?: number) => void;
 };
 
 // ── Helpers ──
@@ -136,6 +145,7 @@ export function QuickEdit({
   LAYOUT_OPTIONS,
   locationPolygons, projectsInsidePolygon,
   recs,
+  recsFunnel,
   autoSaveStatus, recomputing, handleRecompute,
   mustHaveSummary, preferSummary,
   onSwitchToWizard,
@@ -590,6 +600,9 @@ export function QuickEdit({
           <p className="mt-1 text-base font-bold text-slate-900">{recs.length} jednotek</p>
         </div>
       )}
+
+      {/* Filter funnel (Phase 7b) */}
+      {recsFunnel && <FunnelCard funnel={recsFunnel} />}
     </div>
   );
 

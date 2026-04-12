@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import clsx from "clsx";
 
 import { useCaseData } from "@/hooks/useCaseData";
@@ -288,22 +288,18 @@ export default function BriefPage() {
 
   const [wizardStep, setWizardStep] = useState<number>(1);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [viewMode, setViewMode] = useState<"quick" | "wizard">("wizard");
   const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
   const [nextCommuteLabel, setNextCommuteLabel] = useState<string>("");
 
-  /* ── localStorage: view mode persistence ── */
-
+  // Legacy: clear any previously persisted view-mode so old "wizard" sessions
+  // don't force users back into the removed inline wizard.
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem("reamar-brief-view-mode");
-      if (stored === "quick" || stored === "wizard") setViewMode(stored);
-    } catch {}
+    try { localStorage.removeItem("reamar-brief-view-mode"); } catch {}
   }, []);
 
-  useEffect(() => {
-    try { localStorage.setItem("reamar-brief-view-mode", viewMode); } catch {}
-  }, [viewMode]);
+  const openFullscreenWizard = useCallback(() => {
+    window.open(`/cases/${clientId}/wizard`, "_blank");
+  }, [clientId]);
 
   /* ── Guards ── */
 
@@ -1617,7 +1613,7 @@ export default function BriefPage() {
               )}
             </div>
             <button type="button"
-              onClick={() => { setViewMode("wizard"); setWizardStep(3); }}
+              onClick={openFullscreenWizard}
               className="text-xs text-indigo-600 hover:underline">
               Upravit lokalitu / polygon →
             </button>
@@ -1764,7 +1760,7 @@ export default function BriefPage() {
           )}
 
           <button type="button"
-            onClick={() => { setViewMode("wizard"); setWizardStep(5); }}
+            onClick={openFullscreenWizard}
             className="text-xs text-indigo-600 hover:underline">
             Upravit standardy a vybavení →
           </button>
@@ -1889,10 +1885,6 @@ export default function BriefPage() {
 
   return (
     <div className="space-y-5">
-      {viewMode === "wizard" && (
-        <BriefSteps currentStep={wizardStep} setCurrentStep={setWizardStep} totalSteps={TOTAL_WIZARD_STEPS} />
-      )}
-
       <section className="w-full">
         <ReamarCard className="px-6 py-5 md:px-10 md:py-6">
           {/* Header */}
@@ -1907,21 +1899,6 @@ export default function BriefPage() {
               )}
             </div>
             <div className="flex shrink-0 items-center gap-2">
-              {/* View mode toggle */}
-              <div className="flex rounded-lg border border-slate-200 bg-slate-100 p-0.5">
-                <button type="button"
-                  onClick={() => setViewMode("quick")}
-                  className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    viewMode === "quick" ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}>
-                  Rychlý přehled
-                </button>
-                <button type="button"
-                  onClick={() => setViewMode("wizard")}
-                  className={cn("rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                    viewMode === "wizard" ? "bg-white shadow-sm text-slate-900" : "text-slate-500 hover:text-slate-700")}>
-                  Krok po kroku
-                </button>
-              </div>
               <div className="hidden items-center gap-2 md:flex">
                 {activeClient?.clientId === client.id ? (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700">
@@ -1949,74 +1926,37 @@ export default function BriefPage() {
             </div>
           </div>
 
-          {/* Content: Quick Edit or Wizard */}
-          {viewMode === "quick" ? (
-            <QuickEdit
-              profile={profile}
-              setProfile={setProfile}
-              wizardExtras={wizardExtras}
-              setWizardExtras={setWizardExtras}
-              selectedLayouts={selectedLayouts}
-              setSelectedLayouts={setSelectedLayouts}
-              LAYOUT_OPTIONS={LAYOUT_OPTIONS}
-              locationPolygons={locationPolygons}
-              projectsInsidePolygon={projectsInsidePolygon}
-              recs={recs}
-              autoSaveStatus={autoSaveStatus}
-              recomputing={recomputing}
-              handleRecompute={handleRecompute}
-              mustHaveSummary={mustHaveSummary}
-              preferSummary={preferSummary}
-              onSwitchToWizard={(step) => { setViewMode("wizard"); setWizardStep(step); }}
-            />
-          ) : (
-            <>
-              {/* Two-column layout */}
-              <div className="flex gap-6">
-                {/* Left: current step */}
-                <div className="min-w-0 flex-1 text-sm transition-opacity duration-200">
-                  {stepRenderers[wizardStep]?.() ?? null}
-                </div>
-
-                {/* Right: sticky summary rail (desktop only) */}
-                <div className="hidden w-72 shrink-0 lg:block">
-                  <div className="sticky top-16">
-                    <ReamarSubtleCard className="p-4">
-                      {summaryRail}
-                    </ReamarSubtleCard>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation */}
-              <div className="mt-8 flex items-center justify-between gap-3">
-                <ReamarButton type="button" variant="ghost" size="sm"
-                  onClick={() => setWizardStep((s) => Math.max(1, s - 1))} disabled={wizardStep === 1}>
-                  Zpět
-                </ReamarButton>
-                <div className="flex items-center gap-3">
-                  <span className={cn("text-[11px] transition-opacity duration-300",
-                    autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
-                    autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
-                    autoSaveStatus === "error" ? "text-rose-500 opacity-100" : "opacity-0")}>
-                    {autoSaveStatus === "saving" && "Ukládám…"}
-                    {autoSaveStatus === "saved" && "✓ Uloženo"}
-                    {autoSaveStatus === "error" && "Chyba ukládání"}
-                  </span>
-                  {wizardStep < TOTAL_WIZARD_STEPS ? (
-                    <ReamarButton type="button" variant="secondary" size="sm"
-                      onClick={() => handleNextStep(wizardStep, TOTAL_WIZARD_STEPS, setWizardStep)}>
-                      Další →
-                    </ReamarButton>
-                  ) : (
-                    <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
-                      {recomputing ? "Přepočítávám…" : "Přepočítat doporučení →"}
-                    </ReamarButton>
-                  )}
-                </div>
-              </div>
-            </>
-          )}
+          {/* Main editing surface — Quick Edit.
+              The legacy inline step-wizard was removed from the normal flow;
+              users open the full-screen wizard via the "Spustit wizard" button. */}
+          <QuickEdit
+            profile={profile}
+            setProfile={setProfile}
+            wizardExtras={wizardExtras}
+            setWizardExtras={setWizardExtras}
+            selectedLayouts={selectedLayouts}
+            setSelectedLayouts={setSelectedLayouts}
+            LAYOUT_OPTIONS={LAYOUT_OPTIONS}
+            locationPolygons={locationPolygons}
+            projectsInsidePolygon={projectsInsidePolygon}
+            recs={recs}
+            autoSaveStatus={autoSaveStatus}
+            recomputing={recomputing}
+            handleRecompute={handleRecompute}
+            mustHaveSummary={mustHaveSummary}
+            preferSummary={preferSummary}
+            onSwitchToWizard={openFullscreenWizard}
+          />
+          <div className="mt-4 flex items-center justify-end">
+            <span className={cn("text-[11px] transition-opacity duration-300",
+              autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
+              autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
+              autoSaveStatus === "error" ? "text-rose-500 opacity-100" : "opacity-0")}>
+              {autoSaveStatus === "saving" && "Ukládám…"}
+              {autoSaveStatus === "saved" && "✓ Uloženo"}
+              {autoSaveStatus === "error" && "Chyba ukládání"}
+            </span>
+          </div>
         </ReamarCard>
       </section>
 

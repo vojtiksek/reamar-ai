@@ -268,6 +268,29 @@ def normalize_date(value: Any) -> date | None:
     return None
 
 
+def _parse_completion_date(raw: str) -> date | None:
+    """Derive a sortable DATE from a construction_completion string.
+
+    Formats from BuiltMind API:
+      "YYYY-MM"  → first day of that month (exact hand-over month known)
+      "YYYY"     → Dec 31 of that year (conservative: latest possible within year)
+    Any year < 2000 or unrecognised format → None (legacy / bad data, leave unset).
+    """
+    s = str(raw).strip()[:7]
+    try:
+        if len(s) == 7 and s[4] == "-":          # "YYYY-MM"
+            y, m = int(s[:4]), int(s[5:7])
+            if y >= 2000:
+                return date(y, m, 1)
+        elif len(s) >= 4 and s[:4].isdigit():    # bare "YYYY"
+            y = int(s[:4])
+            if y >= 2000:
+                return date(y, 12, 31)
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
 def apply_unit_data_mapped(
     unit: Unit,
     unit_data: dict[str, Any],
@@ -355,15 +378,9 @@ def apply_project_data(
     raw_cc = unit_data.get("construction_completion")
     if not only_if_present or raw_cc is not None:
         project.construction_completion = normalize_str(raw_cc, 20)
-        # Also populate completion_date (Date) from "YYYY-MM" string so existing
-        # date-based filters and scoring continue to work unchanged.
+        # Derive a sortable completion_date from the raw string so scoring/filtering work.
         if raw_cc:
-            try:
-                y, m = str(raw_cc).strip()[:7].split("-")
-                from datetime import date as _date
-                project.completion_date = _date(int(y), int(m), 1)
-            except (ValueError, TypeError, AttributeError):
-                pass
+            project.completion_date = _parse_completion_date(str(raw_cc))
         elif not only_if_present:
             project.completion_date = None
 
@@ -729,8 +746,12 @@ def import_units(
     source: str | None,
     dry_run: bool = False,
     chunk_size: int = 2000,
-) -> None:
-    """Main import function. Uses one session and one transaction (commit at end unless dry_run)."""
+) -> dict:
+    """Main import function. Uses one session and one transaction (commit at end unless dry_run).
+
+    Returns a dict with keys: projects_created, projects_reused, units_created,
+    units_updated, history_inserted, elapsed_seconds.
+    """
     print(f"Loading JSON from: {json_path}")
     load_start = time.perf_counter()
     units_data = load_json_units(json_path)
@@ -1065,6 +1086,15 @@ def import_units(
     if dry_run:
         print("(dry-run: no changes written)")
     print(f"Total time: {total_elapsed:.2f}s | {rate:.1f} units/s")
+
+    return {
+        "projects_created": projects_created,
+        "projects_reused": projects_reused,
+        "units_created": units_created,
+        "units_updated": units_updated,
+        "history_inserted": history_inserted,
+        "elapsed_seconds": round(total_elapsed, 1),
+    }
 
     if changes_by_field and units_updated > 0:
         print("\n--- Changes by field (updated units) ---")

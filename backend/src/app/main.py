@@ -91,7 +91,7 @@ from .walkability_sources import (
 
 app = FastAPI(title="Reamar AI Backend")
 
-# CORS for local Next.js frontend (localhost:3000 / 3001)
+# CORS — allow all local and Tailscale origins (internal tool, no public exposure)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
@@ -103,6 +103,10 @@ app.add_middleware(
         "http://127.0.0.1:3002",
         "http://192.168.0.96:3002",
         "http://192.168.1.204:3001",
+        # Tailscale (Mac mini)
+        "http://100.118.81.100:3000",
+        "http://100.118.81.100:3001",
+        "http://100.118.81.100:3002",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -367,7 +371,11 @@ class ClientRecommendationItem(BaseModel):
     distance_to_bus_stop_m: float | None = None
     reason: dict[str, Any] | None = None
     broker_note: str | None = None
+    shortlist_role: str | None = None
+    shortlist_reason: str | None = None
+    shortlist_order: int | None = None
     feedback: "RecommendationFeedbackOut | None" = None
+    construction_completion: str | None = None
 
 
 ALLOWED_FEEDBACK_TYPES = {"liked", "saved", "disliked"}
@@ -525,6 +533,41 @@ def _point_in_polygon(lat: float, lon: float, polygon: list[tuple[float, float]]
         if ((y1 > y) != (y2 > y)) and (x < (x2 - x1) * (y - y1) / (y2 - y1 + 1e-9) + x1):
             inside = not inside
     return inside
+
+
+def _build_market_filter(not_seen_max_days: int = 180, hide_stale: bool = True):
+    """Return a SQLAlchemy condition for "on market" units.
+
+    Includes:
+    - available / reserved  (minus stale reservations when hide_stale=True)
+    - not_seen units whose last_seen is within not_seen_max_days (0 = exclude all)
+    """
+    # Base: available or reserved
+    base = func.lower(Unit.availability_status).in_(["available", "reserved"])
+    if hide_stale:
+        base = and_(
+            base,
+            or_(Unit.is_stale_reservation.is_(None), Unit.is_stale_reservation.is_(False)),
+        )
+
+    if not_seen_max_days > 0:
+        cutoff = date.today() - timedelta(days=not_seen_max_days)
+        not_seen_cond = and_(
+            func.lower(Unit.availability_status) == "not_seen",
+            Unit.last_seen.isnot(None),
+            Unit.last_seen >= cutoff,
+        )
+        return or_(base, not_seen_cond)
+
+    return base
+
+
+def _market_filter_from_config(thresholds: dict):
+    """Build market filter from a resolved thresholds dict."""
+    return _build_market_filter(
+        not_seen_max_days=int(thresholds.get("not_seen_max_days", 180)),
+        hide_stale=bool(thresholds.get("hide_stale_reservations", 1)),
+    )
 
 
 def _parse_polygon_geojson(polygon_geojson: str | None) -> list[tuple[float, float]] | None:
@@ -1644,6 +1687,100 @@ def _compute_unit_match_score(
     }
 
 
+def _build_recompute_funnel(
+    *,
+    funnel_total: int,
+    funnel_after_budget: int,
+    funnel_after_area: int,
+    funnel_after_type: int,
+    has_budget_filter: bool,
+    has_area_filter: bool,
+    has_type_filter: bool,
+    has_layout_filter: bool,
+    dropped_layout: int,
+    dropped_location: int,
+    dropped_other: int,
+    scored_before_threshold: int,
+    scored_after_threshold: int,
+    dropped_score: int,
+    dropped_limit: int,
+    final_count: int,
+) -> dict[str, Any]:
+    """Build the filter-funnel diagnostics response (Phase 7b).
+
+    Pure function: takes already-computed counts and returns a stable JSON
+    structure. Kept separate from the recompute endpoint so it can be unit
+    tested without a running database.
+
+    Steps are emitted only when the corresponding filter was actually applied
+    (for SQL-level filters and layout) or when it actually dropped units
+    (for the per-unit eligibility categories and scoring thresholds).
+    """
+    steps: list[dict[str, Any]] = []
+    if has_budget_filter:
+        steps.append({
+            "key": "budget",
+            "label": "Rozpočet",
+            "removed": max(0, funnel_total - funnel_after_budget),
+            "remaining": funnel_after_budget,
+        })
+    if has_area_filter:
+        steps.append({
+            "key": "area",
+            "label": "Plocha",
+            "removed": max(0, funnel_after_budget - funnel_after_area),
+            "remaining": funnel_after_area,
+        })
+    if has_type_filter:
+        steps.append({
+            "key": "property_type",
+            "label": "Typ nemovitosti",
+            "removed": max(0, funnel_after_area - funnel_after_type),
+            "remaining": funnel_after_type,
+        })
+    remaining_after_layout = max(0, funnel_after_type - dropped_layout)
+    if has_layout_filter:
+        steps.append({
+            "key": "layout",
+            "label": "Dispozice",
+            "removed": dropped_layout,
+            "remaining": remaining_after_layout,
+        })
+    if dropped_location > 0:
+        steps.append({
+            "key": "location",
+            "label": "Lokalita",
+            "removed": dropped_location,
+            "remaining": max(0, remaining_after_layout - dropped_location),
+        })
+    if dropped_other > 0:
+        steps.append({
+            "key": "other",
+            "label": "Ostatní požadavky",
+            "removed": dropped_other,
+            "remaining": scored_before_threshold,
+        })
+    if dropped_score > 0:
+        steps.append({
+            "key": "scoring",
+            "label": "Skóre pod prahem",
+            "removed": dropped_score,
+            "remaining": scored_after_threshold,
+        })
+    if dropped_limit > 0:
+        steps.append({
+            "key": "visible_limit",
+            "label": "Limit zobrazení",
+            "removed": dropped_limit,
+            "remaining": final_count,
+        })
+    return {
+        "total": funnel_total,
+        "steps": steps,
+        "final": final_count,
+    }
+
+
 @app.post("/clients/{client_id}/recommendations/recompute")
 def recompute_client_recommendations(
     client_id: int,
@@ -1655,12 +1792,21 @@ def recompute_client_recommendations(
         select(ClientProfile).where(ClientProfile.client_id == client.id)
     ).scalars().first()
 
-    # Base query: only active units (available + reserved) with price and floor area
-    q = (
-        select(Unit, Project)
-        .join(Project, Unit.project_id == Project.id)
-        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
-    )
+    # Load scoring config early — needed for market filter thresholds.
+    global_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    _thresholds_early = resolve_thresholds(global_cfg.thresholds_json if global_cfg else None)
+
+    # Build filter conditions separately so we can compute stepwise funnel counts
+    # without duplicating the filtering logic.
+    base_conditions: list = [
+        _market_filter_from_config(_thresholds_early)
+    ]
+    budget_conditions: list = []
+    area_conditions: list = []
+    type_conditions: list = []
+
     if profile:
         # Apply tolerance from wizard to widen the SQL filter window.
         # Scoring still penalizes units beyond the ideal; this just ensures
@@ -1670,21 +1816,48 @@ def recompute_client_recommendations(
         area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
 
         if profile.budget_min is not None:
-            q = q.where(Unit.price_czk >= profile.budget_min)
+            budget_conditions.append(Unit.price_czk >= profile.budget_min)
         if profile.budget_max is not None:
             effective_budget_max = int(profile.budget_max * (1 + price_tol_pct / 100))
-            q = q.where(Unit.price_czk <= effective_budget_max)
+            budget_conditions.append(Unit.price_czk <= effective_budget_max)
         if profile.area_min is not None:
             effective_area_min = profile.area_min * (1 - area_tol_pct / 100)
-            q = q.where(Unit.floor_area_m2 >= effective_area_min)
+            area_conditions.append(Unit.floor_area_m2 >= effective_area_min)
         if profile.area_max is not None:
-            q = q.where(Unit.floor_area_m2 <= profile.area_max)
+            area_conditions.append(Unit.floor_area_m2 <= profile.area_max)
         # Property type hard filter
         prop_type = profile.property_type
         if prop_type == "flat":
-            q = q.where(func.lower(Unit.category).notin_(["house", "dům", "rodinný dům", "řadový dům"]))
+            type_conditions.append(
+                func.lower(Unit.category).notin_(["house", "dům", "rodinný dům", "řadový dům"])
+            )
         elif prop_type == "house":
-            q = q.where(func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"]))
+            type_conditions.append(
+                func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"])
+            )
+
+    # -- Funnel step 1: cumulative COUNTs for SQL-level filters --
+    # Cheap index-backed COUNT queries. Used only for the diagnostics response.
+    def _funnel_count(conds: list) -> int:
+        if not conds:
+            return 0
+        return int(
+            db.execute(select(func.count()).select_from(Unit).where(and_(*conds))).scalar_one()
+            or 0
+        )
+
+    funnel_total = _funnel_count(base_conditions)
+    funnel_after_budget = _funnel_count(base_conditions + budget_conditions)
+    funnel_after_area = _funnel_count(base_conditions + budget_conditions + area_conditions)
+    funnel_after_type = _funnel_count(
+        base_conditions + budget_conditions + area_conditions + type_conditions
+    )
+
+    q = (
+        select(Unit, Project)
+        .join(Project, Unit.project_id == Project.id)
+        .where(and_(*(base_conditions + budget_conditions + area_conditions + type_conditions)))
+    )
 
     rows = db.execute(q.order_by(Unit.id)).all()
 
@@ -1704,9 +1877,7 @@ def recompute_client_recommendations(
         pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
 
     # Resolve scoring weights: global (DB) → per-client override → normalize
-    global_cfg = db.execute(
-        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
-    ).scalars().first()
+    # (global_cfg already loaded above for market filter thresholds)
     global_w = global_cfg.config_json if global_cfg else None
     client_w = profile.scoring_weights_json if profile else None
     weights = resolve_weights(global_w, client_w)
@@ -1720,14 +1891,27 @@ def recompute_client_recommendations(
     strong_min = float(thresholds["strong_pick_min_score"])
     visible_limit = int(thresholds["default_visible_limit"]) or 100
 
+    # -- Funnel step 2: classify per-unit drops (layout / location / other) --
+    _LOCATION_REASON_KEYS = (
+        "outside_polygon",
+        "polygon_location",
+        "outside_admin_area",
+        "admin_area",
+    )
+    funnel_dropped_layout = 0
+    funnel_dropped_location = 0
+    funnel_dropped_other = 0
+
     scored: list[tuple[float, Unit, Project, dict[str, float]]] = []
     for unit, project in rows:
         # Optional hard filter by layout: keep only units whose bucket matches profile preferences.
         if pref_layout_buckets:
             if unit.layout is None:
+                funnel_dropped_layout += 1
                 continue
             unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
             if unit_bucket not in pref_layout_buckets:
+                funnel_dropped_layout += 1
                 continue
         scoring_config = {
                 "groups": global_cfg.groups_json if global_cfg else None,
@@ -1737,7 +1921,18 @@ def recompute_client_recommendations(
         _agg_proxy = type("_AggProxy", (), {"derived_total_floors": _dtf_map.get(project.id)})()
         result = compute_full_score(unit, project, profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w, aggregates=_agg_proxy)
         score = result["score"]
+        if result.get("eligibility") == "fail":
+            # Classify the hard-filter failure for funnel diagnostics
+            _reasons = result.get("eligibility_reasons") or []
+            _first = str(_reasons[0]) if _reasons else ""
+            if any(k in _first for k in _LOCATION_REASON_KEYS):
+                funnel_dropped_location += 1
+            else:
+                funnel_dropped_other += 1
+            continue
         if score <= 0:
+            # Non-fail eligibility but zero score — rare edge case
+            funnel_dropped_other += 1
             continue
         scored.append((score, unit, project, result))
 
@@ -1758,9 +1953,12 @@ def recompute_client_recommendations(
                 db.add(match)
 
     scored.sort(key=lambda t: t[0], reverse=True)
+    _scored_before_threshold = len(scored)
     # Apply hide_below_score: units below threshold are not stored as recommendations
     scored = [(s, u, p, r) for s, u, p, r in scored if s >= hide_below]
+    funnel_dropped_score = _scored_before_threshold - len(scored)
     top = scored[:visible_limit]
+    funnel_dropped_limit = max(0, len(scored) - len(top))
 
     # Preserve feedback from existing recs before deleting them
     old_recs = db.execute(
@@ -1863,11 +2061,31 @@ def recompute_client_recommendations(
 
     db.commit()
 
+    funnel = _build_recompute_funnel(
+        funnel_total=funnel_total,
+        funnel_after_budget=funnel_after_budget,
+        funnel_after_area=funnel_after_area,
+        funnel_after_type=funnel_after_type,
+        has_budget_filter=bool(budget_conditions),
+        has_area_filter=bool(area_conditions),
+        has_type_filter=bool(type_conditions),
+        has_layout_filter=bool(pref_layout_buckets),
+        dropped_layout=funnel_dropped_layout,
+        dropped_location=funnel_dropped_location,
+        dropped_other=funnel_dropped_other,
+        scored_before_threshold=_scored_before_threshold,
+        scored_after_threshold=len(scored),
+        dropped_score=funnel_dropped_score,
+        dropped_limit=funnel_dropped_limit,
+        final_count=len(top),
+    )
+
     return {
         "client_id": client.id,
         "total_candidates": len(rows),
         "created": len(top),
         "pinned_failed_eligibility": unpinned_count,
+        "funnel": funnel,
     }
 
 
@@ -1885,11 +2103,15 @@ def market_fit_analysis(
         select(ClientProfile).where(ClientProfile.client_id == client.id)
     ).scalars().first()
 
-    # Base set: only active units (available + reserved) for this broker's market
+    # Base set: on-market units (respects stale/not_seen thresholds from config)
+    _mf_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    _mf_thresholds = resolve_thresholds(_mf_cfg.thresholds_json if _mf_cfg else None)
     q = (
         select(Unit, Project)
         .join(Project, Unit.project_id == Project.id)
-        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+        .where(_market_filter_from_config(_mf_thresholds))
     )
     rows_all = db.execute(q.limit(5000)).all()
 
@@ -2175,10 +2397,14 @@ def market_simulate(
     if not profile:
         return {"matching_units": 0}
 
+    _ms_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    _ms_thresholds = resolve_thresholds(_ms_cfg.thresholds_json if _ms_cfg else None)
     q = (
         select(Unit, Project)
         .join(Project, Unit.project_id == Project.id)
-        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+        .where(_market_filter_from_config(_ms_thresholds))
     )
     rows = db.execute(q.order_by(Unit.id).limit(1000)).all()
 
@@ -2245,10 +2471,14 @@ def area_market_analysis(
 
     polygons = _parse_polygon_or_multipolygon_geojson(profile.polygon_geojson)
 
+    _poly_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    _poly_thresholds = resolve_thresholds(_poly_cfg.thresholds_json if _poly_cfg else None)
     q = (
         select(Unit, Project)
         .join(Project, Unit.project_id == Project.id)
-        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+        .where(_market_filter_from_config(_poly_thresholds))
     )
 
     rows_raw: list[tuple[Unit, Project]] = db.execute(q.limit(5000)).all()
@@ -2437,12 +2667,16 @@ def list_client_recommendations(
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
                 reason=reason,
                 broker_note=rec.broker_note,
+                shortlist_role=rec.shortlist_role,
+                shortlist_reason=rec.shortlist_reason,
+                shortlist_order=rec.shortlist_order,
                 feedback=RecommendationFeedbackOut(
                     feedback_type=rec.feedback.feedback_type,
                     dislike_reason=rec.feedback.dislike_reason,
                     note=rec.feedback.note,
                     updated_at=rec.feedback.updated_at,
                 ) if rec.feedback else None,
+                construction_completion=project.construction_completion,
             )
         )
     return items
@@ -2654,6 +2888,50 @@ def update_recommendation_note(
     db.add(rec)
     db.commit()
     return {"broker_note": rec.broker_note}
+
+
+ALLOWED_SHORTLIST_ROLES = {"top_pick", "alternative", "fallback", "wild_card"}
+
+
+class ShortlistMetaBody(BaseModel):
+    shortlist_role: str | None = None
+    shortlist_reason: str | None = None
+    shortlist_order: int | None = None
+
+
+@app.patch("/clients/{client_id}/recommendations/{rec_id}/shortlist", status_code=200)
+def update_shortlist_meta(
+    client_id: int,
+    rec_id: int,
+    body: ShortlistMetaBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Persist shortlist curation metadata: role, reason text, and display order.
+
+    Only updates fields that are explicitly present in the request body.
+    Passing null clears the field.
+    """
+    _get_client_for_broker(db, client_id, broker)
+    rec = db.get(ClientRecommendation, rec_id)
+    if not rec or rec.client_id != client_id:
+        raise HTTPException(status_code=404, detail="Recommendation not found")
+    if body.shortlist_role is not None and body.shortlist_role not in ALLOWED_SHORTLIST_ROLES:
+        raise HTTPException(status_code=422, detail=f"Invalid shortlist_role: {body.shortlist_role}")
+    # Patch only supplied fields; explicit None clears the field.
+    if "shortlist_role" in body.model_fields_set or body.shortlist_role is not None:
+        rec.shortlist_role = body.shortlist_role
+    if "shortlist_reason" in body.model_fields_set or body.shortlist_reason is not None:
+        rec.shortlist_reason = body.shortlist_reason
+    if "shortlist_order" in body.model_fields_set or body.shortlist_order is not None:
+        rec.shortlist_order = body.shortlist_order
+    db.add(rec)
+    db.commit()
+    return {
+        "shortlist_role": rec.shortlist_role,
+        "shortlist_reason": rec.shortlist_reason,
+        "shortlist_order": rec.shortlist_order,
+    }
 
 
 @app.delete("/clients/{client_id}/recommendations/{rec_id}", status_code=204)
@@ -2970,14 +3248,20 @@ def analytics_clients_without_units(
     if not clients:
         return []
 
+    _bulk_cfg = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    _bulk_thresholds = resolve_thresholds(_bulk_cfg.thresholds_json if _bulk_cfg else None)
+    _bulk_market_filter = _market_filter_from_config(_bulk_thresholds)
+
     results: list[ClientWithoutInventoryItem] = []
 
     for client, profile in clients:
-        # Base query: only active units (available + reserved) with project join for polygon/location
+        # Base query: on-market units (respects stale/not_seen thresholds from config)
         q = (
             select(Unit, Project)
             .join(Project, Unit.project_id == Project.id)
-            .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+            .where(_bulk_market_filter)
         )
 
         # Budget + area filters (with wizard tolerance)
@@ -6366,6 +6650,48 @@ def admin_recompute_derived_floors(db: DbSession) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# BuiltMind API import
+# ---------------------------------------------------------------------------
+
+@app.post("/admin/imports/builtmind/run")
+def run_builtmind_import() -> dict[str, Any]:
+    """Fetch latest data from BuiltMind API and run full import into DB.
+
+    Reads BUILTMIND_API_KEY from environment. Returns import stats on success.
+    This can take 1–2 minutes — called from the admin UI action menu.
+    """
+    import tempfile
+    import json as _json
+    from .fetch_builtmind import fetch_from_api
+    from .import_units import import_units as _import_units
+
+    api_key = os.environ.get("BUILTMIND_API_KEY", "").strip()
+    if not api_key:
+        raise HTTPException(status_code=500, detail="BUILTMIND_API_KEY not set in environment")
+
+    try:
+        units = fetch_from_api(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"BuiltMind API fetch failed: {exc}") from exc
+
+    # Save to temp file (import_units expects a Path)
+    from pathlib import Path as _Path
+    fd, tmp_path_str = tempfile.mkstemp(suffix=".json", prefix="builtmind_")
+    tmp_path = _Path(tmp_path_str)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            _json.dump(units, f, ensure_ascii=False)
+        stats = _import_units(tmp_path, source="api")
+    finally:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    return {"ok": True, **stats}
+
+
+# ---------------------------------------------------------------------------
 # Scoring weights — global + per-client
 # ---------------------------------------------------------------------------
 
@@ -6576,11 +6902,12 @@ def set_scoring_thresholds(body: dict[str, Any], db: DbSession) -> dict[str, Any
     row = db.execute(
         select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
     ).scalars().first()
-    # Validate: only accept known keys, numeric values
+    # Validate: only accept known keys, preserve int type for integer-valued keys
+    _int_keys = {"not_seen_max_days", "hide_stale_reservations"}
     clean: dict[str, int | float] = {}
     for k in DEFAULT_THRESHOLDS:
         if k in body and body[k] is not None:
-            clean[k] = float(body[k])
+            clean[k] = int(body[k]) if k in _int_keys else float(body[k])
     if row:
         row.thresholds_json = clean
     else:
@@ -6685,7 +7012,7 @@ def preview_scoring_studio(payload: dict[str, Any], db: DbSession) -> dict[str, 
     q = (
         select(Unit, Project)
         .join(Project, Unit.project_id == Project.id)
-        .where(func.lower(Unit.availability_status).in_(["available", "reserved"]))
+        .where(_market_filter_from_config(draft_thresholds))
     )
     if profile:
         wiz_budget = ((profile.filter_json or {}).get("wizard", {}).get("budget", {}))
@@ -7409,24 +7736,20 @@ def create_portal_invite(
         raise HTTPException(status_code=404, detail="Client not found")
     if not client.email:
         raise HTTPException(status_code=400, detail="Client has no email address")
+
+    import secrets
+    from datetime import timezone as _tz
+    from .settings import settings
+
     # Invalidate any existing unused magic links for this client
-    db.execute(
-        select(ClientMagicLink).where(
-            ClientMagicLink.client_id == client.id,
-            ClientMagicLink.used_at.is_(None),
-        )
-    )
     for old in db.execute(
         select(ClientMagicLink).where(
             ClientMagicLink.client_id == client.id,
             ClientMagicLink.used_at.is_(None),
         )
     ).scalars().all():
-        from datetime import timezone as _tz
         old.used_at = datetime.now(_tz.utc)
 
-    import secrets
-    from datetime import timezone as _tz
     token = secrets.token_urlsafe(32)
     expires = datetime.now(_tz.utc) + timedelta(hours=24)
     link = ClientMagicLink(
@@ -7435,8 +7758,7 @@ def create_portal_invite(
     db.add(link)
     db.commit()
 
-    frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3001")
-    magic_url = f"{frontend_url}/portal/login?token={token}"
+    magic_url = f"{settings.frontend_url.rstrip('/')}/portal/login?token={token}"
     return PortalInviteResponse(magic_link_url=magic_url, token=token, expires_at=expires)
 
 
@@ -7851,6 +8173,14 @@ class PortalRecommendationItem(BaseModel):
     distance_to_tram_tracks_m: float | None = None
     distance_to_railway_m: float | None = None
     feedback: RecommendationFeedbackOut | None = None
+    # Broker curation metadata
+    pinned_by_broker: bool = False
+    shortlist_order: int | None = None
+    shortlist_reason: str | None = None
+    shortlist_role: str | None = None
+    # Project metadata for display
+    construction_completion: str | None = None
+    project_url: str | None = None
 
 
 def _check_recuperation(project: Project) -> bool:
@@ -7887,7 +8217,10 @@ def portal_list_recommendations(
             ClientRecommendation.client_id == client.id,
             ClientRecommendation.hidden_by_broker.is_(False),
         )
-        .order_by(ClientRecommendation.score.desc())
+        .order_by(
+            ClientRecommendation.shortlist_order.asc().nulls_last(),
+            ClientRecommendation.score.desc(),
+        )
     ).all()
     items: list[PortalRecommendationItem] = []
     for rec, unit, project in recs:
@@ -7944,6 +8277,12 @@ def portal_list_recommendations(
                     note=rec.feedback.note,
                     updated_at=rec.feedback.updated_at,
                 ) if rec.feedback else None,
+                pinned_by_broker=rec.pinned_by_broker,
+                shortlist_order=rec.shortlist_order,
+                shortlist_reason=rec.shortlist_reason,
+                shortlist_role=rec.shortlist_role,
+                construction_completion=project.construction_completion,
+                project_url=project.project_url,
             )
         )
     return items
