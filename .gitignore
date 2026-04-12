@@ -46,6 +46,9 @@ backend/*.csv
 # Large data
 backend/data/*.geojson
 
+# Scraped raw HTML + discovery reports (debug output from app.scrape_units)
+backend/data/scrape/
+
 # Screenshots / temp images in root
 *.png
 screenshots/

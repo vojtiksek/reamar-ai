@@ -608,6 +608,65 @@ class UnitApiPending(Base):
     unit: Mapped["Unit"] = relationship("Unit", back_populates="api_pending")
 
 
+class UnitScrapeEnrichment(Base):
+    """Parsed unit-card enrichment (milestone 3 of the scraping pipeline).
+
+    One row per Unit. Stores the full parsed JSON from parse_unit_html
+    verbatim, plus a small set of extracted queryable columns.
+    Matched to units via unit_url (= Unit.url). Upserted in place —
+    history is captured by first_parsed_at / last_parsed_at / parse_run_count.
+    """
+    __tablename__ = "unit_scrape_enrichment"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    unit_id: Mapped[int] = mapped_column(
+        ForeignKey("units.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    unit_url: Mapped[str] = mapped_column(String(1024), nullable=False, index=True)
+
+    # Scrape / parse status + audit
+    scrape_status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    fetch_method: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    fetch_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    html_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    parse_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    first_parsed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    last_parsed_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    parse_run_count: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        server_default=text("1"),
+    )
+
+    # Full parsed payload (verbatim ParsedUnit.to_dict())
+    parsed_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+    # Extracted, queryable fields
+    scraped_layout: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    scraped_total_area_m2: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 1), nullable=True
+    )
+    has_pantry: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    has_wardrobe: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    has_cellar: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    outdoor_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    outdoor_area_m2: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 1), nullable=True
+    )
+
+
 class ProjectOverride(Base):
     __tablename__ = "project_overrides"
     __table_args__ = (
