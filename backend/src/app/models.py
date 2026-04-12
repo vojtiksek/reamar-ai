@@ -413,6 +413,16 @@ class ClientProfile(Base):
     scoring_weights_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     broker_weight_overrides_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
+    # Client Mode (Phase 1 foundation) — wizard-derived snapshot + editable
+    # working filters + metadata about which filters were manually modified.
+    base_profile_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    working_filters_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    modified_keys_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    client_mode_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

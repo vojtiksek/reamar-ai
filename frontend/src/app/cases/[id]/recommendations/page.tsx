@@ -18,6 +18,7 @@ import type {
   RecommendationFeedbackType,
   RecommendationItem,
 } from "@/lib/caseTypes";
+import type { WorkingFilters } from "@/lib/clientMode";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -1012,6 +1013,171 @@ function QuickFilterBar({
 }
 
 /* ────────────────────────────────────────────────────────── */
+/*  Working filters bar (Client Mode Phase 2)                */
+/* ────────────────────────────────────────────────────────── */
+
+const WORKING_LAYOUT_OPTIONS = ["1kk", "1.5kk", "2kk", "3kk", "4kk"] as const;
+const WORKING_PROPERTY_TYPES: { value: string; label: string }[] = [
+  { value: "any", label: "Jakýkoliv" },
+  { value: "flat", label: "Byt" },
+  { value: "house", label: "Dům" },
+];
+
+function parseNumberOrNull(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const n = Number(trimmed.replace(/\s+/g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function ModifiedBadge() {
+  return (
+    <span className="ml-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800">
+      upraveno
+    </span>
+  );
+}
+
+function WorkingFiltersBar({
+  workingFilters,
+  modifiedKeys,
+  onChange,
+  onReset,
+  onApply,
+  recomputing,
+  saving,
+}: {
+  workingFilters: WorkingFilters;
+  modifiedKeys: string[];
+  onChange: <K extends keyof WorkingFilters>(key: K, value: WorkingFilters[K]) => void;
+  onReset: () => void;
+  onApply: () => void;
+  recomputing: boolean;
+  saving: boolean;
+}) {
+  const isModified = (key: string) => modifiedKeys.includes(key);
+  const currentPropertyType =
+    workingFilters.propertyTypes && workingFilters.propertyTypes.length === 1
+      ? workingFilters.propertyTypes[0]
+      : "any";
+  const currentLayouts = workingFilters.layouts ?? [];
+
+  const toggleLayout = (l: string) => {
+    const next = currentLayouts.includes(l)
+      ? currentLayouts.filter((x) => x !== l)
+      : [...currentLayouts, l];
+    onChange("layouts", next.length ? next : undefined);
+  };
+
+  return (
+    <ReamarCard className="p-4">
+      <div className="flex flex-wrap items-end gap-4">
+        <div>
+          <label className={cn("flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500", isModified("budgetMax") && "text-amber-700")}>
+            Cena max
+            {isModified("budgetMax") && <ModifiedBadge />}
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            className={cn(reamarInputClass, "mt-1 w-32", isModified("budgetMax") && "border-amber-400")}
+            value={workingFilters.budgetMax ?? ""}
+            onChange={(e) => onChange("budgetMax", parseNumberOrNull(e.target.value))}
+            placeholder="Kč"
+          />
+        </div>
+        <div>
+          <label className={cn("flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500", isModified("areaMin") && "text-amber-700")}>
+            Plocha min
+            {isModified("areaMin") && <ModifiedBadge />}
+          </label>
+          <input
+            type="text"
+            inputMode="numeric"
+            className={cn(reamarInputClass, "mt-1 w-24", isModified("areaMin") && "border-amber-400")}
+            value={workingFilters.areaMin ?? ""}
+            onChange={(e) => onChange("areaMin", parseNumberOrNull(e.target.value))}
+            placeholder="m²"
+          />
+        </div>
+        <div>
+          <label className={cn("flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500", isModified("propertyTypes") && "text-amber-700")}>
+            Typ
+            {isModified("propertyTypes") && <ModifiedBadge />}
+          </label>
+          <div className={cn("mt-1 inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5", isModified("propertyTypes") && "border-amber-400")}>
+            {WORKING_PROPERTY_TYPES.map((opt) => {
+              const active = currentPropertyType === opt.value;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={cn(
+                    "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                    active ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700",
+                  )}
+                  onClick={() =>
+                    onChange(
+                      "propertyTypes",
+                      opt.value === "any" ? undefined : [opt.value],
+                    )
+                  }
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div>
+          <label className={cn("flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500", isModified("layouts") && "text-amber-700")}>
+            Dispozice
+            {isModified("layouts") && <ModifiedBadge />}
+          </label>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {WORKING_LAYOUT_OPTIONS.map((l) => {
+              const active = currentLayouts.includes(l);
+              return (
+                <button
+                  key={l}
+                  type="button"
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                    active
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300",
+                    isModified("layouts") && !active && "border-amber-300",
+                  )}
+                  onClick={() => toggleLayout(l)}
+                >
+                  {l}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {modifiedKeys.length > 0 && (
+            <ReamarButton type="button" variant="ghost" size="sm" onClick={onReset} disabled={saving || recomputing}>
+              Reset na zadání
+            </ReamarButton>
+          )}
+          <ReamarButton type="button" variant="primary" size="sm" onClick={onApply} disabled={recomputing}>
+            {recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}
+          </ReamarButton>
+        </div>
+      </div>
+      {modifiedKeys.length > 0 && (
+        <p className="mt-3 text-[11px] text-amber-700">
+          Pracovní filtry jsou upraveny oproti zadání klienta ({modifiedKeys.length}{" "}
+          {modifiedKeys.length === 1 ? "změna" : modifiedKeys.length < 5 ? "změny" : "změn"}).
+        </p>
+      )}
+    </ReamarCard>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
 /*  Main page component                                      */
 /* ────────────────────────────────────────────────────────── */
 
@@ -1031,6 +1197,11 @@ export default function RecommendationsPage() {
     handleRecommendationFeedback,
     clearRecommendationFeedback,
     feedbackSavingId,
+    marketFit,
+    clientModeState,
+    clientModeSaving,
+    updateWorkingFilter,
+    resetWorkingFilters,
   } = useCaseData();
   const thresholds = useThresholds(token);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -1142,16 +1313,45 @@ export default function RecommendationsPage() {
           <div className="flex items-center gap-3">
             <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
             <ReamarButton type="button" variant="subtle" size="sm" onClick={() => router.push(`/cases/${client.id}/brief`)}>Upravit zadání</ReamarButton>
-            <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>{recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}</ReamarButton>
+            {!clientModeState && (
+              <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>{recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}</ReamarButton>
+            )}
           </div>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          <div className="rounded-xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-wide text-slate-500">Celkem</p><p className="mt-1 text-2xl font-semibold text-slate-900">{recs.length}</p></div>
+        <div className="mt-5 grid gap-3 md:grid-cols-5">
+          <div className="rounded-xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-wide text-slate-500">Doporučení</p><p className="mt-1 text-2xl font-semibold text-slate-900">{recs.length}</p></div>
+          {marketFit && (
+            <div className="rounded-xl bg-indigo-50 p-3" title="Jednotky odpovídající aktuálním filtrům / všechny dostupné">
+              <p className="text-[11px] uppercase tracking-wide text-indigo-700">Funnel</p>
+              <p className="mt-1 text-2xl font-semibold text-indigo-900">
+                {marketFit.matching_units_count}
+                <span className="text-sm font-normal text-indigo-600">
+                  {" / "}{marketFit.available_units_count}
+                </span>
+              </p>
+            </div>
+          )}
           <div className="rounded-xl bg-amber-50 p-3"><p className="text-[11px] uppercase tracking-wide text-amber-700">★ Ve výběru</p><p className="mt-1 text-2xl font-semibold text-amber-900">{pinnedCount}</p></div>
           <div className="rounded-xl bg-emerald-50 p-3"><p className="text-[11px] uppercase tracking-wide text-emerald-700">♥ Líbí se</p><p className="mt-1 text-2xl font-semibold text-emerald-900">{likedCount}</p></div>
           <div className="rounded-xl bg-rose-50 p-3"><p className="text-[11px] uppercase tracking-wide text-rose-700">✕ Nechci</p><p className="mt-1 text-2xl font-semibold text-rose-900">{dislikedCount}</p></div>
         </div>
       </ReamarCard>
+
+      {/* Working filters bar — Client Mode */}
+      {clientModeState && (
+        <WorkingFiltersBar
+          workingFilters={clientModeState.workingFilters}
+          modifiedKeys={clientModeState.modifiedKeys}
+          onChange={updateWorkingFilter}
+          onReset={async () => {
+            await resetWorkingFilters();
+            await handleRecompute();
+          }}
+          onApply={handleRecompute}
+          recomputing={recomputing}
+          saving={clientModeSaving}
+        />
+      )}
 
       {/* Filter funnel (Phase 7b) */}
       {recsFunnel && <FunnelCard funnel={recsFunnel} />}

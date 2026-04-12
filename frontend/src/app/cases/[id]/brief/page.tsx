@@ -12,6 +12,7 @@ import {
 } from "@/lib/walkabilityPreferences";
 import type { Priority } from "@/lib/caseTypes";
 import { PrefToggle } from "@/components/case/PrefToggle";
+import { FunnelCard } from "@/components/case/FunnelCard";
 import { ClientLocationMap } from "@/components/ClientLocationMap";
 import { AddressSearch } from "@/components/AddressSearch";
 import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
@@ -258,6 +259,7 @@ export default function BriefPage() {
     profile, setProfile,
     selectedLayouts, setSelectedLayouts,
     recs,
+    recsFunnel,
     loading,
     error,
     hydrated,
@@ -1958,6 +1960,9 @@ export default function BriefPage() {
             </span>
           </div>
         </ReamarCard>
+
+        {/* Filter funnel (Phase 7b) */}
+        {recsFunnel && <FunnelCard funnel={recsFunnel} />}
       </section>
 
       {/* Analytics collapsible section */}

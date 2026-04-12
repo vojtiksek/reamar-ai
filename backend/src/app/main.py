@@ -83,6 +83,14 @@ from .walkability import (
 )
 from .routing_provider import get_cached_travel_time_minutes
 from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard, _admin_area_soft_adjustment
+from .client_mode import (
+    base_profile_to_working_filters,
+    build_client_mode_state,
+    compute_modified_keys,
+    sanitize_working_filters,
+    wizard_to_base_profile,
+    working_filters_overrides_for_recompute,
+)
 from .walkability_sources import (
     refresh_walkability_sources_and_recompute,
     recompute_all_project_walkability as recompute_all_walkability,
@@ -333,6 +341,27 @@ class ClientProfileBody(BaseModel):
     polygon_geojson: str | None = None
     commute_points_json: dict | None = None
     scoring_weights_json: dict | None = None
+
+
+class ClientModeStateBody(BaseModel):
+    """Full client-mode state returned by /clients/{id}/client-mode."""
+
+    baseProfile: dict[str, Any]
+    workingFilters: dict[str, Any]
+    modifiedKeys: list[str]
+    filtersUpdatedAt: str | None = None
+
+
+class WorkingFiltersBody(BaseModel):
+    """Partial update of workingFilters.
+
+    ``modifiedKeys`` is accepted for backward compatibility but is silently
+    ignored — the server always recomputes it from the frozen base + incoming
+    workingFilters.
+    """
+
+    workingFilters: dict[str, Any]
+    modifiedKeys: list[str] | None = None  # ignored; kept for client compat
 
 
 class ClientRecommendationItem(BaseModel):
@@ -1149,6 +1178,183 @@ def upsert_client_profile(
     )
 
 
+# ─── Client Mode ────────────────────────────────────────────────────────────
+# Phase 1 foundation: base profile derived from the wizard, working filters
+# the broker can diverge to, and metadata tracking which filters were
+# manually modified.
+
+
+def _ensure_client_profile(db: Session, client: Client) -> ClientProfile:
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+    if not profile:
+        profile = ClientProfile(client_id=client.id)
+        db.add(profile)
+        db.flush()
+    return profile
+
+
+def _get_or_init_frozen_base(profile: ClientProfile) -> dict[str, Any]:
+    """Return the stored frozen base snapshot, or derive+freeze it now."""
+    stored = getattr(profile, "base_profile_json", None)
+    if isinstance(stored, dict) and stored:
+        return stored
+    return wizard_to_base_profile(profile)
+
+
+def _get_utc():
+    from datetime import timezone
+    return timezone.utc
+
+
+@app.get(
+    "/clients/{client_id}/client-mode",
+    response_model=ClientModeStateBody,
+    summary="Get Client Mode state (baseProfile + workingFilters + modifiedKeys)",
+)
+def get_client_mode_state(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientModeStateBody:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalars().first()
+
+    # On first access (no stored base yet) freeze the wizard snapshot.
+    if profile is not None and not (
+        isinstance(getattr(profile, "base_profile_json", None), dict)
+        and profile.base_profile_json
+    ):
+        profile = _ensure_client_profile(db, client)
+        base = wizard_to_base_profile(profile)
+        profile.base_profile_json = base
+        if not (isinstance(getattr(profile, "working_filters_json", None), dict) and profile.working_filters_json):
+            profile.working_filters_json = base_profile_to_working_filters(base)
+        profile.modified_keys_json = compute_modified_keys(base, profile.working_filters_json or {})
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+
+    state = build_client_mode_state(profile)
+    return ClientModeStateBody(**state)
+
+
+@app.put(
+    "/clients/{client_id}/client-mode/working-filters",
+    response_model=ClientModeStateBody,
+    summary="Update working filters (manual broker edits)",
+)
+def update_working_filters(
+    client_id: int,
+    body: WorkingFiltersBody,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientModeStateBody:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = _ensure_client_profile(db, client)
+
+    base = _get_or_init_frozen_base(profile)
+    working = sanitize_working_filters(body.workingFilters)
+    modified_keys = compute_modified_keys(base, working)
+
+    profile.base_profile_json = base
+    profile.working_filters_json = working
+    profile.modified_keys_json = modified_keys
+    profile.client_mode_updated_at = datetime.now(tz=_get_utc())
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+
+    return ClientModeStateBody(**build_client_mode_state(profile))
+
+
+@app.post(
+    "/clients/{client_id}/client-mode/working-filters/reset",
+    response_model=ClientModeStateBody,
+    summary="Reset working filters to the frozen base profile",
+)
+def reset_working_filters(
+    client_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> ClientModeStateBody:
+    client = _get_client_for_broker(db, client_id, broker)
+    profile = _ensure_client_profile(db, client)
+
+    base = _get_or_init_frozen_base(profile)
+
+    profile.base_profile_json = base
+    profile.working_filters_json = base_profile_to_working_filters(base)
+    profile.modified_keys_json = []
+    profile.client_mode_updated_at = datetime.now(tz=_get_utc())
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+
+    return ClientModeStateBody(**build_client_mode_state(profile))
+
+
+# ─── Client Mode: location profile proxy ────────────────────────────────────
+
+def _build_location_profile_proxy(profile: ClientProfile, location_overrides: dict) -> Any:
+    """Return a profile-like object that applies location working-filter overrides.
+
+    Wraps ``profile`` and overrides ``polygon_geojson`` and ``filter_json``
+    so scoring sees updated location data. Returns the original profile
+    unchanged when no relevant override keys are present.
+    """
+    import copy as _copy
+
+    _LOC_KEYS = frozenset({"polygon_geojson", "location_admin_area", "method_admin"})
+    if not any(k in location_overrides for k in _LOC_KEYS):
+        return profile
+
+    _new_polygon = location_overrides.get("polygon_geojson", profile.polygon_geojson)
+    _admin_areas = location_overrides.get("location_admin_area")
+    _method_admin = location_overrides.get("method_admin")
+
+    orig = profile.filter_json or {}
+    patched = _copy.deepcopy(orig)
+
+    sw = patched.get("structured_wizard")
+    if isinstance(sw, dict):
+        hf = sw.setdefault("hard_filters", {})
+        if _admin_areas is not None:
+            hf["location_admin_area"] = _admin_areas
+        if _method_admin is not None:
+            hf["method_admin"] = _method_admin
+
+    wizard = patched.setdefault("wizard", {})
+    location = dict(wizard.get("location") or {})
+    if _admin_areas is not None:
+        location["administrative_area"] = _admin_areas
+    if _method_admin is not None:
+        location["method_admin"] = _method_admin
+    wizard["location"] = location
+
+    _patched_filter_json = patched
+
+    class _LocationProxy:
+        """Thin proxy: delegates everything to the real profile except
+        location-related attributes overridden for this recompute pass."""
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(profile, name)
+
+        @property
+        def polygon_geojson(self) -> str | None:  # type: ignore[override]
+            return _new_polygon
+
+        @property
+        def filter_json(self) -> dict | None:  # type: ignore[override]
+            return _patched_filter_json
+
+    return _LocationProxy()
+
+
 def _wizard_preferences_adjustment(
     unit: Unit,
     project: Project,
@@ -1807,6 +2013,25 @@ def recompute_client_recommendations(
     area_conditions: list = []
     type_conditions: list = []
 
+    # Client Mode: resolve working-filter overrides once, use effective values below.
+    _effective_profile = profile
+    _wf_overrides: dict[str, Any] = {}
+    if profile:
+        _wf_overrides = working_filters_overrides_for_recompute(
+            profile.working_filters_json
+        )
+        _effective_budget_min = _wf_overrides.get("budget_min", profile.budget_min)
+        _effective_budget_max = _wf_overrides.get("budget_max", profile.budget_max)
+        _effective_area_min = _wf_overrides.get("area_min", profile.area_min)
+        _effective_area_max = _wf_overrides.get("area_max", profile.area_max)
+        _effective_property_type = _wf_overrides.get("property_type", profile.property_type)
+        _effective_layouts = _wf_overrides.get("layouts", profile.layouts)
+
+        # Build location proxy if location overrides are present
+        _loc_keys = {"polygon_geojson", "location_admin_area", "method_admin"}
+        if any(k in _wf_overrides for k in _loc_keys):
+            _effective_profile = _build_location_profile_proxy(profile, _wf_overrides)
+
     if profile:
         # Apply tolerance from wizard to widen the SQL filter window.
         # Scoring still penalizes units beyond the ideal; this just ensures
@@ -1815,18 +2040,18 @@ def recompute_client_recommendations(
         price_tol_pct = wiz_budget.get("max_price_tolerance_pct", 0) or 0
         area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
 
-        if profile.budget_min is not None:
-            budget_conditions.append(Unit.price_czk >= profile.budget_min)
-        if profile.budget_max is not None:
-            effective_budget_max = int(profile.budget_max * (1 + price_tol_pct / 100))
+        if _effective_budget_min is not None:
+            budget_conditions.append(Unit.price_czk >= _effective_budget_min)
+        if _effective_budget_max is not None:
+            effective_budget_max = int(_effective_budget_max * (1 + price_tol_pct / 100))
             budget_conditions.append(Unit.price_czk <= effective_budget_max)
-        if profile.area_min is not None:
-            effective_area_min = profile.area_min * (1 - area_tol_pct / 100)
+        if _effective_area_min is not None:
+            effective_area_min = _effective_area_min * (1 - area_tol_pct / 100)
             area_conditions.append(Unit.floor_area_m2 >= effective_area_min)
-        if profile.area_max is not None:
-            area_conditions.append(Unit.floor_area_m2 <= profile.area_max)
+        if _effective_area_max is not None:
+            area_conditions.append(Unit.floor_area_m2 <= _effective_area_max)
         # Property type hard filter
-        prop_type = profile.property_type
+        prop_type = _effective_property_type
         if prop_type == "flat":
             type_conditions.append(
                 func.lower(Unit.category).notin_(["house", "dům", "rodinný dům", "řadový dům"])
@@ -1871,10 +2096,14 @@ def recompute_client_recommendations(
         ).all()
         _dtf_map = {r[0]: r[1] for r in _dtf_rows}
 
-    # If client has explicit layout preferences, compute preferred buckets once.
+    # Resolve layout preferences using effective (working-filter) value.
     pref_layout_buckets: list[str] = []
-    if profile and profile.layouts and "values" in profile.layouts:
-        pref_layout_buckets = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
+    if profile:
+        _layout_source = _effective_layouts if isinstance(_effective_layouts, dict) else None
+        if _layout_source is None and profile.layouts:
+            _layout_source = profile.layouts
+        if _layout_source and "values" in _layout_source:
+            pref_layout_buckets = [str(v).strip().lower() for v in (_layout_source.get("values") or [])]
 
     # Resolve scoring weights: global (DB) → per-client override → normalize
     # (global_cfg already loaded above for market filter thresholds)
@@ -1919,7 +2148,7 @@ def recompute_client_recommendations(
                 "eligibility_rules": global_cfg.eligibility_rules_json if global_cfg else None,
             }
         _agg_proxy = type("_AggProxy", (), {"derived_total_floors": _dtf_map.get(project.id)})()
-        result = compute_full_score(unit, project, profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w, aggregates=_agg_proxy)
+        result = compute_full_score(unit, project, _effective_profile, weights=weights, db=db, scoring_config=scoring_config, flat_weights=flat_w, aggregates=_agg_proxy)
         score = result["score"]
         if result.get("eligibility") == "fail":
             # Classify the hard-filter failure for funnel diagnostics

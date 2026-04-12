@@ -28,6 +28,14 @@ import type {
   WizardExtras,
 } from "@/lib/caseTypes";
 import { buildStructuredWizard } from "@/lib/wizardTransform";
+import {
+  createClientModeStateFromProfile,
+  updateWorkingFilter as applyWorkingFilterUpdate,
+  resetWorkingFilters as resetWorkingFiltersLocal,
+  type ClientModeState,
+  type WorkingFilters,
+  type WorkingFilterKey,
+} from "@/lib/clientMode";
 
 export function useCaseData() {
   const params = useParams();
@@ -64,6 +72,11 @@ export function useCaseData() {
   const [notesSaving, setNotesSaving] = useState(false);
   const [feedbackSavingId, setFeedbackSavingId] = useState<number | null>(null);
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
+  // Client Mode (Phase 1 foundation). Initialized from the profile on load
+  // and kept in local state; PUT/reset calls persist to the backend.
+  const [clientModeState, setClientModeState] = useState<ClientModeState | null>(null);
+  const [clientModeSaving, setClientModeSaving] = useState(false);
 
   const [wizardExtras, setWizardExtras] = useState<WizardExtras>({});
   const nextStepGuard = useRef(false);
@@ -102,6 +115,16 @@ export function useCaseData() {
       // ignore malformed cache
     }
   }, [clientId]);
+
+  // Lazily initialize client-mode state from the profile the first time it
+  // becomes available, so UIs that consume `clientModeState` immediately get
+  // a snapshot without waiting for the /client-mode endpoint to settle.
+  useEffect(() => {
+    if (!profile) return;
+    setClientModeState((prev) =>
+      prev ?? createClientModeStateFromProfile(profile),
+    );
+  }, [profile]);
 
   useEffect(() => {
     setHydrated(true);
@@ -267,6 +290,30 @@ export function useCaseData() {
         if (controller.signal.aborted) return;
         setProfile((profileJson || null) as ClientProfile | null);
         setRecs((recsJson || []) as RecommendationItem[]);
+
+        // Kick off client-mode state fetch; fall back to profile-derived snapshot.
+        fetchOptionalJson<ClientModeState | null>(
+          `${API_BASE}/clients/${clientId}/client-mode`,
+          null,
+        )
+          .then((cm) => {
+            if (controller.signal.aborted) return;
+            if (cm && typeof cm === "object") {
+              setClientModeState(cm);
+            } else {
+              setClientModeState(
+                createClientModeStateFromProfile(profileJson as ClientProfile | null),
+              );
+            }
+          })
+          .catch(() => {
+            if (!controller.signal.aborted) {
+              setClientModeState(
+                createClientModeStateFromProfile(profileJson as ClientProfile | null),
+              );
+            }
+          });
+
         setMarketFit((marketFitJson || null) as MarketFitAnalysis | null);
         setAreaMarket((areaMarketJson || null) as AreaMarketAnalysis | null);
         setNotes((notesJson || []) as NoteItem[]);
@@ -438,6 +485,33 @@ export function useCaseData() {
     if (!token || !clientId) return;
     setRecomputing(true);
     try {
+      // Step 1: Persist working filters if client-mode is active
+      if (clientModeState) {
+        try {
+          const putRes = await fetch(
+            `${API_BASE}/clients/${clientId}/client-mode/working-filters`,
+            {
+              method: "PUT",
+              headers: {
+                Authorization: `Bearer ${token}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                workingFilters: clientModeState.workingFilters,
+                modifiedKeys: clientModeState.modifiedKeys,
+              }),
+            },
+          );
+          if (putRes.ok) {
+            const updated = (await putRes.json()) as ClientModeState;
+            setClientModeState(updated);
+          }
+        } catch {
+          // Ignore — backend will use whatever is already in DB
+        }
+      }
+
+      // Step 2: Trigger recompute
       const res = await fetch(`${API_BASE}/clients/${clientId}/recommendations/recompute`, {
         method: "POST",
         headers: {
@@ -445,6 +519,8 @@ export function useCaseData() {
         },
       });
       if (!res.ok) throw new Error(await res.text());
+
+      // Step 3: Parse funnel from recompute response (must happen before body is consumed)
       const recomputePayload = await res.json().catch(() => null);
       const funnel = (recomputePayload?.funnel ?? null) as RecommendationFunnel | null;
       setRecsFunnel(funnel);
@@ -459,11 +535,22 @@ export function useCaseData() {
           // ignore quota errors
         }
       }
-      await fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-        .then((r) => (r.ok ? r.json() : []))
-        .then((json) => setRecs(json as RecommendationItem[]));
+
+      // Step 4: Refresh recs + marketFit in parallel
+      const [recsJson, marketFitJson] = await Promise.all([
+        fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((r) => (r.ok ? r.json() : []))
+          .catch(() => []),
+        fetch(`${API_BASE}/clients/${clientId}/market-fit-analysis`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null),
+      ]);
+      setRecs(recsJson as RecommendationItem[]);
+      setMarketFit(marketFitJson as MarketFitAnalysis | null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba při přepočtu doporučení");
     } finally {
@@ -603,6 +690,92 @@ export function useCaseData() {
     }
   };
 
+  // ─── Client Mode actions ──────────────────────────────────────────────────
+
+  const loadClientModeState = useCallback(async () => {
+    if (!token || !clientId) return null;
+    try {
+      const res = await fetch(`${API_BASE}/clients/${clientId}/client-mode`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as ClientModeState;
+      setClientModeState(json);
+      return json;
+    } catch {
+      return null;
+    }
+  }, [token, clientId]);
+
+  const updateWorkingFilter = useCallback(
+    <K extends WorkingFilterKey>(key: K, value: WorkingFilters[K]) => {
+      setClientModeState((prev) => {
+        const base = prev ?? createClientModeStateFromProfile(profile);
+        return applyWorkingFilterUpdate(base, key, value);
+      });
+    },
+    [profile],
+  );
+
+  const saveWorkingFilters = useCallback(async () => {
+    if (!token || !clientId || !clientModeState) return null;
+    setClientModeSaving(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${clientId}/client-mode/working-filters`,
+        {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            workingFilters: clientModeState.workingFilters,
+            modifiedKeys: clientModeState.modifiedKeys,
+          }),
+        },
+      );
+      if (!res.ok) throw new Error(await res.text());
+      const json = (await res.json()) as ClientModeState;
+      setClientModeState(json);
+      return json;
+    } catch {
+      return null;
+    } finally {
+      setClientModeSaving(false);
+    }
+  }, [token, clientId, clientModeState]);
+
+  const resetWorkingFiltersAction = useCallback(async () => {
+    if (!token || !clientId) {
+      setClientModeState((prev) =>
+        prev ? resetWorkingFiltersLocal(prev) : prev,
+      );
+      return null;
+    }
+    setClientModeSaving(true);
+    try {
+      const res = await fetch(
+        `${API_BASE}/clients/${clientId}/client-mode/working-filters/reset`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      if (!res.ok) {
+        setClientModeState((prev) =>
+          prev ? resetWorkingFiltersLocal(prev) : prev,
+        );
+        return null;
+      }
+      const json = (await res.json()) as ClientModeState;
+      setClientModeState(json);
+      return json;
+    } finally {
+      setClientModeSaving(false);
+    }
+  }, [token, clientId]);
+
   const handleDeleteNote = async (noteId: number) => {
     if (!token) return;
     const r = await fetch(
@@ -668,5 +841,12 @@ export function useCaseData() {
     handleAddNote,
     handleDeleteNote,
     saveWalkPrefs,
+    // Client Mode (Phase 1 foundation)
+    clientModeState,
+    clientModeSaving,
+    loadClientModeState,
+    updateWorkingFilter,
+    saveWorkingFilters,
+    resetWorkingFilters: resetWorkingFiltersAction,
   };
 }
