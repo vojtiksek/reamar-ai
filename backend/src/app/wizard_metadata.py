@@ -537,10 +537,7 @@ NUMERIC_FIELDS: dict[str, dict] = {
         "max": 100,
         "placeholder": "Např. 10",
     },
-    # `ideal_area` was removed from the wizard — the product model now only
-    # asks for min area + tolerance.  Backend scoring still has a fallback
-    # path reading `wizard.budget.ideal_area` for legacy cases; it degrades
-    # gracefully to neutral when absent.
+    # `ideal_area` removed from wizard + scoring + DB (migration 964dea397da1).
     "area_min": {
         "key": "area_min",
         "field_type": "numeric",

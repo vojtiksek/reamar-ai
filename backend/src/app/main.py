@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import os
+import threading
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
+
+# ---------------------------------------------------------------------------
+# In-memory recompute progress — keyed by client_id
+# ---------------------------------------------------------------------------
+_recompute_progress: dict[int, dict] = {}
+_progress_lock = threading.Lock()
 
 from decimal import Decimal
 import json
@@ -40,7 +47,6 @@ from .models import (
     ClientRecommendation,
     ClientRecommendationFeedback,
     ClientUnitMatch,
-    ClientShareLink,
     ClientNote,
     UnitEvent,
     ScoringConfig,
@@ -81,7 +87,7 @@ from .walkability import (
     compute_personalized_walkability_score,
     project_to_raw_metrics,
 )
-from .routing_provider import get_cached_travel_time_minutes
+from .routing_provider import get_cached_travel_time_minutes, get_cached_commute_result, clear_request_commute_cache
 from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard, _admin_area_soft_adjustment
 from .client_mode import (
     base_profile_to_working_filters,
@@ -402,9 +408,18 @@ class ClientRecommendationItem(BaseModel):
     broker_note: str | None = None
     shortlist_role: str | None = None
     shortlist_reason: str | None = None
+    shortlist_risks: str | None = None
     shortlist_order: int | None = None
     feedback: "RecommendationFeedbackOut | None" = None
     construction_completion: str | None = None
+    noise_label: str | None = None
+    noise_day_db: float | None = None
+    noise_night_db: float | None = None
+    distance_to_tram_tracks_m: float | None = None
+    distance_to_primary_road_m: float | None = None
+    distance_to_railway_m: float | None = None
+    price_diff_pct: float | None = None
+    poi_counts: dict[str, int] = {}
 
 
 ALLOWED_FEEDBACK_TYPES = {"liked", "saved", "disliked"}
@@ -747,8 +762,6 @@ class ClientDashboardItem(BaseModel):
     unseen_matches: int = 0
     last_note_at: datetime | None = None
     days_since_last_note: int | None = None
-    share_link_expires_at: datetime | None = None
-    share_link_expired: bool = False
     has_profile: bool = False
     priority: str = "normal"  # 'high' | 'medium' | 'normal'
 
@@ -801,14 +814,6 @@ def client_dashboard(
         ).all()
     )
 
-    # Active share links
-    share_links = dict(
-        db.execute(
-            select(ClientShareLink.client_id, ClientShareLink.expires_at)
-            .where(ClientShareLink.client_id.in_(client_ids))
-        ).all()
-    )
-
     # Profile existence
     profile_ids = set(
         r[0]
@@ -822,8 +827,6 @@ def client_dashboard(
         unseen = unseen_counts.get(c.id, 0)
         last_note_at = last_notes.get(c.id)
         days_since = (now - last_note_at).days if last_note_at else None
-        share_exp = share_links.get(c.id)
-        share_expired = bool(share_exp and share_exp < now)
         has_profile = c.id in profile_ids
 
         # Priority calculation
@@ -831,8 +834,6 @@ def client_dashboard(
         if unseen > 0:
             priority = "high"
         elif days_since is not None and days_since > 14:
-            priority = "medium"
-        elif share_expired:
             priority = "medium"
         elif c.status == "new" and not has_profile:
             priority = "medium"
@@ -849,8 +850,6 @@ def client_dashboard(
             unseen_matches=unseen,
             last_note_at=last_note_at,
             days_since_last_note=days_since,
-            share_link_expires_at=share_exp,
-            share_link_expired=share_expired,
             has_profile=has_profile,
             priority=priority,
         ))
@@ -1047,51 +1046,6 @@ def delete_client_note(
     db.delete(note)
     db.commit()
 
-
-# ── Share links ──────────────────────────────────────────────────────
-
-
-class ShareLinkResponse(BaseModel):
-    url: str
-    expires_at: datetime
-
-
-@app.post("/clients/{client_id}/share-link", response_model=ShareLinkResponse)
-def create_or_refresh_share_link(
-    client_id: int,
-    db: DbSession,
-    broker: Broker = Depends(get_current_broker),
-) -> ShareLinkResponse:
-    import secrets
-    from .settings import settings
-
-    _get_client_for_broker(db, client_id, broker)
-    expires_at = datetime.utcnow() + timedelta(days=30)
-
-    link = db.execute(
-        select(ClientShareLink).where(
-            ClientShareLink.client_id == client_id,
-            ClientShareLink.broker_id == broker.id,
-        )
-    ).scalars().first()
-
-    if link:
-        link.token = secrets.token_urlsafe(32)
-        link.expires_at = expires_at
-    else:
-        link = ClientShareLink(
-            client_id=client_id,
-            broker_id=broker.id,
-            token=secrets.token_urlsafe(32),
-            expires_at=expires_at,
-        )
-        db.add(link)
-
-    db.commit()
-    db.refresh(link)
-
-    base = settings.frontend_url.rstrip("/")
-    return ShareLinkResponse(url=f"{base}/share/{link.token}", expires_at=link.expires_at)
 
 
 @app.get("/clients/{client_id}/profile", response_model=ClientProfileBody | None)
@@ -1737,22 +1691,7 @@ def _compute_unit_match_score(
                 diff_ratio = abs(area - center) / max(center, 1.0)
                 area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
         else:
-            # No explicit bounds — fall back to ideal_area from wizard if present.
-            wizard_budget = (
-                ((profile.filter_json or {}).get("wizard") or {}).get("budget") or {}
-                if profile.filter_json
-                else {}
-            )
-            ideal_area = wizard_budget.get("ideal_area")
-            if ideal_area is not None:
-                try:
-                    ideal_area = float(ideal_area)
-                    # ±30 % soft window around ideal; same decay formula as before.
-                    center = ideal_area
-                    diff_ratio = abs(area - center) / max(center, 1.0)
-                    area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-                except (TypeError, ValueError):
-                    pass  # malformed value → keep neutral 50
+            pass  # No area range → neutral 50
 
     # Outdoor fit
     outdoor_fit = 50.0  # neutral when no preference
@@ -1809,9 +1748,10 @@ def _compute_unit_match_score(
             priority = str(cp.get("priority") or "ignore")
             tol = cp.get("tolerance_minutes")
             tolerance_minutes = float(tol) if tol is not None else 0.0
-            travel_min = get_cached_travel_time_minutes(db, project, cp)
-            if travel_min is None:
+            commute_result = get_cached_commute_result(db, project, cp)
+            if commute_result is None:
                 continue
+            travel_min = commute_result.minutes
             limit = max_minutes + tolerance_minutes
             if priority == "must_have" and travel_min > limit:
                 # Hard fail – jednotka nevyhovuje klíčovému dojezdu.
@@ -1823,6 +1763,7 @@ def _compute_unit_match_score(
                         "max_minutes": max_minutes,
                         "priority": priority,
                         "passed": False,
+                        "itinerary": commute_result.itinerary,
                     }
                 )
                 hard_failed = True
@@ -1846,6 +1787,7 @@ def _compute_unit_match_score(
                         "max_minutes": max_minutes,
                         "priority": priority,
                         "passed": travel_min <= limit,
+                        "itinerary": commute_result.itinerary,
                     }
                 )
         if hard_failed:
@@ -1899,11 +1841,15 @@ def _build_recompute_funnel(
     funnel_after_budget: int,
     funnel_after_area: int,
     funnel_after_type: int,
+    funnel_after_layout: int,
+    funnel_after_outdoor: int,
+    funnel_after_movein: int,
     has_budget_filter: bool,
     has_area_filter: bool,
     has_type_filter: bool,
     has_layout_filter: bool,
-    dropped_layout: int,
+    has_outdoor_filter: bool,
+    has_movein_filter: bool,
     dropped_location: int,
     dropped_other: int,
     scored_before_threshold: int,
@@ -1912,79 +1858,57 @@ def _build_recompute_funnel(
     dropped_limit: int,
     final_count: int,
 ) -> dict[str, Any]:
-    """Build the filter-funnel diagnostics response (Phase 7b).
+    """Build the filter-funnel diagnostics response.
 
-    Pure function: takes already-computed counts and returns a stable JSON
-    structure. Kept separate from the recompute endpoint so it can be unit
-    tested without a running database.
-
-    Steps are emitted only when the corresponding filter was actually applied
-    (for SQL-level filters and layout) or when it actually dropped units
-    (for the per-unit eligibility categories and scoring thresholds).
+    All SQL-level filters (budget, area, type, layout, outdoor, movein) are
+    represented by their own step. Per-unit Python drops (location, other)
+    follow. Steps are emitted only when the filter was actually applied or
+    when it dropped at least one unit.
     """
     steps: list[dict[str, Any]] = []
-    if has_budget_filter:
-        steps.append({
-            "key": "budget",
-            "label": "Rozpočet",
-            "removed": max(0, funnel_total - funnel_after_budget),
-            "remaining": funnel_after_budget,
-        })
-    if has_area_filter:
-        steps.append({
-            "key": "area",
-            "label": "Plocha",
-            "removed": max(0, funnel_after_budget - funnel_after_area),
-            "remaining": funnel_after_area,
-        })
-    if has_type_filter:
-        steps.append({
-            "key": "property_type",
-            "label": "Typ nemovitosti",
-            "removed": max(0, funnel_after_area - funnel_after_type),
-            "remaining": funnel_after_type,
-        })
-    remaining_after_layout = max(0, funnel_after_type - dropped_layout)
-    if has_layout_filter:
-        steps.append({
-            "key": "layout",
-            "label": "Dispozice",
-            "removed": dropped_layout,
-            "remaining": remaining_after_layout,
-        })
+    prev = funnel_total
+
+    def _sql_step(key: str, label: str, after: int, active: bool) -> None:
+        nonlocal prev
+        if active:
+            steps.append({"key": key, "label": label, "removed": max(0, prev - after), "remaining": after})
+            prev = after
+
+    _sql_step("budget", "Rozpočet", funnel_after_budget, has_budget_filter)
+    _sql_step("area", "Plocha", funnel_after_area, has_area_filter)
+    _sql_step("property_type", "Typ nemovitosti", funnel_after_type, has_type_filter)
+    _sql_step("layout", "Dispozice", funnel_after_layout, has_layout_filter)
+    _sql_step("outdoor", "Venkovní plocha", funnel_after_outdoor, has_outdoor_filter)
+    _sql_step("movein", "Nastěhování", funnel_after_movein, has_movein_filter)
+
     if dropped_location > 0:
-        steps.append({
-            "key": "location",
-            "label": "Lokalita",
-            "removed": dropped_location,
-            "remaining": max(0, remaining_after_layout - dropped_location),
-        })
+        after_loc = max(0, prev - dropped_location)
+        steps.append({"key": "location", "label": "Lokalita", "removed": dropped_location, "remaining": after_loc})
+        prev = after_loc
     if dropped_other > 0:
-        steps.append({
-            "key": "other",
-            "label": "Ostatní požadavky",
-            "removed": dropped_other,
-            "remaining": scored_before_threshold,
-        })
+        steps.append({"key": "other", "label": "Ostatní požadavky", "removed": dropped_other, "remaining": scored_before_threshold})
     if dropped_score > 0:
-        steps.append({
-            "key": "scoring",
-            "label": "Skóre pod prahem",
-            "removed": dropped_score,
-            "remaining": scored_after_threshold,
-        })
+        steps.append({"key": "scoring", "label": "Skóre pod prahem", "removed": dropped_score, "remaining": scored_after_threshold})
     if dropped_limit > 0:
-        steps.append({
-            "key": "visible_limit",
-            "label": "Limit zobrazení",
-            "removed": dropped_limit,
-            "remaining": final_count,
-        })
+        steps.append({"key": "visible_limit", "label": "Limit zobrazení", "removed": dropped_limit, "remaining": final_count})
     return {
         "total": funnel_total,
         "steps": steps,
         "final": final_count,
     }
+
+
+@app.get("/clients/{client_id}/recommendations/recompute/progress")
+def get_recompute_progress(
+    client_id: int,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Vrací aktuální stav pre-warmingu dojezdových časů pro daného klienta."""
+    with _progress_lock:
+        prog = _recompute_progress.get(client_id)
+        if prog is None:
+            return {"total": 0, "done": 0, "status": "idle"}
+        return {"total": prog["total"], "done": prog["done"], "status": prog["status"]}
 
 
 @app.post("/clients/{client_id}/recommendations/recompute")
@@ -1993,6 +1917,10 @@ def recompute_client_recommendations(
     db: DbSession,
     broker: Broker = Depends(get_current_broker),
 ) -> dict[str, Any]:
+    import time as _T; _t0 = _T.perf_counter(); _tl = _t0
+    def _tp(label):
+        nonlocal _tl; n = _T.perf_counter(); print(f"[RECOMPUTE] {label}: {n-_tl:.2f}s (total {n-_t0:.1f}s)", flush=True); _tl = n
+    clear_request_commute_cache()
     client = _get_client_for_broker(db, client_id, broker)
     profile = db.execute(
         select(ClientProfile).where(ClientProfile.client_id == client.id)
@@ -2012,13 +1940,17 @@ def recompute_client_recommendations(
     budget_conditions: list = []
     area_conditions: list = []
     type_conditions: list = []
+    layout_conditions: list = []
+    outdoor_conditions: list = []
+    movein_conditions: list = []
 
     # Client Mode: resolve working-filter overrides once, use effective values below.
     _effective_profile = profile
     _wf_overrides: dict[str, Any] = {}
     if profile:
         _wf_overrides = working_filters_overrides_for_recompute(
-            profile.working_filters_json
+            profile.working_filters_json,
+            profile.modified_keys_json,
         )
         _effective_budget_min = _wf_overrides.get("budget_min", profile.budget_min)
         _effective_budget_max = _wf_overrides.get("budget_max", profile.budget_max)
@@ -2061,30 +1993,88 @@ def recompute_client_recommendations(
                 func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"])
             )
 
+    # Layout SQL filter — reverse-map bucket names ("2kk") to DB values ("layout_2")
+    _BUCKET_TO_DB_LAYOUT: dict[str, str] = {
+        "1kk": "layout_1", "2kk": "layout_2", "3kk": "layout_3", "4kk": "layout_4",
+        "1.5kk": "layout_1_5",
+    }
+    pref_layout_buckets: list[str] = []
+    if profile:
+        _layout_src = _effective_layouts if isinstance(_effective_layouts, dict) else None
+        if _layout_src is None and profile.layouts:
+            _layout_src = profile.layouts
+        if _layout_src and "values" in _layout_src:
+            pref_layout_buckets = [str(v).strip().lower() for v in (_layout_src.get("values") or [])]
+        if pref_layout_buckets:
+            _db_layouts = [_BUCKET_TO_DB_LAYOUT[b] for b in pref_layout_buckets if b in _BUCKET_TO_DB_LAYOUT]
+            if _db_layouts:
+                layout_conditions.append(Unit.layout.in_(_db_layouts))
+
+    # Outdoor area SQL filter (wizard.outdoor.min_outdoor_area_m2 or wizard.budget.min_outdoor_area_m2)
+    if profile:
+        _wiz = (profile.filter_json or {}).get("wizard", {})
+        _outdoor_min = (
+            (_wiz.get("outdoor") or {}).get("min_outdoor_area_m2")
+            or (_wiz.get("budget") or {}).get("min_outdoor_area_m2")
+        )
+        if _outdoor_min is not None:
+            try:
+                _outdoor_min_f = float(_outdoor_min)
+                if _outdoor_min_f > 0:
+                    _outdoor_tol = float((_wiz.get("budget") or {}).get("max_outdoor_tolerance_pct") or 0)
+                    _eff_outdoor_min = _outdoor_min_f * (1 - _outdoor_tol / 100)
+                    outdoor_conditions.append(Unit.exterior_area_m2 >= _eff_outdoor_min)
+            except (TypeError, ValueError):
+                pass
+
+    # Move-in deadline SQL filter (wizard.latest_move_in or wizard.completion_date)
+    if profile:
+        _wiz = (profile.filter_json or {}).get("wizard", {})
+        _latest_move_in = _wiz.get("latest_move_in") or _wiz.get("completion_date")
+        if _latest_move_in:
+            try:
+                _move_in_date = date.fromisoformat(str(_latest_move_in))
+                movein_conditions.append(
+                    or_(Project.completion_date.is_(None), Project.completion_date <= _move_in_date)
+                )
+            except (ValueError, TypeError):
+                pass
+
     # -- Funnel step 1: cumulative COUNTs for SQL-level filters --
     # Cheap index-backed COUNT queries. Used only for the diagnostics response.
     def _funnel_count(conds: list) -> int:
         if not conds:
             return 0
         return int(
-            db.execute(select(func.count()).select_from(Unit).where(and_(*conds))).scalar_one()
+            db.execute(
+                select(func.count())
+                .select_from(Unit)
+                .join(Project, Unit.project_id == Project.id)
+                .where(and_(*conds))
+            ).scalar_one()
             or 0
         )
 
+    _tp("conditions built")
+    _sql_base = base_conditions + budget_conditions + area_conditions + type_conditions
     funnel_total = _funnel_count(base_conditions)
     funnel_after_budget = _funnel_count(base_conditions + budget_conditions)
     funnel_after_area = _funnel_count(base_conditions + budget_conditions + area_conditions)
-    funnel_after_type = _funnel_count(
-        base_conditions + budget_conditions + area_conditions + type_conditions
-    )
+    funnel_after_type = _funnel_count(_sql_base)
+    funnel_after_layout = _funnel_count(_sql_base + layout_conditions)
+    funnel_after_outdoor = _funnel_count(_sql_base + layout_conditions + outdoor_conditions)
+    funnel_after_movein = _funnel_count(_sql_base + layout_conditions + outdoor_conditions + movein_conditions)
+    _tp(f"7x funnel COUNT (total={funnel_total}, after_movein={funnel_after_movein})")
 
+    _all_sql = _sql_base + layout_conditions + outdoor_conditions + movein_conditions
     q = (
         select(Unit, Project)
         .join(Project, Unit.project_id == Project.id)
-        .where(and_(*(base_conditions + budget_conditions + area_conditions + type_conditions)))
+        .where(and_(*_all_sql))
     )
 
     rows = db.execute(q.order_by(Unit.id)).all()
+    _tp(f"main SELECT ({len(rows)} rows)")
 
     # Load derived_total_floors for floor-based hard filters (penthouse, ground floor)
     _row_project_ids = list({row[1].id for row in rows})
@@ -2095,15 +2085,6 @@ def recompute_client_recommendations(
             .where(ProjectAggregates.project_id.in_(_row_project_ids))
         ).all()
         _dtf_map = {r[0]: r[1] for r in _dtf_rows}
-
-    # Resolve layout preferences using effective (working-filter) value.
-    pref_layout_buckets: list[str] = []
-    if profile:
-        _layout_source = _effective_layouts if isinstance(_effective_layouts, dict) else None
-        if _layout_source is None and profile.layouts:
-            _layout_source = profile.layouts
-        if _layout_source and "values" in _layout_source:
-            pref_layout_buckets = [str(v).strip().lower() for v in (_layout_source.get("values") or [])]
 
     # Resolve scoring weights: global (DB) → per-client override → normalize
     # (global_cfg already loaded above for market filter thresholds)
@@ -2120,28 +2101,98 @@ def recompute_client_recommendations(
     strong_min = float(thresholds["strong_pick_min_score"])
     visible_limit = int(thresholds["default_visible_limit"]) or 100
 
-    # -- Funnel step 2: classify per-unit drops (layout / location / other) --
+    # -- Pre-warm commute cache in parallel (avoids sequential OTP calls) --
+    # Collects unique (project_id → Project) pairs × commute points and fires
+    # all routing queries concurrently.  Each thread owns its own DB session so
+    # SQLAlchemy session state is never shared across threads.
+    _commute_points: list[dict] = []
+    if profile and getattr(profile, "commute_points_json", None):
+        _cp_raw = profile.commute_points_json or []
+        if isinstance(_cp_raw, dict):
+            _cp_raw = _cp_raw.get("points") or []
+        _commute_points = [
+            cp for cp in _cp_raw
+            if cp.get("lat") is not None and cp.get("lng") is not None
+        ]
+
+    if _commute_points:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        from .db import SessionLocal
+        from .routing_provider import get_cached_travel_time_minutes as _get_tt
+
+        _unique_projects: dict[int, Project] = {
+            proj.id: proj for _, proj in rows
+            if proj.gps_latitude is not None and proj.gps_longitude is not None
+        }
+
+        # Inicializuj progress
+        _total_projects = len(_unique_projects)
+        with _progress_lock:
+            _recompute_progress[client.id] = {
+                "total": _total_projects,
+                "done": 0,
+                "_done_ids": set(),
+                "status": "warming",
+            }
+
+        # Každý worker dostane vlastní session, ale sdílíme pool — max 5 workerů
+        # aby se nepřetížil PostgreSQL connection pool.
+        def _prewarm(project_snapshot: dict, cp: dict) -> None:
+            session = SessionLocal()
+            try:
+                _p = type("_P", (), project_snapshot)()
+                _get_tt(session, _p, cp)
+                session.commit()
+            except Exception:
+                session.rollback()
+            finally:
+                session.close()
+            # Aktualizuj progress po dokončení projektu
+            pid = project_snapshot["id"]
+            with _progress_lock:
+                prog = _recompute_progress.get(client.id)
+                if prog:
+                    prog["_done_ids"].add(pid)
+                    prog["done"] = len(prog["_done_ids"])
+
+        _tasks: list[tuple[dict, dict]] = []
+        for proj_id, proj in _unique_projects.items():
+            snap = {
+                "id": proj.id,
+                "gps_latitude": proj.gps_latitude,
+                "gps_longitude": proj.gps_longitude,
+            }
+            for cp in _commute_points:
+                _tasks.append((snap, cp))
+
+        with ThreadPoolExecutor(max_workers=5) as _executor:
+            _futures = [_executor.submit(_prewarm, snap, cp) for snap, cp in _tasks]
+            for _f in as_completed(_futures):
+                pass
+
+        with _progress_lock:
+            if client.id in _recompute_progress:
+                _recompute_progress[client.id]["status"] = "done"
+        _tp("prewarm done")
+
+    _tp("pre-scoring setup")
+    # -- Funnel step 2: classify per-unit drops (location / other) --
+    # Layout, outdoor, and move-in are now SQL-level filters (see above).
     _LOCATION_REASON_KEYS = (
         "outside_polygon",
         "polygon_location",
         "outside_admin_area",
         "admin_area",
     )
-    funnel_dropped_layout = 0
     funnel_dropped_location = 0
     funnel_dropped_other = 0
 
     scored: list[tuple[float, Unit, Project, dict[str, float]]] = []
+    # Collect strong matches here; bulk-upsert after the loop to avoid
+    # SQLAlchemy insertmanyvalues batching stripping ON CONFLICT clause.
+    strong_match_scores: dict[int, float] = {}  # unit_id → score
+
     for unit, project in rows:
-        # Optional hard filter by layout: keep only units whose bucket matches profile preferences.
-        if pref_layout_buckets:
-            if unit.layout is None:
-                funnel_dropped_layout += 1
-                continue
-            unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
-            if unit_bucket not in pref_layout_buckets:
-                funnel_dropped_layout += 1
-                continue
         scoring_config = {
                 "groups": global_cfg.groups_json if global_cfg else None,
                 "field_rules": global_cfg.field_rules_json if global_cfg else None,
@@ -2164,22 +2215,26 @@ def recompute_client_recommendations(
             funnel_dropped_other += 1
             continue
         scored.append((score, unit, project, result))
-
-        # For strong matches, record client-unit match (if not already present).
         if score >= strong_min:
-            existing = db.execute(
-                select(ClientUnitMatch).where(
-                    ClientUnitMatch.client_id == client.id,
-                    ClientUnitMatch.unit_id == unit.id,
-                )
-            ).scalars().first()
-            if not existing:
-                match = ClientUnitMatch(
-                    client_id=client.id,
-                    unit_id=unit.id,
-                    score=score,
-                )
-                db.add(match)
+            strong_match_scores[unit.id] = score
+
+    _tp(f"scoring loop ({len(rows)} units, {len(scored)} scored)")
+
+    # Bulk upsert strong matches — single raw SQL to avoid SQLAlchemy
+    # insertmanyvalues batching which drops the ON CONFLICT clause.
+    if strong_match_scores:
+        from sqlalchemy.dialects.postgresql import insert as _pg_insert
+        db.execute(
+            _pg_insert(ClientUnitMatch)
+            .values([
+                {"client_id": client.id, "unit_id": uid, "score": sc}
+                for uid, sc in strong_match_scores.items()
+            ])
+            .on_conflict_do_update(
+                index_elements=["client_id", "unit_id"],
+                set_={"score": sa.literal_column("EXCLUDED.score")},
+            )
+        )
 
     scored.sort(key=lambda t: t[0], reverse=True)
     _scored_before_threshold = len(scored)
@@ -2295,11 +2350,15 @@ def recompute_client_recommendations(
         funnel_after_budget=funnel_after_budget,
         funnel_after_area=funnel_after_area,
         funnel_after_type=funnel_after_type,
+        funnel_after_layout=funnel_after_layout,
+        funnel_after_outdoor=funnel_after_outdoor,
+        funnel_after_movein=funnel_after_movein,
         has_budget_filter=bool(budget_conditions),
         has_area_filter=bool(area_conditions),
         has_type_filter=bool(type_conditions),
-        has_layout_filter=bool(pref_layout_buckets),
-        dropped_layout=funnel_dropped_layout,
+        has_layout_filter=bool(layout_conditions),
+        has_outdoor_filter=bool(outdoor_conditions),
+        has_movein_filter=bool(movein_conditions),
         dropped_location=funnel_dropped_location,
         dropped_other=funnel_dropped_other,
         scored_before_threshold=_scored_before_threshold,
@@ -2308,6 +2367,8 @@ def recompute_client_recommendations(
         dropped_limit=funnel_dropped_limit,
         final_count=len(top),
     )
+
+    _tp(f"DB commit + funnel (created={len(top)})")
 
     return {
         "client_id": client.id,
@@ -2342,7 +2403,7 @@ def market_fit_analysis(
         .join(Project, Unit.project_id == Project.id)
         .where(_market_filter_from_config(_mf_thresholds))
     )
-    rows_all = db.execute(q.limit(5000)).all()
+    rows_all = db.execute(q.order_by(Unit.id.asc())).all()
 
     # Pre-filter by polygon when available so "Na trhu" reflects the client's area
     poly_prefilter = _parse_polygon_geojson(profile.polygon_geojson) if profile else None
@@ -2431,13 +2492,15 @@ def market_fit_analysis(
                 )
                 passes_location = inside
 
-            # Commute: reuse hard-filter semantics from scoring.
+            # Commute: check ONLY from in-process cache (no OTP calls).
+            # market_fit_analysis is advisory — it should never block on OTP.
             passes_commute = True
             if (
                 prof.commute_points_json
                 and project.gps_latitude is not None
                 and project.gps_longitude is not None
             ):
+                from .routing_provider import _request_commute_cache, COMMUTE_PROVIDER_NAME
                 points = prof.commute_points_json or []
                 if isinstance(points, dict):
                     points = points.get("points") or []
@@ -2449,9 +2512,17 @@ def market_fit_analysis(
                     priority = str(cp.get("priority") or "ignore")
                     tol = cp.get("tolerance_minutes")
                     tolerance_minutes = float(tol) if tol is not None else 0.0
-                    travel_min = get_cached_travel_time_minutes(db, project, cp)
-                    if travel_min is None:
-                        continue
+                    # Use in-process cache only — never call OTP/OSRM here
+                    _dest_lat = round(float(cp.get("lat")), 6)
+                    _dest_lng = round(float(cp.get("lng")), 6)
+                    _mode = str(cp.get("mode") or "drive").lower()
+                    _at = cp.get("arrival_time") or None
+                    _cm = f"{_mode}@{_at}" if _at else _mode
+                    _ck = (project.id, _dest_lat, _dest_lng, _cm, COMMUTE_PROVIDER_NAME)
+                    commute_result = _request_commute_cache.get(_ck)
+                    if commute_result is None:
+                        continue  # no cached data — skip, don't block on OTP
+                    travel_min = commute_result.minutes
                     limit = max_minutes + tolerance_minutes
                     if priority == "must_have" and travel_min > limit:
                         passes_commute = False
@@ -2710,7 +2781,7 @@ def area_market_analysis(
         .where(_market_filter_from_config(_poly_thresholds))
     )
 
-    rows_raw: list[tuple[Unit, Project]] = db.execute(q.limit(5000)).all()
+    rows_raw: list[tuple[Unit, Project]] = db.execute(q.order_by(Unit.id.asc())).all()
 
     rows: list[tuple[Unit, Project]] = []
     if polygons:
@@ -2898,6 +2969,7 @@ def list_client_recommendations(
                 broker_note=rec.broker_note,
                 shortlist_role=rec.shortlist_role,
                 shortlist_reason=rec.shortlist_reason,
+                shortlist_risks=rec.shortlist_risks,
                 shortlist_order=rec.shortlist_order,
                 feedback=RecommendationFeedbackOut(
                     feedback_type=rec.feedback.feedback_type,
@@ -2906,6 +2978,18 @@ def list_client_recommendations(
                     updated_at=rec.feedback.updated_at,
                 ) if rec.feedback else None,
                 construction_completion=project.construction_completion,
+                noise_label=project.noise_label,
+                noise_day_db=float(project.noise_day_db) if project.noise_day_db is not None else None,
+                noise_night_db=float(project.noise_night_db) if project.noise_night_db is not None else None,
+                distance_to_tram_tracks_m=float(project.distance_to_tram_tracks_m) if project.distance_to_tram_tracks_m is not None else None,
+                distance_to_primary_road_m=float(project.distance_to_primary_road_m) if project.distance_to_primary_road_m is not None else None,
+                distance_to_railway_m=float(project.distance_to_railway_m) if project.distance_to_railway_m is not None else None,
+                price_diff_pct=float(unit.local_price_diff_2000m) if unit.local_price_diff_2000m is not None else None,
+                poi_counts={
+                    k: int(v)
+                    for k in ("supermarket", "park", "cafe", "restaurant", "fitness", "playground", "kindergarten", "primary_school")
+                    if (v := getattr(project, f"count_{k}_500m", None)) is not None
+                },
             )
         )
     return items
@@ -3125,6 +3209,7 @@ ALLOWED_SHORTLIST_ROLES = {"top_pick", "alternative", "fallback", "wild_card"}
 class ShortlistMetaBody(BaseModel):
     shortlist_role: str | None = None
     shortlist_reason: str | None = None
+    shortlist_risks: str | None = None
     shortlist_order: int | None = None
 
 
@@ -3152,6 +3237,8 @@ def update_shortlist_meta(
         rec.shortlist_role = body.shortlist_role
     if "shortlist_reason" in body.model_fields_set or body.shortlist_reason is not None:
         rec.shortlist_reason = body.shortlist_reason
+    if "shortlist_risks" in body.model_fields_set or body.shortlist_risks is not None:
+        rec.shortlist_risks = body.shortlist_risks
     if "shortlist_order" in body.model_fields_set or body.shortlist_order is not None:
         rec.shortlist_order = body.shortlist_order
     db.add(rec)
@@ -3159,6 +3246,7 @@ def update_shortlist_meta(
     return {
         "shortlist_role": rec.shortlist_role,
         "shortlist_reason": rec.shortlist_reason,
+        "shortlist_risks": rec.shortlist_risks,
         "shortlist_order": rec.shortlist_order,
     }
 
@@ -4062,8 +4150,16 @@ def suggest_locations(
     # carried on the project row, not the unit row.
     if scope == "region":
         columns = [Project.region_iga]
-    else:  # area
-        columns = [Project.administrative_district_iga, Project.district]
+    else:  # area — union across all geographic granularities so broker can
+        # type "Beroun", "Smíchov", "Praha 8" or "Praha-západ" and get hits
+        columns = [
+            Project.neighborhood,                  # Karlín, Vinohrady, Holešovice…
+            Project.administrative_district_iga,  # Praha 8 (správní obvod)
+            Project.municipality,                  # Praha 8, Praha 4, Beroun…
+            Project.cadastral_area_iga,            # Smíchov, Žižkov, Stodůlky…
+            Project.city,                          # Praha, Beroun, Kladno…
+            Project.district,                      # okres: Praha-západ, Beroun…
+        ]
 
     # Aggregate (value, count) across the selected columns in a single
     # pass per column, then merge in Python.  Two small queries are
@@ -4083,6 +4179,50 @@ def suggest_locations(
     # the same frequency bucket.
     ordered = sorted(merged.items(), key=lambda kv: (-kv[1], kv[0].lower()))
     return [{"value": v, "count": c} for v, c in ordered[:limit]]
+
+
+@app.get(
+    "/locations/hierarchy",
+    summary="Hierarchical location picker data",
+    description=(
+        "Returns location tree for 3-level drill-down: district → municipality → neighborhood. "
+        "Without params returns all districts. With district= returns municipalities in that district. "
+        "With municipality= returns neighborhoods in that municipality."
+    ),
+)
+def location_hierarchy(
+    db: DbSession,
+    district: Annotated[str | None, Query()] = None,
+    municipality: Annotated[str | None, Query()] = None,
+) -> list[dict]:
+    if municipality is not None:
+        # Level 3: neighborhoods within a municipality
+        rows = db.execute(
+            select(Project.neighborhood, func.count().label("cnt"))
+            .where(Project.municipality == municipality, Project.neighborhood.is_not(None))
+            .group_by(Project.neighborhood)
+            .order_by(func.count().desc(), Project.neighborhood)
+        ).all()
+        return [{"value": r.neighborhood, "count": r.cnt} for r in rows]
+
+    if district is not None:
+        # Level 2: municipalities within a district
+        rows = db.execute(
+            select(Project.municipality, func.count().label("cnt"))
+            .where(Project.district == district, Project.municipality.is_not(None))
+            .group_by(Project.municipality)
+            .order_by(func.count().desc(), Project.municipality)
+        ).all()
+        return [{"value": r.municipality, "count": r.cnt} for r in rows]
+
+    # Level 1: all districts
+    rows = db.execute(
+        select(Project.district, func.count().label("cnt"))
+        .where(Project.district.is_not(None))
+        .group_by(Project.district)
+        .order_by(func.count().desc(), Project.district)
+    ).all()
+    return [{"value": r.district, "count": r.cnt} for r in rows]
 
 
 @app.get(
@@ -8075,6 +8215,7 @@ class PortalPreferenceItem(BaseModel):
 
 class PortalPreferencesResponse(BaseModel):
     items: list[PortalPreferenceItem]
+    active_poi_prefs: list[str] = []
 
 
 @app.get("/portal/my-preferences", response_model=PortalPreferencesResponse)
@@ -8256,7 +8397,11 @@ def portal_my_preferences(
             filter_type="feature", raw_value=None,
         ))
 
-    return PortalPreferencesResponse(items=items)
+    # ── Active POI preferences ──
+    wprefs = profile.walkability_preferences_json or {}
+    active_poi_prefs = [k for k, v in wprefs.items() if v in ("normal", "high", "required")]
+
+    return PortalPreferencesResponse(items=items, active_poi_prefs=active_poi_prefs)
 
 
 # --- Portal: Future Projects ---
@@ -8275,6 +8420,8 @@ class PortalFutureProjectItem(BaseModel):
     project_type: str | None = None
     url: str | None = None
     renovation: bool | None = None
+    gps_latitude: float | None = None
+    gps_longitude: float | None = None
     public_data_json: dict | None = None
     my_interest: bool = False
 
@@ -8309,6 +8456,8 @@ def portal_list_future_projects(
             construction_completion=fp.construction_completion,
             project_type=fp.project_type, url=fp.url,
             renovation=fp.renovation,
+            gps_latitude=float(fp.gps_latitude) if fp.gps_latitude is not None else None,
+            gps_longitude=float(fp.gps_longitude) if fp.gps_longitude is not None else None,
             public_data_json=fp.public_data_json,
             my_interest=fp.id in interested_ids,
         )
@@ -8401,6 +8550,10 @@ class PortalRecommendationItem(BaseModel):
     distance_to_primary_road_m: float | None = None
     distance_to_tram_tracks_m: float | None = None
     distance_to_railway_m: float | None = None
+    # MHD stop distances (meters)
+    distance_to_tram_stop_m: float | None = None
+    distance_to_metro_station_m: float | None = None
+    distance_to_bus_stop_m: float | None = None
     feedback: RecommendationFeedbackOut | None = None
     # Broker curation metadata
     pinned_by_broker: bool = False
@@ -8410,6 +8563,9 @@ class PortalRecommendationItem(BaseModel):
     # Project metadata for display
     construction_completion: str | None = None
     project_url: str | None = None
+    noise_label: str | None = None
+    price_diff_pct: float | None = None
+    poi_counts: dict[str, int] = {}
 
 
 def _check_recuperation(project: Project) -> bool:
@@ -8500,6 +8656,9 @@ def portal_list_recommendations(
                 distance_to_primary_road_m=getattr(project, "distance_to_primary_road_m", None),
                 distance_to_tram_tracks_m=getattr(project, "distance_to_tram_tracks_m", None),
                 distance_to_railway_m=getattr(project, "distance_to_railway_m", None),
+                distance_to_tram_stop_m=project.distance_to_tram_stop_m,
+                distance_to_metro_station_m=project.distance_to_metro_station_m,
+                distance_to_bus_stop_m=project.distance_to_bus_stop_m,
                 feedback=RecommendationFeedbackOut(
                     feedback_type=rec.feedback.feedback_type,
                     dislike_reason=rec.feedback.dislike_reason,
@@ -8512,6 +8671,13 @@ def portal_list_recommendations(
                 shortlist_role=rec.shortlist_role,
                 construction_completion=project.construction_completion,
                 project_url=project.project_url,
+                noise_label=project.noise_label,
+                price_diff_pct=float(unit.local_price_diff_2000m) if unit.local_price_diff_2000m is not None else None,
+                poi_counts={
+                    k: int(v)
+                    for k in ("supermarket", "park", "cafe", "restaurant", "fitness", "playground", "kindergarten", "primary_school")
+                    if (v := getattr(project, f"count_{k}_500m", None)) is not None
+                },
             )
         )
     return items

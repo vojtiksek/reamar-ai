@@ -3,7 +3,8 @@
 import Link from "next/link";
 import clsx from "clsx";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
 const RecommendationsMap = dynamic(() => import("./RecommendationsMap"), { ssr: false });
 
@@ -17,10 +18,128 @@ import type {
   RecommendationDislikeReason,
   RecommendationFeedbackType,
   RecommendationItem,
+  WizardExtras,
 } from "@/lib/caseTypes";
 import type { WorkingFilters } from "@/lib/clientMode";
+import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/walkabilityPreferences";
+import { DEFAULT_PREFERENCES as WALK_DEFAULTS, getNonDefaultChips, savePreferences as saveWalkPrefs } from "@/lib/walkabilityPreferences";
+import { QuickEdit } from "../brief/QuickEdit";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
+
+function NoiseBadge({ label }: { label?: string | null }) {
+  if (!label) return null;
+  const lower = label.toLowerCase();
+  const cls = lower.includes("nízký") || lower.includes("nizky")
+    ? "bg-emerald-100 text-emerald-700"
+    : lower.includes("vyšší") || lower.includes("vysoký")
+    ? "bg-rose-100 text-rose-700"
+    : "bg-slate-100 text-slate-500";
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>Hluk: {lower}</span>;
+}
+
+function PriceDiffBadge({ pct }: { pct?: number | null }) {
+  if (pct == null) return <span className="text-slate-300">—</span>;
+  if (pct <= -5) return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">{Math.round(pct)} %</span>;
+  if (pct >= 5) return <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700">+{Math.round(pct)} %</span>;
+  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">±trh</span>;
+}
+
+function Tip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="group/tip relative inline-flex">
+      {children}
+      <span className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[10px] leading-tight text-white opacity-0 group-hover/tip:opacity-100 transition-opacity duration-0 z-50">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function NearSourceBadges({ tramM, railM, roadM }: { tramM?: number | null; railM?: number | null; roadM?: number | null }) {
+  const badges: { label: string; tip: string }[] = [];
+  if (tramM != null && tramM <= 150) badges.push({ label: "Tram", tip: `Tramvajová trať ${Math.round(tramM)} m` });
+  if (railM != null && railM <= 200) badges.push({ label: "Vlak", tip: `Železnice ${Math.round(railM)} m` });
+  if (roadM != null && roadM <= 80) badges.push({ label: "Silnice", tip: `Hlavní silnice ${Math.round(roadM)} m` });
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map((b) => (
+        <Tip key={b.label} text={b.tip}>
+          <span className="rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">{b.label}</span>
+        </Tip>
+      ))}
+    </>
+  );
+}
+
+const POI_EMOJI: Record<string, string> = {
+  cafe: "☕",
+  restaurant: "🍽️",
+  park: "🌳",
+  fitness: "🏋️",
+  playground: "🛝",
+  supermarket: "🛒",
+  primary_school: "🎓",
+  kindergarten: "👶",
+};
+
+const POI_LABELS: Record<string, string> = {
+  supermarket: "Obchod",
+  park: "Parky",
+  cafe: "Kavárny",
+  restaurant: "Restaurace",
+  fitness: "Fitness",
+  playground: "Hřiště",
+  kindergarten: "Školka",
+  primary_school: "ZŠ",
+};
+
+function PoiBadges({ poiCounts, activePrefs }: { poiCounts?: Record<string, number> | null; activePrefs: string[] }) {
+  if (!poiCounts || !activePrefs.length) return null;
+  const badges = activePrefs.filter((k) => (poiCounts[k] ?? 0) > 0).slice(0, 5);
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map((k) => (
+        <Tip key={k} text={`${POI_LABELS[k] ?? k}: ${poiCounts[k]} do 500 m`}>
+          <span className="rounded-full bg-teal-50 border border-teal-200 px-1 py-0.5 text-[10px] font-medium text-teal-700">
+            {POI_EMOJI[k] ?? k} {poiCounts[k]}
+          </span>
+        </Tip>
+      ))}
+    </>
+  );
+}
+
+const MHD_CONFIG: { key: "metro" | "tram" | "bus"; field: "distance_to_metro_station_m" | "distance_to_tram_stop_m" | "distance_to_bus_stop_m"; threshold: number; emoji: string; label: string }[] = [
+  { key: "metro", field: "distance_to_metro_station_m", threshold: 600, emoji: "🚇", label: "Metro" },
+  { key: "tram",  field: "distance_to_tram_stop_m",     threshold: 300, emoji: "🚋", label: "Tramvaj" },
+  { key: "bus",   field: "distance_to_bus_stop_m",      threshold: 200, emoji: "🚌", label: "Bus" },
+];
+
+function MhdBadges({ rec, activePrefs }: { rec: RecommendationItem; activePrefs: string[] }) {
+  const badges = MHD_CONFIG.filter(({ key, field, threshold }) => {
+    if (!activePrefs.includes(key)) return false;
+    const d = rec[field];
+    return d != null && d <= threshold;
+  });
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map(({ key, field, emoji, label }) => {
+        const d = rec[field];
+        return (
+          <Tip key={key} text={`${label} ${Math.round(d!)} m`}>
+            <span className="rounded-full bg-blue-50 border border-blue-200 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+              {emoji} {Math.round(d!)} m
+            </span>
+          </Tip>
+        );
+      })}
+    </>
+  );
+}
 
 const DISLIKE_REASONS: { value: RecommendationDislikeReason; label: string }[] = [
   { value: "price", label: "Cena" },
@@ -186,6 +305,7 @@ function RecommendationCard({
               {r.floor_area_m2 != null ? ` · ${Math.round(r.floor_area_m2)} m²` : ""}
               {r.floor != null ? ` · ${r.floor}. patro` : ""}
               {r.district ? ` · ${r.district}` : ""}
+              {r.noise_label && <span className="ml-2"><NoiseBadge label={r.noise_label} /></span>}
             </p>
             <p className="mt-3 text-sm text-slate-700">
               {r.top_strengths?.[0] ?? "Odpovídá zadání klienta."}
@@ -346,8 +466,29 @@ function RecommendationSection({
 /*  Units table view — compact, dense, sortable              */
 /* ────────────────────────────────────────────────────────── */
 
-type SortKey = "score" | "price_czk" | "floor_area_m2" | "price_per_m2_czk" | "exterior_area_m2" | "floor";
+type SortKey = "score" | "price_czk" | "floor_area_m2" | "price_per_m2_czk" | "exterior_area_m2" | "floor" | "price_diff_pct" | "commute_sum";
 type SortDir = "asc" | "desc";
+
+type CommuteDetailItem = { label: string; mode: string; minutes: number; max_minutes: number; priority: string; passed: boolean; is_estimated?: boolean };
+
+/** Extract commute minutes for a given label from reason_json. */
+function getCommuteMinutes(r: RecommendationItem, label: string): number | null {
+  const details = (r.reason?.commute_details ?? []) as CommuteDetailItem[];
+  const d = details.find((d) => d.label === label);
+  return d ? d.minutes : null;
+}
+
+/** Sum commute minutes for selected labels. Null if no data at all. */
+function getCommuteSumMinutes(r: RecommendationItem, labels: string[]): number | null {
+  if (!labels.length) return null;
+  let sum = 0;
+  let hasAny = false;
+  for (const label of labels) {
+    const m = getCommuteMinutes(r, label);
+    if (m != null) { sum += m; hasAny = true; }
+  }
+  return hasAny ? sum : null;
+}
 
 function SortableHeader({
   label,
@@ -356,6 +497,7 @@ function SortableHeader({
   currentDir,
   onSort,
   className,
+  tip,
 }: {
   label: string;
   sortKey: SortKey;
@@ -363,6 +505,7 @@ function SortableHeader({
   currentDir: SortDir;
   onSort: (key: SortKey) => void;
   className?: string;
+  tip?: string;
 }) {
   const active = currentSort === sortKey;
   return (
@@ -370,7 +513,7 @@ function SortableHeader({
       className={cn("cursor-pointer select-none px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 hover:text-slate-900", className)}
       onClick={() => onSort(sortKey)}
     >
-      {label}
+      {tip ? <Tip text={tip}><span>{label}</span></Tip> : label}
       {active && <span className="ml-1">{currentDir === "asc" ? "↑" : "↓"}</span>}
     </th>
   );
@@ -379,6 +522,9 @@ function SortableHeader({
 function UnitRow({
   r,
   thresholds,
+  activePoiPrefs,
+  commuteLabels,
+  selectedCommuteLabels,
   onPin,
   onOpen,
   onFeedback,
@@ -387,6 +533,9 @@ function UnitRow({
 }: {
   r: RecommendationItem;
   thresholds: ScoringThresholds;
+  activePoiPrefs: string[];
+  commuteLabels: string[];
+  selectedCommuteLabels: string[];
   onPin: () => void;
   onOpen: () => void;
   onFeedback: (type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
@@ -417,10 +566,29 @@ function UnitRow({
         </td>
         {/* Project */}
         <td className="px-3 py-2.5">
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="font-medium text-slate-900 truncate max-w-[200px]">{r.project_name ?? "—"}</span>
+            {r.noise_label && <NoiseBadge label={r.noise_label} />}
+            <NearSourceBadges tramM={r.distance_to_tram_tracks_m} railM={r.distance_to_railway_m} roadM={r.distance_to_primary_road_m} />
           </div>
-          {r.district && <p className="text-[11px] text-slate-400">{r.district}</p>}
+          {(r.district || r.construction_completion) && (
+            <p className="text-[11px] text-slate-400">
+              {r.district}{r.district && r.construction_completion ? " · " : ""}{r.construction_completion ? `Dokončení: ${r.construction_completion}` : ""}
+            </p>
+          )}
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            <MhdBadges rec={r} activePrefs={activePoiPrefs} />
+            <PoiBadges poiCounts={r.poi_counts} activePrefs={activePoiPrefs} />
+          </div>
+          {r.eligibility === "review" && r.eligibility_reasons?.length ? (
+            <div className="mt-0.5 flex flex-wrap gap-1">
+              {r.eligibility_reasons.map((reason, i) => (
+                <span key={i} className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700" title={reason}>
+                  ⚠ {reason.replace(/\s*\(data missing\)/i, "").replace(/_/g, " ")}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </td>
         {/* Layout */}
         <td className="px-3 py-2.5 text-slate-700">{r.layout_label ?? "—"}</td>
@@ -433,16 +601,34 @@ function UnitRow({
         {/* Price */}
         <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900">{r.price_czk != null ? formatCurrencyCzk(r.price_czk) : "—"}</td>
         {/* Price/m² */}
-        <td className="px-3 py-2.5 text-right tabular-nums text-slate-500 text-xs">{r.price_per_m2_czk != null ? formatCurrencyCzk(r.price_per_m2_czk) : "—"}</td>
-        {/* Fit dots */}
-        <td className="px-3 py-2.5">
-          <div className="flex items-center gap-1">
-            <FitDot value={r.budget_fit} title={`Rozpočet ${Math.round(r.budget_fit)}`} />
-            <FitDot value={r.location_fit} title={`Lokalita ${Math.round(r.location_fit)}`} />
-            <FitDot value={r.area_fit} title={`Plocha ${Math.round(r.area_fit)}`} />
-            <FitDot value={r.outdoor_fit} title={`Exteriér ${Math.round(r.outdoor_fit)}`} />
-          </div>
-        </td>
+        <td className="px-3 py-2.5 text-right tabular-nums text-slate-500 text-xs">{r.price_per_m2_czk != null ? `${Math.round(r.price_per_m2_czk / 1000)}k Kč` : "—"}</td>
+        {/* Market deviation */}
+        <td className="px-3 py-2.5 text-center"><PriceDiffBadge pct={r.price_diff_pct} /></td>
+        {/* Commute columns */}
+        {commuteLabels.map((label) => {
+          const details = (r.reason?.commute_details ?? []) as CommuteDetailItem[];
+          const d = details.find((cd) => cd.label === label);
+          const isSelected = selectedCommuteLabels.includes(label);
+          if (!d) return <td key={label} className="px-2 py-2.5 text-center text-xs text-slate-300">—</td>;
+          return (
+            <td key={label} className={cn("px-2 py-2.5 text-center tabular-nums text-xs", isSelected && "bg-sky-50/50")}>
+              <span className={cn(
+                d.passed ? "text-slate-700" : "text-rose-600 font-medium",
+              )}>
+                {d.is_estimated && "~"}{Math.round(d.minutes)} min
+              </span>
+            </td>
+          );
+        })}
+        {/* Commute sum */}
+        {commuteLabels.length > 0 && (() => {
+          const sum = getCommuteSumMinutes(r, commuteLabels);
+          return (
+            <td className="px-2 py-2.5 text-center tabular-nums text-xs font-medium text-slate-600">
+              {sum != null ? `${Math.round(sum)} min` : "—"}
+            </td>
+          );
+        })()}
         {/* Status */}
         <td className="px-3 py-2.5">
           <StatusBadge r={r} />
@@ -476,7 +662,7 @@ function UnitRow({
       {/* Expanded detail row */}
       {expanded && (
         <tr className="border-b border-slate-100 bg-slate-50/50">
-          <td colSpan={11} className="px-5 py-4">
+          <td colSpan={10 + commuteLabels.length + (commuteLabels.length > 0 ? 1 : 0)} className="px-5 py-4">
             <div className="grid gap-4 md:grid-cols-3">
               <div>
                 <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Proč je tady</p>
@@ -519,6 +705,8 @@ function UnitRow({
 function UnitsTableView({
   recs,
   thresholds,
+  activePoiPrefs,
+  commuteLabels,
   onPin,
   onOpen,
   onFeedback,
@@ -527,6 +715,8 @@ function UnitsTableView({
 }: {
   recs: RecommendationItem[];
   thresholds: ScoringThresholds;
+  activePoiPrefs: string[];
+  commuteLabels: string[];
   onPin: (item: RecommendationItem) => void;
   onOpen: (item: RecommendationItem) => void;
   onFeedback: (item: RecommendationItem, type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
@@ -535,16 +725,30 @@ function UnitsTableView({
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  // Multi-select commute labels for combined sort
+  const [selectedCommuteLabels, setSelectedCommuteLabels] = useState<string[]>([]);
 
   const sorted = useMemo(() => {
     const arr = [...recs];
     arr.sort((a, b) => {
-      const av = a[sortKey] ?? -Infinity;
-      const bv = b[sortKey] ?? -Infinity;
+      if (sortKey === "commute_sum") {
+        const sortLabels = selectedCommuteLabels.length > 0 ? selectedCommuteLabels : commuteLabels;
+        const av = getCommuteSumMinutes(a, sortLabels);
+        const bv = getCommuteSumMinutes(b, sortLabels);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return sortDir === "asc" ? av - bv : bv - av;
+      }
+      const av = a[sortKey as keyof RecommendationItem] as number | null | undefined;
+      const bv = b[sortKey as keyof RecommendationItem] as number | null | undefined;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       return sortDir === "asc" ? (av as number) - (bv as number) : (bv as number) - (av as number);
     });
     return arr;
-  }, [recs, sortKey, sortDir]);
+  }, [recs, sortKey, sortDir, selectedCommuteLabels]);
 
   const handleSort = (key: SortKey) => {
     if (key === sortKey) {
@@ -555,6 +759,20 @@ function UnitsTableView({
     }
   };
 
+  const toggleCommuteLabel = (label: string) => {
+    setSelectedCommuteLabels((prev) => {
+      const next = prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label];
+      if (next.length > 0) {
+        setSortKey("commute_sum");
+        setSortDir("asc");
+      } else {
+        setSortKey("score");
+        setSortDir("desc");
+      }
+      return next;
+    });
+  };
+
   return (
     <ReamarCard className="overflow-hidden">
       <div className="overflow-x-auto">
@@ -563,13 +781,35 @@ function UnitsTableView({
             <tr className="border-b border-slate-200 bg-slate-50/80">
               <SortableHeader label="Shoda" sortKey="score" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="w-[70px] text-center" />
               <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Projekt</th>
-              <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Dispozice</th>
+              <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Typ</th>
               <SortableHeader label="Plocha" sortKey="floor_area_m2" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <SortableHeader label="Ext." sortKey="exterior_area_m2" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <SortableHeader label="Patro" sortKey="floor" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-center" />
               <SortableHeader label="Cena" sortKey="price_czk" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
               <SortableHeader label="Kč/m²" sortKey="price_per_m2_czk" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-right" />
-              <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Fit</th>
+              <SortableHeader label="Trh" sortKey="price_diff_pct" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-center" tip="Odchylka od tržní ceny v okruhu 2 km" />
+              {/* Dynamic commute columns */}
+              {commuteLabels.map((label) => {
+                const isSelected = selectedCommuteLabels.includes(label);
+                const shortLabel = label.split(/\s+/)[0];
+                return (
+                  <th
+                    key={label}
+                    className={cn(
+                      "cursor-pointer select-none px-2 py-2 text-center text-[11px] font-semibold uppercase tracking-wide transition-colors hover:text-slate-900",
+                      isSelected ? "text-sky-700 bg-sky-50/60" : "text-slate-500",
+                    )}
+                    onClick={() => toggleCommuteLabel(label)}
+                    title={`${label} — klikni pro řazení`}
+                  >
+                    {shortLabel}
+                    {isSelected && <span className="ml-0.5">{sortDir === "asc" ? "↑" : "↓"}</span>}
+                  </th>
+                );
+              })}
+              {commuteLabels.length > 0 && (
+                <SortableHeader label="Celkem" sortKey="commute_sum" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="text-center" />
+              )}
               <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Stav</th>
               <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 w-[90px]">Akce</th>
             </tr>
@@ -580,6 +820,9 @@ function UnitsTableView({
                 key={r.rec_id}
                 r={r}
                 thresholds={thresholds}
+                activePoiPrefs={activePoiPrefs}
+                commuteLabels={commuteLabels}
+                selectedCommuteLabels={selectedCommuteLabels}
                 onPin={() => onPin(r)}
                 onOpen={() => onOpen(r)}
                 onFeedback={(type, options) => onFeedback(r, type, options)}
@@ -653,6 +896,7 @@ function buildProjectGroups(recs: RecommendationItem[]): ProjectGroup[] {
 function ProjectGroupCard({
   group,
   thresholds,
+  activePoiPrefs,
   onPin,
   onOpen,
   onFeedback,
@@ -664,6 +908,7 @@ function ProjectGroupCard({
 }: {
   group: ProjectGroup;
   thresholds: ScoringThresholds;
+  activePoiPrefs: string[];
   onPin: (item: RecommendationItem) => void;
   onOpen: (item: RecommendationItem) => void;
   onFeedback: (item: RecommendationItem, type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
@@ -696,8 +941,10 @@ function ProjectGroupCard({
             {Math.round(group.best_score)}
           </span>
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-base font-semibold text-slate-900 truncate">{group.project_name}</h3>
+              {group.units[0]?.noise_label && <NoiseBadge label={group.units[0].noise_label} />}
+              <NearSourceBadges tramM={group.units[0]?.distance_to_tram_tracks_m} railM={group.units[0]?.distance_to_railway_m} roadM={group.units[0]?.distance_to_primary_road_m} />
               {/* Project status chips */}
               {group.pinned_count > 0 && (
                 <span className="shrink-0 inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -712,6 +959,12 @@ function ProjectGroupCard({
               {group.units.length} {group.units.length === 1 ? "jednotka" : group.units.length < 5 ? "jednotky" : "jednotek"}
               {group.layouts.length > 0 ? ` · ${group.layouts.join(", ")}` : ""}
             </p>
+            {group.units[0] && (
+              <div className="mt-0.5 flex flex-wrap gap-1">
+                <MhdBadges rec={group.units[0]} activePrefs={activePoiPrefs} />
+                <PoiBadges poiCounts={group.units[0].poi_counts} activePrefs={activePoiPrefs} />
+              </div>
+            )}
             <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-slate-400">
               {group.area_range[0] != null && (
                 <span>{group.area_range[0] === group.area_range[1] ? `${Math.round(group.area_range[0]!)} m²` : `${Math.round(group.area_range[0]!)}–${Math.round(group.area_range[1]!)} m²`}</span>
@@ -719,7 +972,7 @@ function ProjectGroupCard({
               {group.ext_area_range[0] != null && group.ext_area_range[0]! > 0 && (
                 <span>ext. {group.ext_area_range[0] === group.ext_area_range[1] ? `${Math.round(group.ext_area_range[0]!)} m²` : `${Math.round(group.ext_area_range[0]!)}–${Math.round(group.ext_area_range[1]!)} m²`}</span>
               )}
-              {group.construction_completion && parseInt(group.construction_completion.slice(0, 4)) >= 2024 && (
+              {group.construction_completion && (
                 <span>Dokončení: {group.construction_completion}</span>
               )}
             </div>
@@ -882,6 +1135,7 @@ function ProjectGroupCard({
 function ProjectsGroupedView({
   recs,
   thresholds,
+  activePoiPrefs,
   onPin,
   onOpen,
   onFeedback,
@@ -893,6 +1147,7 @@ function ProjectsGroupedView({
 }: {
   recs: RecommendationItem[];
   thresholds: ScoringThresholds;
+  activePoiPrefs: string[];
   onPin: (item: RecommendationItem) => void;
   onOpen: (item: RecommendationItem) => void;
   onFeedback: (item: RecommendationItem, type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
@@ -910,6 +1165,7 @@ function ProjectsGroupedView({
           key={g.project_id ?? "unknown"}
           group={g}
           thresholds={thresholds}
+          activePoiPrefs={activePoiPrefs}
           onPin={onPin}
           onOpen={onOpen}
           onFeedback={onFeedback}
@@ -959,19 +1215,25 @@ function ViewToggle({ mode, onChange }: { mode: ViewMode; onChange: (m: ViewMode
 /*  Quick filters                                            */
 /* ────────────────────────────────────────────────────────── */
 
-type QuickFilter = "all" | "pinned" | "hide_disliked" | "undecided";
+type QuickFilter = "all" | "pinned" | "hide_disliked" | "undecided" | "review" | "verified";
 
 const QUICK_FILTERS: { key: QuickFilter; label: string }[] = [
   { key: "all", label: "Vše" },
   { key: "pinned", label: "★ Ve výběru" },
   { key: "hide_disliked", label: "Skrýt nechci" },
   { key: "undecided", label: "Bez rozhodnutí" },
+  { key: "review", label: "K prověření" },
+  { key: "verified", label: "100% splňuje" },
 ];
 
 function applyQuickFilter(recs: RecommendationItem[], filter: QuickFilter): RecommendationItem[] {
   switch (filter) {
     case "pinned":
       return recs.filter((r) => r.pinned_by_broker);
+    case "review":
+      return recs.filter((r) => r.eligibility === "review");
+    case "verified":
+      return recs.filter((r) => r.eligibility !== "review");
     case "hide_disliked":
       return recs.filter((r) => r.feedback?.feedback_type !== "disliked");
     case "undecided":
@@ -1055,6 +1317,7 @@ function WorkingFiltersBar({
   recomputing: boolean;
   saving: boolean;
 }) {
+  const [open, setOpen] = useState(modifiedKeys.length > 0);
   const isModified = (key: string) => modifiedKeys.includes(key);
   const currentPropertyType =
     workingFilters.propertyTypes && workingFilters.propertyTypes.length === 1
@@ -1070,7 +1333,29 @@ function WorkingFiltersBar({
   };
 
   return (
-    <ReamarCard className="p-4">
+    <ReamarCard className="px-4 py-3">
+      {/* Collapsed header — always visible */}
+      <button
+        type="button"
+        className="flex w-full items-center justify-between"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Pracovní filtry</span>
+          {modifiedKeys.length > 0 ? (
+            <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+              {modifiedKeys.length} {modifiedKeys.length === 1 ? "úprava" : modifiedKeys.length < 5 ? "úpravy" : "úprav"}
+            </span>
+          ) : (
+            <span className="text-[11px] text-slate-400">shoduje se se zadáním</span>
+          )}
+        </div>
+        <span className={cn("text-slate-400 transition-transform text-xs", open && "rotate-180")}>▾</span>
+      </button>
+
+      {/* Expanded edit area */}
+      {open && (
+      <div className="mt-3">
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <label className={cn("flex items-center text-[11px] font-semibold uppercase tracking-wide text-slate-500", isModified("budgetMax") && "text-amber-700")}>
@@ -1173,6 +1458,245 @@ function WorkingFiltersBar({
           {modifiedKeys.length === 1 ? "změna" : modifiedKeys.length < 5 ? "změny" : "změn"}).
         </p>
       )}
+      </div>
+      )}
+    </ReamarCard>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/*  Standards quick-edit bar                                  */
+/* ────────────────────────────────────────────────────────── */
+
+type StdPriority = "ignore" | "prefer" | "must";
+
+const STANDARDS_CONTROLS: { key: string; label: string }[] = [
+  { key: "floor_heating", label: "Podlahové vytápění" },
+  { key: "recuperation", label: "Rekuperace" },
+  { key: "air_conditioning", label: "Klimatizace" },
+  { key: "exterior_blinds", label: "Venkovní žaluzie" },
+  { key: "cellar", label: "Sklep" },
+];
+
+function StdPill({ value, onChange }: { value: StdPriority; onChange: (v: StdPriority) => void }) {
+  const opts: { v: StdPriority; label: string; active: string }[] = [
+    { v: "ignore", label: "—", active: "bg-white text-slate-600 shadow-sm" },
+    { v: "prefer", label: "Chci", active: "bg-violet-100 text-violet-800 shadow-sm" },
+    { v: "must", label: "Musí", active: "bg-slate-900 text-white shadow-sm" },
+  ];
+  return (
+    <div className="inline-flex rounded-md border border-slate-200 bg-slate-100/60 p-0.5">
+      {opts.map((o) => (
+        <button
+          key={o.v}
+          type="button"
+          className={cn(
+            "rounded px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+            value === o.v ? o.active : "text-slate-400 hover:text-slate-600",
+          )}
+          onClick={() => onChange(o.v)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StandardsBar({
+  wizardExtras,
+  onChange,
+  onApply,
+  recomputing,
+}: {
+  wizardExtras: WizardExtras;
+  onChange: (key: string, value: StdPriority) => void;
+  onApply: () => void;
+  recomputing: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const standards = wizardExtras.standards ?? {};
+
+  // Count active (non-ignore) standards
+  const activeCount = STANDARDS_CONTROLS.filter(
+    (s) => {
+      const v = (standards as Record<string, string | undefined>)[s.key];
+      return v && v !== "ignore";
+    }
+  ).length;
+
+  return (
+    <ReamarCard className="px-4 py-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Standardy a vybavení</span>
+          {activeCount > 0 && (
+            <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-800">
+              {activeCount} aktivní
+            </span>
+          )}
+          {!open && activeCount > 0 && (
+            <span className="text-[11px] text-slate-400">
+              {STANDARDS_CONTROLS
+                .filter((s) => {
+                  const v = (standards as Record<string, string | undefined>)[s.key];
+                  return v && v !== "ignore";
+                })
+                .map((s) => {
+                  const v = (standards as Record<string, string | undefined>)[s.key];
+                  return `${s.label} (${v === "must" ? "musí" : "chci"})`;
+                })
+                .join(" · ")}
+            </span>
+          )}
+        </div>
+        <span className={cn("text-slate-400 transition-transform text-xs", open && "rotate-180")}>▾</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap gap-x-5 gap-y-2">
+            {STANDARDS_CONTROLS.map((s) => {
+              const current = ((standards as Record<string, string | undefined>)[s.key] ?? "ignore") as StdPriority;
+              return (
+                <div key={s.key} className="flex items-center gap-2">
+                  <span className="text-xs text-slate-700 w-[130px]">{s.label}</span>
+                  <StdPill value={current} onChange={(v) => onChange(s.key, v)} />
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2 pt-1">
+            <ReamarButton type="button" variant="primary" size="sm" onClick={onApply} disabled={recomputing}>
+              {recomputing ? "Přepočítávám…" : "Přepočítat"}
+            </ReamarButton>
+            <span className="text-[10px] text-slate-400">Změna standardů uloží profil a přepočítá doporučení</span>
+          </div>
+        </div>
+      )}
+    </ReamarCard>
+  );
+}
+
+/* ────────────────────────────────────────────────────────── */
+/*  Walkability/POI quick controls                            */
+/* ────────────────────────────────────────────────────────── */
+
+const WALK_CATEGORIES: { key: keyof WalkabilityPreferences; label: string; group: string }[] = [
+  { key: "supermarket", label: "Obchod", group: "Denní potřeby" },
+  { key: "pharmacy", label: "Lékárna", group: "Denní potřeby" },
+  { key: "park", label: "Park", group: "Volný čas" },
+  { key: "restaurant", label: "Restaurace", group: "Volný čas" },
+  { key: "cafe", label: "Kavárna", group: "Volný čas" },
+  { key: "fitness", label: "Fitness", group: "Volný čas" },
+  { key: "playground", label: "Hřiště", group: "Rodina" },
+  { key: "kindergarten", label: "Školka", group: "Rodina" },
+  { key: "primary_school", label: "ZŠ", group: "Rodina" },
+  { key: "metro", label: "Metro", group: "Doprava" },
+  { key: "tram", label: "Tramvaj", group: "Doprava" },
+  { key: "bus", label: "Bus", group: "Doprava" },
+];
+
+const WALK_VALUES: { value: WalkabilityPreferenceValue; label: string; active: string }[] = [
+  { value: "required", label: "Musí", active: "bg-red-500 text-white shadow-sm" },
+  { value: "high", label: "Chci", active: "bg-violet-100 text-violet-800 shadow-sm" },
+  { value: "normal", label: "—", active: "bg-white text-slate-600 shadow-sm" },
+  { value: "ignore", label: "Ne", active: "bg-slate-200 text-slate-500 shadow-sm" },
+];
+
+function WalkPill({ value, onChange }: { value: WalkabilityPreferenceValue; onChange: (v: WalkabilityPreferenceValue) => void }) {
+  return (
+    <div className="inline-flex rounded-md border border-slate-200 bg-slate-100/60 p-0.5">
+      {WALK_VALUES.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          className={cn(
+            "rounded px-2 py-0.5 text-[10px] font-medium whitespace-nowrap transition-colors",
+            value === o.value ? o.active : "text-slate-400 hover:text-slate-600",
+          )}
+          onClick={() => onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function WalkabilityBar({
+  walkPrefs,
+  onChange,
+  onApply,
+  recomputing,
+}: {
+  walkPrefs: WalkabilityPreferences;
+  onChange: (key: keyof WalkabilityPreferences, value: WalkabilityPreferenceValue) => void;
+  onApply: () => void;
+  recomputing: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const chips = getNonDefaultChips(walkPrefs);
+  const activeCount = chips.length;
+
+  const groups = useMemo(() => {
+    const m = new Map<string, typeof WALK_CATEGORIES>();
+    for (const c of WALK_CATEGORIES) {
+      const list = m.get(c.group) ?? [];
+      list.push(c);
+      m.set(c.group, list);
+    }
+    return m;
+  }, []);
+
+  return (
+    <ReamarCard className="px-4 py-3">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Okolí a doprava</span>
+          {activeCount > 0 && (
+            <span className="rounded-full bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800">
+              {activeCount} aktivní
+            </span>
+          )}
+          {!open && activeCount > 0 && (
+            <span className="text-[11px] text-slate-400 truncate max-w-[400px]">
+              {chips.join(" · ")}
+            </span>
+          )}
+        </div>
+        <span className={cn("text-slate-400 transition-transform text-xs", open && "rotate-180")}>▾</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          {[...groups.entries()].map(([group, items]) => (
+            <div key={group}>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 mb-1">{group}</p>
+              <div className="flex flex-wrap gap-x-5 gap-y-1.5">
+                {items.map((c) => (
+                  <div key={c.key} className="flex items-center gap-2">
+                    <span className="text-xs text-slate-700 w-[80px]">{c.label}</span>
+                    <WalkPill value={walkPrefs[c.key]} onChange={(v) => onChange(c.key, v)} />
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="flex items-center gap-2 pt-1">
+            <ReamarButton type="button" variant="primary" size="sm" onClick={onApply} disabled={recomputing}>
+              {recomputing ? "Přepočítávám…" : "Přepočítat"}
+            </ReamarButton>
+            <span className="text-[10px] text-slate-400">Změna okolí uloží profil a přepočítá doporučení</span>
+          </div>
+        </div>
+      )}
     </ReamarCard>
   );
 }
@@ -1184,6 +1708,7 @@ function WorkingFiltersBar({
 export default function RecommendationsPage() {
   const {
     client,
+    clientId,
     recs,
     recsFunnel,
     loading,
@@ -1191,17 +1716,29 @@ export default function RecommendationsPage() {
     hydrated,
     token,
     recomputing,
+    recomputeProgress,
     router,
     handleRecompute,
     handlePin,
     handleRecommendationFeedback,
     clearRecommendationFeedback,
     feedbackSavingId,
-    marketFit,
+    profile, setProfile,
+    selectedLayouts, setSelectedLayouts,
+    LAYOUT_OPTIONS,
     clientModeState,
     clientModeSaving,
     updateWorkingFilter,
     resetWorkingFilters,
+    wizardExtras,
+    setWizardExtras,
+    handleSaveProfile,
+    profileSaving,
+    profileDirty,
+    walkPrefs,
+    setWalkPrefs,
+    locationPolygons,
+    projectsInsidePolygon,
   } = useCaseData();
   const thresholds = useThresholds(token);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -1214,11 +1751,12 @@ export default function RecommendationsPage() {
   const [quickFilter, setQuickFilter] = useState<QuickFilter>(() => {
     if (typeof window === "undefined") return "hide_disliked";
     const saved = localStorage.getItem("reamar_recs_filter");
-    return (["all", "pinned", "hide_disliked", "undecided"] as QuickFilter[]).includes(saved as QuickFilter)
+    return (["all", "pinned", "hide_disliked", "undecided", "review", "verified"] as QuickFilter[]).includes(saved as QuickFilter)
       ? (saved as QuickFilter)
       : "hide_disliked";
   });
 
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const filteredRecs = useMemo(() => applyQuickFilter(recs, quickFilter), [recs, quickFilter]);
 
   const filterCounts = useMemo<Record<QuickFilter, number>>(() => ({
@@ -1226,6 +1764,8 @@ export default function RecommendationsPage() {
     pinned: recs.filter((r) => r.pinned_by_broker).length,
     hide_disliked: recs.filter((r) => r.feedback?.feedback_type !== "disliked").length,
     undecided: recs.filter((r) => !r.pinned_by_broker && !r.feedback).length,
+    review: recs.filter((r) => r.eligibility === "review").length,
+    verified: recs.filter((r) => r.eligibility !== "review").length,
   }), [recs]);
 
   const grouped = useMemo(() => {
@@ -1268,6 +1808,34 @@ export default function RecommendationsPage() {
     setHiddenRecs((prev) => prev.filter((r) => r.rec_id !== recId));
   };
 
+  const activePoiPrefs = useMemo(() => {
+    const wprefs = profile?.walkability_preferences_json ?? {};
+    return Object.entries(wprefs)
+      .filter(([, v]) => v === "normal" || v === "high" || v === "required")
+      .map(([k]) => k);
+  }, [profile?.walkability_preferences_json]);
+
+  // Detekce odhadnutých dojezdů — musí být před early returns (Rules of Hooks)
+  const hasEstimatedCommute = useMemo(() => {
+    if (!recs.length) return false;
+    return recs.some((r) => {
+      const details = (r.reason?.commute_details ?? []) as Array<{ is_estimated?: boolean }>;
+      return details.some((d) => d.is_estimated);
+    });
+  }, [recs]);
+
+  // Extract unique commute point labels — must be before early returns (Rules of Hooks)
+  const commuteLabels = useMemo(() => {
+    const labels: string[] = [];
+    const seen = new Set<string>();
+    for (const r of recs) {
+      for (const d of (r.reason?.commute_details ?? []) as CommuteDetailItem[]) {
+        if (d.label && !seen.has(d.label)) { seen.add(d.label); labels.push(d.label); }
+      }
+    }
+    return labels;
+  }, [recs]);
+
   if (!hydrated) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Načítání…</div></div>;
   if (!token) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Nejste přihlášen. Přejděte na <Link href="/login" className="text-slate-900 underline">/login</Link>.</div></div>;
   if (loading) return <p className="text-sm text-slate-600">Načítání…</p>;
@@ -1294,6 +1862,7 @@ export default function RecommendationsPage() {
 
   const sharedProps = {
     thresholds,
+    activePoiPrefs,
     onPin: (r: RecommendationItem) => handlePin(r.rec_id, r.pinned_by_broker),
     onOpen: (r: RecommendationItem) => r.unit_external_id && router.push(`/units/${encodeURIComponent(r.unit_external_id)}`),
     onFeedback: (r: RecommendationItem, type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => handleRecommendationFeedback(r.rec_id, type, options),
@@ -1302,71 +1871,91 @@ export default function RecommendationsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <ReamarCard className="p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Doporučení</p>
-            <h2 className="mt-1 text-2xl font-semibold text-slate-900">Doporučení pro {client.name}</h2>
-            <p className="mt-2 max-w-2xl text-sm text-slate-600">Vybrané nabídky seřazené podle shody se zadáním.</p>
-          </div>
-          <div className="flex items-center gap-3">
-            <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
-            <ReamarButton type="button" variant="subtle" size="sm" onClick={() => router.push(`/cases/${client.id}/brief`)}>Upravit zadání</ReamarButton>
-            {!clientModeState && (
-              <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>{recomputing ? "Přepočítávám…" : "Přepočítat doporučení"}</ReamarButton>
-            )}
-          </div>
+    <div className="space-y-3">
+      {/* Přepočítávám — progress banner */}
+      {recomputing && (
+        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <svg className="h-4 w-4 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span>
+            {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
+              ? <>Počítám dojezdy… <span className="font-medium">({recomputeProgress.done}/{recomputeProgress.total} projektů)</span></>
+              : recomputeProgress && recomputeProgress.total > 0
+              ? <>Skóruji projekty… <span className="font-medium text-blue-600">({recomputeProgress.total} projektů)</span></>
+              : "Počítám doporučení…"
+            }
+          </span>
         </div>
-        <div className="mt-5 grid gap-3 md:grid-cols-5">
-          <div className="rounded-xl bg-slate-50 p-3"><p className="text-[11px] uppercase tracking-wide text-slate-500">Doporučení</p><p className="mt-1 text-2xl font-semibold text-slate-900">{recs.length}</p></div>
-          {marketFit && (
-            <div className="rounded-xl bg-indigo-50 p-3" title="Jednotky odpovídající aktuálním filtrům / všechny dostupné">
-              <p className="text-[11px] uppercase tracking-wide text-indigo-700">Funnel</p>
-              <p className="mt-1 text-2xl font-semibold text-indigo-900">
-                {marketFit.matching_units_count}
-                <span className="text-sm font-normal text-indigo-600">
-                  {" / "}{marketFit.available_units_count}
-                </span>
-              </p>
-            </div>
+      )}
+
+      {/* Filters — portalled into layout tabs row */}
+      {typeof document !== "undefined" && document.getElementById("case-tabs-slot") && profile && createPortal(
+        <>
+          <span className="text-[11px] text-slate-400 font-medium">Filtry:</span>
+          {profile.budget_max != null && profile.budget_min == null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {formatCurrencyCzk(profile.budget_max)}</span>
           )}
-          <div className="rounded-xl bg-amber-50 p-3"><p className="text-[11px] uppercase tracking-wide text-amber-700">★ Ve výběru</p><p className="mt-1 text-2xl font-semibold text-amber-900">{pinnedCount}</p></div>
-          <div className="rounded-xl bg-emerald-50 p-3"><p className="text-[11px] uppercase tracking-wide text-emerald-700">♥ Líbí se</p><p className="mt-1 text-2xl font-semibold text-emerald-900">{likedCount}</p></div>
-          <div className="rounded-xl bg-rose-50 p-3"><p className="text-[11px] uppercase tracking-wide text-rose-700">✕ Nechci</p><p className="mt-1 text-2xl font-semibold text-rose-900">{dislikedCount}</p></div>
+          {profile.budget_min != null && profile.budget_max != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{formatCurrencyCzk(profile.budget_min)} – {formatCurrencyCzk(profile.budget_max)}</span>
+          )}
+          {profile.area_min != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">od {profile.area_min} m²</span>
+          )}
+          {profile.area_max != null && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {profile.area_max} m²</span>
+          )}
+          {selectedLayouts.length > 0 && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{selectedLayouts.join(", ")}</span>
+          )}
+          {profile.property_type && profile.property_type !== "any" && (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{profile.property_type === "flat" ? "Byt" : "Dům"}</span>
+          )}
+          {hasEstimatedCommute && !recomputing && (
+            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">⚠ odhady</span>
+          )}
+        </>,
+        document.getElementById("case-tabs-slot")!
+      )}
+
+      {/* Stats boxes — portalled into layout stats slot */}
+      {typeof document !== "undefined" && document.getElementById("case-stats-slot") && createPortal(
+        <>
+          <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-1.5">
+            <span className="text-[11px] uppercase tracking-wide text-slate-500">Doporučení</span>
+            <span className="text-base font-bold text-slate-900">{recs.length}</span>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5">
+            <span className="text-[11px] text-amber-700">★ Ve výběru</span>
+            <span className="text-base font-bold text-amber-900">{pinnedCount}</span>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5">
+            <span className="text-[11px] text-emerald-700">♥ Líbí se</span>
+            <span className="text-base font-bold text-emerald-900">{likedCount}</span>
+          </div>
+          <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5">
+            <span className="text-[11px] text-rose-700">✕ Nechci</span>
+            <span className="text-base font-bold text-rose-900">{dislikedCount}</span>
+          </div>
+        </>,
+        document.getElementById("case-stats-slot")!
+      )}
+
+
+
+      {/* Quick filters + count + view toggle on one row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <QuickFilterBar filter={quickFilter} onChange={(f) => { setQuickFilter(f); localStorage.setItem("reamar_recs_filter", f); }} counts={filterCounts} />
+          <span className="text-xs text-slate-400">{filteredRecs.length} z {recs.length}</span>
         </div>
-      </ReamarCard>
-
-      {/* Working filters bar — Client Mode */}
-      {clientModeState && (
-        <WorkingFiltersBar
-          workingFilters={clientModeState.workingFilters}
-          modifiedKeys={clientModeState.modifiedKeys}
-          onChange={updateWorkingFilter}
-          onReset={async () => {
-            await resetWorkingFilters();
-            await handleRecompute();
-          }}
-          onApply={handleRecompute}
-          recomputing={recomputing}
-          saving={clientModeSaving}
-        />
-      )}
-
-      {/* Filter funnel (Phase 7b) */}
-      {recsFunnel && <FunnelCard funnel={recsFunnel} />}
-
-      {/* Quick filters */}
-      <QuickFilterBar filter={quickFilter} onChange={(f) => { setQuickFilter(f); localStorage.setItem("reamar_recs_filter", f); }} counts={filterCounts} />
-
-      {/* Filtered count hint */}
-      {quickFilter !== "all" && (
-        <p className="text-xs text-slate-500">Zobrazeno {filteredRecs.length} z {recs.length} doporučení</p>
-      )}
+        <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
+      </div>
 
       {/* Units table view */}
       {viewMode === "units" && (
-        <UnitsTableView recs={filteredRecs} {...sharedProps} />
+        <UnitsTableView recs={filteredRecs} commuteLabels={commuteLabels} {...sharedProps} />
       )}
 
       {/* Projects grouped view */}
@@ -1376,7 +1965,12 @@ export default function RecommendationsPage() {
 
       {/* Map view */}
       {viewMode === "map" && (
-        <RecommendationsMap recs={filteredRecs} />
+        <RecommendationsMap
+          recs={filteredRecs}
+          onProjectFeedback={(recIds, type) => {
+            for (const id of recIds) handleRecommendationFeedback(id, type);
+          }}
+        />
       )}
 
       {/* Original cards view */}
@@ -1418,13 +2012,6 @@ export default function RecommendationsPage() {
             feedbackSavingId={feedbackSavingId}
           />
         </>
-      )}
-
-      {pinnedCount > 0 && (
-        <ReamarCard className="border-amber-200 bg-amber-50/50 p-5 text-center">
-          <p className="text-sm text-slate-700">★ <span className="font-semibold">{pinnedCount}</span> {pinnedCount === 1 ? "jednotka" : pinnedCount < 5 ? "jednotky" : "jednotek"} ve výběru</p>
-          <ReamarButton variant="primary" size="sm" className="mt-3" onClick={() => router.push(`/cases/${client.id}/shortlist`)}>Přejít na výběr</ReamarButton>
-        </ReamarCard>
       )}
 
       {/* Hidden recommendations */}

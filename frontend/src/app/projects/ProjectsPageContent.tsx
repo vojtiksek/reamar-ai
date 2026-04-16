@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { type JSX } from "react";
 
 import { FiltersDrawer } from "@/components/FiltersDrawer";
 import { FilterChips } from "@/components/FilterChips";
@@ -1632,7 +1632,7 @@ export default function ProjectsPage() {
                               >
                                 Detail projektu
                               </a>
-                              {p["project_url"] && (
+                              {(p["project_url"] as string | undefined) && (
                                 <a
                                   href={p["project_url"] as string}
                                   target="_blank"

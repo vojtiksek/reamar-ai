@@ -457,7 +457,7 @@ def compute_walkability_score(
 # Subscores (for UI) may reuse park in leisure and family.
 # ---------------------------------------------------------------------------
 
-PERSONALIZED_PRIORITY_WEIGHTS = {"high": 2.0, "normal": 1.0, "ignore": 0.0}
+PERSONALIZED_PRIORITY_WEIGHTS = {"required": 2.0, "high": 2.0, "normal": 1.0, "ignore": 0.0}
 
 # All categories that can be weighted; each contributes at most once to total score.
 PERSONALIZED_CATEGORIES = [

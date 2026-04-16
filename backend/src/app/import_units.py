@@ -12,7 +12,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, desc, select, tuple_
+from sqlalchemy import delete, desc, select, text, tuple_
 from sqlalchemy.orm import Session
 
 from .db import get_db
@@ -318,6 +318,10 @@ def apply_unit_data_mapped(
         column_type = col.type if col is not None else None
         normalized = _normalize_value_for_column(value, column_type)
         setattr(unit, attr, normalized)
+    # Pokud má jednotka vyplněné sold_date, vždy nastavíme status na "sold"
+    if unit.sold_date is not None:
+        unit.availability_status = "sold"
+        unit.available = False
 
 
 def apply_project_data(
@@ -374,6 +378,16 @@ def apply_project_data(
     # March 2026: new project-level fields from API
     if not only_if_present or unit_data.get("project_url") is not None:
         project.project_url = normalize_str(unit_data.get("project_url"), 1024)
+
+    # Extrahuj čtvrť z adresy formátu "... Praha N-Čtvrť, ..."
+    # Příklady: "186 00 Praha 8-Karlín" → "Karlín", "120 00 Praha 2-Vinohrady" → "Vinohrady"
+    _address = normalize_str(unit_data.get("address"), 255)
+    if _address:
+        import re as _re
+        m = _re.search(r"Praha \d+-([^,]+)", _address)
+        project.neighborhood = m.group(1).strip() if m else None
+    elif not only_if_present:
+        project.neighborhood = None
 
     raw_cc = unit_data.get("construction_completion")
     if not only_if_present or raw_cc is not None:
@@ -716,6 +730,11 @@ def apply_unit_data(
     if not only_if_present or unit_data.get("is_stale_reservation") is not None:
         unit.is_stale_reservation = normalize_bool(unit_data.get("is_stale_reservation"))
 
+    # Pokud má jednotka vyplněné sold_date, vždy nastavíme status na "sold"
+    if unit.sold_date is not None:
+        unit.availability_status = "sold"
+        unit.available = False
+
     # Vždy přepočítat ekvivalentní cenu za m² z aktuálních ploch
     unit.price_per_m2_czk = compute_equivalent_price_per_m2(
         unit.price_czk,
@@ -739,6 +758,35 @@ def should_insert_history(
         or last.availability_status != availability_status
         or last.available != available
     )
+
+
+def cleanup_not_seen_in_dead_projects(session: Session, dead_project_days: int = 180) -> int:
+    """Označí not_seen jednotky bez sold_date jako sold, pokud jsou v projektu kde:
+    - žádná jednotka není available
+    - projekt je v DB déle než dead_project_days dní (dle min first_seen jednotek)
+
+    Vrací počet opravených jednotek.
+    """
+    result = session.execute(text("""
+        WITH project_stats AS (
+            SELECT
+                project_id,
+                min(first_seen) AS project_first_seen,
+                count(*) FILTER (WHERE lower(availability_status) = 'available') AS available_count
+            FROM units
+            GROUP BY project_id
+        )
+        UPDATE units u
+        SET availability_status = 'sold',
+            available = false
+        FROM project_stats ps
+        WHERE u.project_id = ps.project_id
+          AND lower(u.availability_status) = 'not_seen'
+          AND u.sold_date IS NULL
+          AND ps.project_first_seen <= NOW() - CAST(:days || ' days' AS INTERVAL)
+          AND ps.available_count = 0
+    """), {"days": dead_project_days})
+    return result.rowcount
 
 
 def import_units(
@@ -1069,6 +1117,10 @@ def import_units(
                 recompute_project_aggregates(db, sorted(touched_project_ids))
             # Recompute local price diffs (vs. market) for all units
             recompute_local_price_diffs(db)
+            # Cleanup: not_seen jednotky v mrtvých projektech (0 available, first_seen > 180d) → sold
+            dead_fixed = cleanup_not_seen_in_dead_projects(db)
+            if dead_fixed > 0:
+                print(f"Cleanup: {dead_fixed} not_seen jednotek v mrtvých projektech označeno jako sold")
             db.commit()
 
     total_elapsed = time.perf_counter() - total_start

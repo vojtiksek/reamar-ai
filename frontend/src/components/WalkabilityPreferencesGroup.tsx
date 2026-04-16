@@ -29,6 +29,16 @@ export function WalkabilityPreferencesGroup({ title, items, prefs, onChange }: P
               <div className="inline-flex rounded-full bg-slate-100 p-0.5 text-[11px]">
                 <button
                   type="button"
+                  onClick={() => update(item.key, "required")}
+                  className={
+                    "px-2 py-0.5 rounded-full " +
+                    (value === "required" ? "bg-red-500 text-white" : "text-slate-600 hover:text-slate-800")
+                  }
+                >
+                  Vyžaduji
+                </button>
+                <button
+                  type="button"
                   onClick={() => update(item.key, "high")}
                   className={
                     "px-2 py-0.5 rounded-full " +

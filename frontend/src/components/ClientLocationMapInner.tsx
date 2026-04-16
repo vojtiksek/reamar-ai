@@ -297,7 +297,7 @@ export function ClientLocationMapInner({
         </p>
       )}
 
-      <div className={`${tall ? "h-[520px]" : "aspect-[4/3]"} overflow-hidden rounded-lg border border-slate-200`}>
+      <div className={`relative z-0 ${tall ? "h-[520px]" : "aspect-[4/3]"} overflow-hidden rounded-lg border border-slate-200`}>
         <MapContainer center={center} zoom={12} style={{ height: "100%", width: "100%" }}>
           <TileLayer
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"

@@ -220,7 +220,7 @@ export default function ProjectDetailPage() {
   }>({ open: false, category: "", categoryLabel: "", items: [], loading: false, view: "list" });
 
   const { poiOverview: overviewPoi } = usePoiOverview(
-    projectId ?? null,
+    projectId != null ? Number(projectId) : null,
     "supermarkets,pharmacies,parks,restaurants,tram_stops,bus_stops,metro_stations",
   );
   const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");

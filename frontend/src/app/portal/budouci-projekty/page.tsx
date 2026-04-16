@@ -1,8 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { API_BASE } from "@/lib/api";
 import { ReamarCard, ReamarButton } from "@/components/ui/reamar-ui";
+import type { FutureProjectPin } from "@/app/future-projects/FutureProjectsMap";
+
+const FutureProjectsMap = dynamic(() => import("@/app/future-projects/FutureProjectsMap"), { ssr: false });
 
 type FutureProject = {
   id: number;
@@ -18,6 +22,8 @@ type FutureProject = {
   project_type: string | null;
   url: string | null;
   renovation: boolean | null;
+  gps_latitude: number | null;
+  gps_longitude: number | null;
   public_data_json: Record<string, unknown> | null;
   my_interest: boolean;
 };
@@ -73,6 +79,18 @@ export default function PortalFutureProjectsPage() {
           Projekty v přípravě. Zanechte nezávazný zájem a budeme vás informovat.
         </p>
       </div>
+
+      {(() => {
+        const pins: FutureProjectPin[] = projects
+          .filter((fp) => fp.gps_latitude != null && fp.gps_longitude != null)
+          .map((fp) => ({
+            id: fp.id, name: fp.name, slug: fp.slug,
+            lat: fp.gps_latitude!, lng: fp.gps_longitude!,
+            developer: fp.developer, stage: fp.stage, total_units: fp.total_units,
+            date_sale_start: fp.date_sale_start, construction_completion: fp.construction_completion,
+          }));
+        return pins.length > 0 ? <FutureProjectsMap pins={pins} linkPrefix={null} /> : null;
+      })()}
 
       {projects.length === 0 && (
         <ReamarCard className="p-8 text-center">

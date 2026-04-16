@@ -16,7 +16,6 @@ import {
   STANDARD_ENUMS,
   STANDARD_FEATURES,
   AMENITY_FEATURES,
-  NOISE_FEATURES,
 } from "@/lib/wizardModel";
 import type { WizardField } from "@/lib/wizardModel";
 import { useWizardMetadata, getFieldOptions } from "@/hooks/useWizardMetadata";
@@ -27,6 +26,9 @@ import {
   reamarLabelClass,
 } from "@/components/ui/reamar-ui";
 import { CommutePointsEditor, type CommutePoint } from "./CommutePointsEditor";
+import { QuarterPicker } from "@/components/QuarterPicker";
+import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/walkabilityPreferences";
+import { DEFAULT_PREFERENCES as WALK_DEFAULTS, getNonDefaultChips as getWalkChips } from "@/lib/walkabilityPreferences";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -83,7 +85,7 @@ export type QuickEditProps = {
   projectsInsidePolygon: number;
   recs: { length: number };
   recsFunnel?: RecommendationFunnel | null;
-  autoSaveStatus: string;
+  profileDirty: boolean;
   recomputing: boolean;
   handleRecompute: () => void;
   mustHaveSummary: string[];
@@ -92,6 +94,10 @@ export type QuickEditProps = {
   // compatibility with internal callers but is ignored — the full-screen wizard
   // manages its own step state and does not support deep-linking yet.
   onSwitchToWizard: (step?: number) => void;
+  // Walkability / POI preferences — optional for backward compat with
+  // callers that pre-date this addition.
+  walkPrefs?: WalkabilityPreferences;
+  setWalkPrefs?: Dispatch<SetStateAction<WalkabilityPreferences>>;
 };
 
 // ── Helpers ──
@@ -146,9 +152,10 @@ export function QuickEdit({
   locationPolygons, projectsInsidePolygon,
   recs,
   recsFunnel,
-  autoSaveStatus, recomputing, handleRecompute,
+  profileDirty, recomputing, handleRecompute,
   mustHaveSummary, preferSummary,
   onSwitchToWizard,
+  walkPrefs, setWalkPrefs,
 }: QuickEditProps) {
   const { fields: wizardMeta } = useWizardMetadata();
 
@@ -163,7 +170,6 @@ export function QuickEdit({
           onChange={(e) => writeWizardValue(setWizardExtras, setProfile, f.dataPath, e.target.value ? Number(e.target.value) : null)}
           className={cn("mt-1", reamarInputClass)} placeholder={f.placeholder ?? ""} />
         {f.key === "budget_max" && val != null && <p className="mt-0.5 text-[10px] text-slate-500">{formatCurrencyCzk(val)}</p>}
-        {f.key === "ideal_price" && val != null && <p className="mt-0.5 text-[10px] text-slate-500">{formatCurrencyCzk(val)}</p>}
       </div>
     );
   };
@@ -359,15 +365,23 @@ export function QuickEdit({
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className={reamarLabelClass}>Nejdříve</label>
-            <input type="date" value={wizardExtras.earliest_move_in ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: e.target.value || null }))}
-              className={cn("mt-1", reamarInputClass)} />
+            <QuarterPicker
+              value={wizardExtras.earliest_move_in}
+              onChange={(v) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: v }))}
+              mode="start"
+              className={cn("mt-1 w-full", reamarInputClass)}
+              placeholder="Neřeším"
+            />
           </div>
           <div>
             <label className={reamarLabelClass}>Nejpozději</label>
-            <input type="date" value={wizardExtras.latest_move_in ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, latest_move_in: e.target.value || null }))}
-              className={cn("mt-1", reamarInputClass)} />
+            <QuarterPicker
+              value={wizardExtras.latest_move_in}
+              onChange={(v) => setWizardExtras((prev) => ({ ...prev, latest_move_in: v }))}
+              mode="end"
+              className={cn("mt-1 w-full", reamarInputClass)}
+              placeholder="Neřeším"
+            />
           </div>
         </div>
       </div>
@@ -428,45 +442,11 @@ export function QuickEdit({
         <span className="font-normal normal-case tracking-normal text-[10px] text-slate-400">ovlivňují pořadí</span>
       </p>
 
-      {/* Ideální cena */}
-      <div className="rounded-xl border border-slate-200 bg-white p-3">
-        <label className={reamarLabelClass}>Ideální cena (Kč) <PrefBadge /></label>
-        <input type="number" value={wizardExtras.budget?.ideal_price ?? ""}
-          onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_price: e.target.value ? Number(e.target.value) : null } }))}
-          className={cn("mt-1", reamarInputClass)} placeholder="Např. 8 500 000" />
-        {wizardExtras.budget?.ideal_price != null && <p className="mt-0.5 text-[10px] text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>}
-      </div>
-
-      {/* Ideální plocha */}
-      <div className="rounded-xl border border-slate-200 bg-white p-3">
-        <label className={reamarLabelClass}>Ideální plocha (m²) <PrefBadge /></label>
-        <input type="number" value={wizardExtras.budget?.ideal_area ?? ""}
-          onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
-          className={cn("mt-1", reamarInputClass)} placeholder="Např. 75" />
-      </div>
-
       {/* Patro */}
       {renderToggleField(WIZARD_STEPS[2].groups[3].fields[0])}
 
       {/* Novostavba vs rekonstrukce */}
       {renderToggleField(WIZARD_STEPS[7].groups[0].fields[0])}
-
-      {/* Hlučnost — model-driven from NOISE_FEATURES */}
-      <div className="space-y-0 rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-        <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Hlučnost <FilterBadge /><PrefBadge /></p>
-        {NOISE_FEATURES.map((f) => {
-          const val = readWizardValue(wizardExtras, profile, f.dataPath) ?? "ignore";
-          return (
-            <div key={f.key} className="flex items-center justify-between gap-3 px-3 py-2">
-              <span className="text-xs text-slate-700">{f.label}</span>
-              <PrefToggle hard value={val}
-                preferLabel="Vadí mi"
-                mustLabel="Vyloučit"
-                onChange={(v) => writeWizardValue(setWizardExtras, setProfile, f.dataPath, v as Priority)} />
-            </div>
-          );
-        })}
-      </div>
 
       {/* Standardy — model-driven from STANDARD_FEATURES */}
       <div className="space-y-0 rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
@@ -493,6 +473,48 @@ export function QuickEdit({
           .filter((f) => f.render === "feature")
           .map((f) => renderFeatureField(f))}
       </div>
+
+      {/* Walkability / POI preferences */}
+      {walkPrefs && setWalkPrefs && (() => {
+        const WALK_CATS: { key: keyof WalkabilityPreferences; label: string }[] = [
+          { key: "supermarket", label: "Obchod" }, { key: "pharmacy", label: "Lékárna" },
+          { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" },
+          { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" },
+          { key: "playground", label: "Hřiště" }, { key: "kindergarten", label: "Školka" },
+          { key: "primary_school", label: "ZŠ" },
+          { key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" },
+        ];
+        const WALK_VALS: { value: WalkabilityPreferenceValue; label: string; active: string }[] = [
+          { value: "required", label: "Musí", active: "border-red-400 bg-red-50 text-red-800" },
+          { value: "high", label: "Chci", active: "border-blue-400 bg-blue-50 text-blue-800" },
+          { value: "normal", label: "—", active: "border-slate-300 bg-white text-slate-600" },
+          { value: "ignore", label: "Ne", active: "border-slate-300 bg-slate-100 text-slate-500" },
+        ];
+        const chips = getWalkChips(walkPrefs);
+        return (
+          <div className="space-y-0 rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
+            <div className="flex items-center justify-between px-3 py-2">
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Okolí a doprava <PrefBadge /></p>
+              {chips.length > 0 && <span className="rounded-full bg-teal-100 px-1.5 py-0.5 text-[10px] font-semibold text-teal-800">{chips.length}</span>}
+            </div>
+            {WALK_CATS.map((c) => (
+              <div key={c.key} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                <span className="text-xs text-slate-700">{c.label}</span>
+                <div className="flex gap-0.5">
+                  {WALK_VALS.map((o) => (
+                    <button key={o.value} type="button"
+                      onClick={() => setWalkPrefs((prev) => ({ ...prev, [c.key]: o.value }))}
+                      className={cn("rounded-full border px-2 py-0.5 text-[10px] font-medium transition-colors",
+                        walkPrefs[c.key] === o.value ? o.active : "border-slate-200 bg-white text-slate-400 hover:border-slate-300")}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Must-haves / Preference summary */}
       {mustHaveSummary.length > 0 && (
@@ -618,14 +640,7 @@ export function QuickEdit({
 
       {/* Footer */}
       <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-        <span className={cn("text-[11px] transition-opacity duration-300",
-          autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
-          autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
-          autoSaveStatus === "error" ? "text-rose-500 opacity-100" : "opacity-0")}>
-          {autoSaveStatus === "saving" && "Ukládám…"}
-          {autoSaveStatus === "saved" && "✓ Uloženo"}
-          {autoSaveStatus === "error" && "Chyba ukládání"}
-        </span>
+        {profileDirty && <span className="text-[11px] text-amber-600">Neuložené změny</span>}
         <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
           {recomputing ? "Přepočítávám…" : "Přepočítat doporučení →"}
         </ReamarButton>

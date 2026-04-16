@@ -10,6 +10,7 @@ const PORTAL_TABS = [
   { href: "/portal/novostavby", label: "Novostavby" },
   { href: "/portal/budouci-projekty", label: "Budoucí projekty" },
   { href: "/portal/second-hand", label: "Second hand" },
+  { href: "/portal/doporuceni", label: "Doporučení brokera" },
 ];
 
 export default function PortalLayout({ children }: { children: React.ReactNode }) {

@@ -16,23 +16,27 @@ from sqlalchemy.orm import Session
 
 from .models import Unit, Project, ClientProfile
 from .walkability import compute_personalized_walkability_score, project_to_raw_metrics
-from .routing_provider import get_cached_travel_time_minutes
+from .routing_provider import get_cached_travel_time_minutes, get_cached_commute_result
 from .aggregates import _layout_group
 
 # These are imported from main.py — they live there because many other
 # parts of main.py also use them.  We import lazily to avoid circular imports.
 _geo_helpers_loaded = False
 _parse_polygon_geojson = None
+_parse_polygon_or_multipolygon_geojson = None
 _point_in_polygon = None
+_point_in_any_polygon = None
 _wizard_preferences_adjustment = None
 
 
 def _ensure_geo_helpers():
-    global _geo_helpers_loaded, _parse_polygon_geojson, _point_in_polygon, _wizard_preferences_adjustment
+    global _geo_helpers_loaded, _parse_polygon_geojson, _parse_polygon_or_multipolygon_geojson, _point_in_polygon, _point_in_any_polygon, _wizard_preferences_adjustment
     if not _geo_helpers_loaded:
         from . import main as _main
         _parse_polygon_geojson = _main._parse_polygon_geojson
+        _parse_polygon_or_multipolygon_geojson = _main._parse_polygon_or_multipolygon_geojson
         _point_in_polygon = _main._point_in_polygon
+        _point_in_any_polygon = _main._point_in_any_polygon
         _wizard_preferences_adjustment = _main._wizard_preferences_adjustment
         _geo_helpers_loaded = True
 
@@ -388,8 +392,6 @@ class PreferenceTags:
     # Floor preference
     preferred_floor: str | None = None  # "ground" | "low" | "middle" | "high" | None
     ground_floor_sensitive: bool = False  # prefer (not must) to avoid floor 1
-    # Area
-    ideal_area: float | None = None  # fallback for area scoring when no min/max
     # Outdoor
     prefer_outdoor_space: bool = False
     outdoor_orientation: dict[str, str] | None = None  # {"south": "prefer", ...}
@@ -497,9 +499,13 @@ def _admin_area_signal(
 
     proj_admin = getattr(project, "administrative_district_iga", None)
     proj_district = getattr(project, "district", None)
+    proj_municipality = getattr(project, "municipality", None)
+    proj_city = getattr(project, "city", None)
+    proj_cadastral = getattr(project, "cadastral_area_iga", None)
+    proj_neighborhood = getattr(project, "neighborhood", None)
     candidates_raw = [
         str(v).strip()
-        for v in (proj_admin, proj_district)
+        for v in (proj_neighborhood, proj_admin, proj_district, proj_municipality, proj_city, proj_cadastral)
         if v is not None and str(v).strip()
     ]
 
@@ -742,13 +748,6 @@ def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> Struct
     pref.earliest_move_in = pref_d.get("earliest_move_in")
     pref.preferred_developer = pref_d.get("preferred_developer")
 
-    ideal = pref_d.get("ideal_area")
-    if ideal is not None:
-        try:
-            pref.ideal_area = float(ideal)
-        except (TypeError, ValueError):
-            pass
-
     # Profile-column field
     pref.walkability_active = bool(profile.walkability_preferences_json)
 
@@ -936,14 +935,6 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
     # Developer
     pref.preferred_developer = wizard.get("preferred_developer")
 
-    # Ideal area (fallback for unit area scoring when no area_min/max on profile)
-    ideal_raw = budget_section.get("ideal_area")
-    if ideal_raw is not None:
-        try:
-            pref.ideal_area = float(ideal_raw)
-        except (TypeError, ValueError):
-            pass
-
     # Walkability
     pref.walkability_active = bool(profile.walkability_preferences_json)
 
@@ -1062,12 +1053,19 @@ def compute_eligibility(
                 _fail(f"{reason_key}_noise" if reason_key != "main_road" else reason_key)
 
     # -- Outdoor --
-    if hf.must_outdoor_space:
-        ext = unit.exterior_area_m2
-        if ext is None or float(ext) <= 0:
-            _fail("outdoor_space")
-        elif hf.outdoor_area_min is not None and float(ext) < float(hf.outdoor_area_min):
+    # outdoor_area_min is a standalone hard filter: if the broker sets a
+    # minimum outdoor area (m²), units below that threshold are excluded
+    # regardless of must_outdoor_space.  must_outdoor_space additionally
+    # requires ANY outdoor space (even if no minimum is set).
+    _ext_raw = unit.exterior_area_m2
+    _ext_val = float(_ext_raw) if _ext_raw is not None else 0.0
+    if hf.outdoor_area_min is not None:
+        tol = float(hf.outdoor_area_min_tolerance_pct or 0)
+        effective_min = float(hf.outdoor_area_min) * (1 - tol / 100)
+        if _ext_val < effective_min:
             _fail("outdoor_space_too_small")
+    if hf.must_outdoor_space and _ext_val <= 0:
+        _fail("outdoor_space")
 
     if hf.must_balcony:
         val = getattr(unit, "balcony_area_m2", None)
@@ -1166,14 +1164,16 @@ def compute_eligibility(
     # matches the product wording "polygon = hlavní hard filtr lokality".
 
     # -- Polygon (primary location hard filter) --
+    # Uses MultiPolygon-aware parser so both Polygon and MultiPolygon
+    # GeoJSON types are handled correctly.
     if profile.polygon_geojson:
         _ensure_geo_helpers()
-        poly = _parse_polygon_geojson(profile.polygon_geojson)
-        if poly:
+        polys = _parse_polygon_or_multipolygon_geojson(profile.polygon_geojson)
+        if polys:
             lat = getattr(project, "gps_latitude", None)
             lon = getattr(project, "gps_longitude", None)
             if lat is not None and lon is not None:
-                if not _point_in_polygon(float(lat), float(lon), poly):
+                if not _point_in_any_polygon(float(lat), float(lon), polys):
                     _fail("outside_polygon")
             else:
                 _review("polygon_location")
@@ -1186,9 +1186,13 @@ def compute_eligibility(
     if hf.method_admin and hf.location_admin_area:
         proj_admin = getattr(project, "administrative_district_iga", None)
         proj_district = getattr(project, "district", None)
+        proj_municipality = getattr(project, "municipality", None)
+        proj_city = getattr(project, "city", None)
+        proj_cadastral = getattr(project, "cadastral_area_iga", None)
+        proj_neighborhood = getattr(project, "neighborhood", None)
         candidates = {
             str(v).strip().lower()
-            for v in (proj_admin, proj_district)
+            for v in (proj_neighborhood, proj_admin, proj_district, proj_municipality, proj_city, proj_cadastral)
             if v is not None and str(v).strip()
         }
         if not candidates:
@@ -1197,6 +1201,46 @@ def compute_eligibility(
             targets = {a.strip().lower() for a in hf.location_admin_area if a.strip()}
             if targets and not (targets & candidates):
                 _fail("outside_admin_area")
+
+    # -- Walkability: required preferences act as hard filters --
+    wprefs = (profile.walkability_preferences_json or {}) if profile else {}
+    _required_prefs = [k for k, v in wprefs.items() if v == "required"]
+    if _required_prefs:
+        # POI categories: require at least 1 facility within 500m
+        _poi_count_fields: dict[str, str] = {
+            "supermarket": "count_supermarket_500m",
+            "park": "count_park_500m",
+            "cafe": "count_cafe_500m",
+            "restaurant": "count_restaurant_500m",
+            "fitness": "count_fitness_500m",
+            "playground": "count_playground_500m",
+            "kindergarten": "count_kindergarten_500m",
+            "primary_school": "count_primary_school_500m",
+        }
+        for pref_key in _required_prefs:
+            count_field = _poi_count_fields.get(pref_key)
+            if count_field:
+                cnt = getattr(project, count_field, None)
+                if cnt is None:
+                    _review(f"poi_required_{pref_key}")
+                elif int(cnt) == 0:
+                    _fail(f"poi_required_{pref_key}")
+
+        # MHD categories: require project within distance threshold
+        _mhd_thresholds: dict[str, tuple[str, int]] = {
+            "metro": ("distance_to_metro_station_m", 600),
+            "tram":  ("distance_to_tram_stop_m", 300),
+            "bus":   ("distance_to_bus_stop_m", 200),
+        }
+        for pref_key in _required_prefs:
+            mhd = _mhd_thresholds.get(pref_key)
+            if mhd:
+                attr, threshold = mhd
+                d = getattr(project, attr, None)
+                if d is None:
+                    _review(f"mhd_required_{pref_key}")
+                elif float(d) > threshold:
+                    _fail(f"mhd_required_{pref_key}")
 
     # Determine status
     fail_reasons = [r for r in reasons if "(data missing)" not in r]
@@ -1294,20 +1338,7 @@ def _legacy_compute_match(
                 diff_ratio = abs(area - center) / max(center, 1.0)
                 area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
         else:
-            wizard_budget = (
-                ((profile.filter_json or {}).get("wizard") or {}).get("budget") or {}
-                if profile.filter_json
-                else {}
-            )
-            ideal_area = wizard_budget.get("ideal_area")
-            if ideal_area is not None:
-                try:
-                    ideal_area = float(ideal_area)
-                    center = ideal_area
-                    diff_ratio = abs(area - center) / max(center, 1.0)
-                    area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-                except (TypeError, ValueError):
-                    pass
+            pass  # No area range → neutral 50
 
     # -- Outdoor fit --
     outdoor_fit = 50.0
@@ -1363,14 +1394,17 @@ def _legacy_compute_match(
             priority = str(cp.get("priority") or "ignore")
             tol = cp.get("tolerance_minutes")
             tolerance_minutes = float(tol) if tol is not None else 0.0
-            travel_min = get_cached_travel_time_minutes(db, project, cp)
-            if travel_min is None:
+            commute_result = get_cached_commute_result(db, project, cp)
+            if commute_result is None:
                 continue
+            travel_min = commute_result.minutes
             limit = max_minutes + tolerance_minutes
             if priority == "must_have" and travel_min > limit:
                 commute_details.append({
                     "label": label, "mode": mode, "minutes": travel_min,
                     "max_minutes": max_minutes, "priority": priority, "passed": False,
+                    "itinerary": commute_result.itinerary,
+                    "is_estimated": commute_result.is_estimated,
                 })
                 commute_hard_fail = True
                 break
@@ -1389,6 +1423,8 @@ def _legacy_compute_match(
                     "label": label, "mode": mode, "minutes": travel_min,
                     "max_minutes": max_minutes, "priority": priority,
                     "passed": travel_min <= limit,
+                    "itinerary": commute_result.itinerary,
+                    "is_estimated": commute_result.is_estimated,
                 })
         if not commute_hard_fail and per_point_scores:
             commute_fit = min(per_point_scores)
@@ -1544,11 +1580,8 @@ def _flat_noise_fit(unit, project, hf: HardFilters, pref: PreferenceTags) -> flo
     return max(0.0, min(100.0, 80.0 - penalty))
 
 
-def _flat_unit_area_fit(unit, profile, ideal_area: float | None = None) -> float:
-    """Score: how well does unit area match preferences. Bigger = better with cap.
-
-    ideal_area from PreferenceTags is used as a fallback center when profile has no area range.
-    """
+def _flat_unit_area_fit(unit, profile) -> float:
+    """Score: how well does unit area match preferences. Bigger = better with cap."""
     area = float(unit.floor_area_m2) if getattr(unit, 'floor_area_m2', None) is not None else None
     if area is None or not profile:
         return 50.0
@@ -1563,10 +1596,6 @@ def _flat_unit_area_fit(unit, profile, ideal_area: float | None = None) -> float
             return 80.0 + 20.0 * ((area - lo) / range_size)
         center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
         diff_ratio = abs(area - center) / max(center, 1.0)
-        return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-    # Fallback: use ideal_area from wizard as center point
-    if ideal_area is not None and ideal_area > 0:
-        diff_ratio = abs(area - ideal_area) / ideal_area
         return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
     return 50.0
 
@@ -1795,7 +1824,6 @@ def compute_flat_match(
         and getattr(project, 'gps_longitude', None) is not None
         and db is not None
     ):
-        from .routing_provider import get_cached_travel_time_minutes
         points = profile.commute_points_json or []
         if isinstance(points, dict):
             points = points.get('points') or []
@@ -1812,9 +1840,10 @@ def compute_flat_match(
             priority = str(cp.get('priority') or 'ignore')
             tol = cp.get('tolerance_minutes')
             tolerance_minutes = float(tol) if tol is not None else 0.0
-            travel_min = get_cached_travel_time_minutes(db, project, cp)
-            if travel_min is None:
+            commute_result = get_cached_commute_result(db, project, cp)
+            if commute_result is None:
                 continue
+            travel_min = commute_result.minutes
             limit = max_minutes + tolerance_minutes
             if priority == 'must_have' and travel_min > limit:
                 commute_hard_fail = True
@@ -1834,6 +1863,8 @@ def compute_flat_match(
                     'label': label, 'mode': mode, 'minutes': travel_min,
                     'max_minutes': max_minutes, 'priority': priority,
                     'passed': travel_min <= limit,
+                    'itinerary': commute_result.itinerary,
+                    'is_estimated': commute_result.is_estimated,
                 })
         if not commute_hard_fail and per_point_scores:
             commute_fit = min(per_point_scores)
@@ -1858,7 +1889,7 @@ def compute_flat_match(
     aspect_fits['noise'] = _flat_noise_fit(unit, project, hf, pref)
 
     # --- Dispozice a prostor ---
-    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile, ideal_area=pref.ideal_area)
+    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile)
     aspect_fits['outdoor_area'] = _flat_outdoor_fit(unit, outdoor_area_min=hf.outdoor_area_min)
     aspect_fits['floor_preference'] = _flat_floor_preference_fit(
         unit, project,

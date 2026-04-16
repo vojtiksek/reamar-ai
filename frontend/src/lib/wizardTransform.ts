@@ -103,8 +103,6 @@ export type PreferenceTags = {
   // Floor
   preferred_floor: string | null;
   ground_floor_sensitive: boolean;
-  // Area
-  ideal_area: number | null;
   // Outdoor
   prefer_outdoor_space: boolean;
   outdoor_orientation: Record<string, string> | null;
@@ -323,9 +321,6 @@ export function buildStructuredWizard(
     ground_floor_sensitive:
       isPrefer(outdoor.ground_floor_sensitive) ||
       floorRule === "top_3",
-
-    // Area
-    ideal_area: budget.ideal_area ?? null,
 
     // Outdoor
     prefer_outdoor_space: isPrefer(outdoor.outdoor_space),

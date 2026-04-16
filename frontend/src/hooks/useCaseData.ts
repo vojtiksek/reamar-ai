@@ -51,10 +51,11 @@ export function useCaseData() {
   const [error, setError] = useState<string | null>(null);
   const [profileSaving, setProfileSaving] = useState(false);
   const [recomputing, setRecomputing] = useState(false);
+  const [recomputeProgress, setRecomputeProgress] = useState<{ total: number; done: number; status?: string } | null>(null);
+  const recomputeProgressInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const [recsFunnel, setRecsFunnel] = useState<RecommendationFunnel | null>(null);
   const [profileSavedMessage, setProfileSavedMessage] = useState<string | null>(null);
-  const [autoSaveStatus, setAutoSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
-  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [profileDirty, setProfileDirty] = useState(false);
   const isFirstLoad = useRef(true);
 
   const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
@@ -143,6 +144,12 @@ export function useCaseData() {
     if (existingWizard) {
       setWizardExtras(existingWizard);
     }
+    // Hydrate walkPrefs from backend profile — takes precedence over localStorage.
+    // Without this, any auto-save after load would overwrite saved preferences with
+    // the stale localStorage value.
+    if (profile?.walkability_preferences_json) {
+      setWalkPrefs(profile.walkability_preferences_json as WalkabilityPreferences);
+    }
     // hydrate polygon / multipolygon from polygon_geojson
     if (profile?.polygon_geojson) {
       try {
@@ -192,7 +199,7 @@ export function useCaseData() {
               label: String(p.label ?? ""),
               lat: typeof p.lat === "number" ? p.lat : null,
               lng: typeof p.lng === "number" ? p.lng : null,
-              mode: (p.mode as "drive" | "transit") ?? "drive",
+              mode: (p.mode as "drive" | "transit" | "park_and_ride") ?? "drive",
               max_minutes:
                 typeof p.max_minutes === "number" ? p.max_minutes : null,
               priority:
@@ -203,6 +210,7 @@ export function useCaseData() {
                   : null,
               address: typeof p.address === "string" ? p.address : null,
               place_id: typeof p.place_id === "string" ? p.place_id : null,
+              arrival_time: typeof p.arrival_time === "string" ? p.arrival_time : null,
             })),
           },
         }));
@@ -271,19 +279,10 @@ export function useCaseData() {
         const [
           profileJson,
           recsJson,
-          marketFitJson,
-          areaMarketJson,
-          projectsOverviewJson,
           notesJson,
         ] = await Promise.all([
           fetchOptionalJson<ClientProfile | null>(`${API_BASE}/clients/${clientId}/profile`, null),
           fetchOptionalJson<RecommendationItem[]>(`${API_BASE}/clients/${clientId}/recommendations`, []),
-          fetchOptionalJson<MarketFitAnalysis | null>(`${API_BASE}/clients/${clientId}/market-fit-analysis`, null),
-          fetchOptionalJson<AreaMarketAnalysis | null>(`${API_BASE}/clients/${clientId}/area-market-analysis`, null),
-          fetchOptionalJson<{ items?: LocationProjectPoint[] } | null>(
-            `${API_BASE}/projects?availability=available&availability=reserved&limit=2000&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
-            null
-          ),
           fetchOptionalJson<NoteItem[]>(`${API_BASE}/clients/${clientId}/notes`, []),
         ]);
 
@@ -299,7 +298,7 @@ export function useCaseData() {
           .then((cm) => {
             if (controller.signal.aborted) return;
             if (cm && typeof cm === "object") {
-              setClientModeState(cm);
+              setClientModeState((prev) => (prev?.modifiedKeys?.length ? prev : cm));
             } else {
               setClientModeState(
                 createClientModeStateFromProfile(profileJson as ClientProfile | null),
@@ -314,30 +313,42 @@ export function useCaseData() {
             }
           });
 
-        setMarketFit((marketFitJson || null) as MarketFitAnalysis | null);
-        setAreaMarket((areaMarketJson || null) as AreaMarketAnalysis | null);
+        // Analytics are heavy (full-dataset scan). Fire separately so they do
+        // not block the initial render — pages already null-guard both values.
+        fetchOptionalJson<MarketFitAnalysis | null>(`${API_BASE}/clients/${clientId}/market-fit-analysis`, null)
+          .then((mf) => { if (!controller.signal.aborted) setMarketFit(mf); });
+        fetchOptionalJson<AreaMarketAnalysis | null>(`${API_BASE}/clients/${clientId}/area-market-analysis`, null)
+          .then((am) => { if (!controller.signal.aborted) setAreaMarket(am); });
         setNotes((notesJson || []) as NoteItem[]);
 
-        const items = (projectsOverviewJson?.items ?? []) as any[];
-        const withGps: LocationProjectPoint[] = items
-          .filter(
-            (p) =>
-              typeof p.gps_latitude === "number" &&
-              typeof p.gps_longitude === "number" &&
-              Number.isFinite(p.gps_latitude) &&
-              Number.isFinite(p.gps_longitude)
-          )
-          .map((p) => ({
-            id: p.id as number,
-            project: (p.project as string) ?? null,
-            municipality: (p.municipality as string) ?? null,
-            city: (p.city as string) ?? null,
-            gps_latitude: p.gps_latitude as number,
-            gps_longitude: p.gps_longitude as number,
-            avg_price_per_m2_czk:
-              typeof p.avg_price_per_m2_czk === "number" ? (p.avg_price_per_m2_czk as number) : null,
-          }));
-        setLocationProjects(withGps);
+        // Projects list (map pins on brief/Step 3) — only used in brief, not on first paint.
+        // Fire separately so it does not block initial render.
+        fetchOptionalJson<{ items?: LocationProjectPoint[] } | null>(
+          `${API_BASE}/projects?availability=available&availability=reserved&limit=2000&sort_by=avg_price_per_m2_czk&sort_dir=asc`,
+          null
+        ).then((projectsOverviewJson) => {
+          if (controller.signal.aborted) return;
+          const items = (projectsOverviewJson?.items ?? []) as any[];
+          const withGps: LocationProjectPoint[] = items
+            .filter(
+              (p) =>
+                typeof p.gps_latitude === "number" &&
+                typeof p.gps_longitude === "number" &&
+                Number.isFinite(p.gps_latitude) &&
+                Number.isFinite(p.gps_longitude)
+            )
+            .map((p) => ({
+              id: p.id as number,
+              project: (p.project as string) ?? null,
+              municipality: (p.municipality as string) ?? null,
+              city: (p.city as string) ?? null,
+              gps_latitude: p.gps_latitude as number,
+              gps_longitude: p.gps_longitude as number,
+              avg_price_per_m2_czk:
+                typeof p.avg_price_per_m2_czk === "number" ? (p.avg_price_per_m2_czk as number) : null,
+            }));
+          setLocationProjects(withGps);
+        });
       })
       .catch((e) => {
         if (e instanceof DOMException && e.name === "AbortError") return;
@@ -350,14 +361,26 @@ export function useCaseData() {
     return () => { controller.abort(); };
   }, [clientId, token, hydrated]);
 
-  const buildProfileBody = useCallback((): ClientProfile => ({
+  const buildProfileBody = useCallback((): ClientProfile => {
+    // Auto-derive method flags from actual data — broker doesn't toggle these manually
+    const hasPolygon = locationPolygons.some((p) => p.length >= 3);
+    const hasCommutePoints = (wizardExtras.commute?.points?.length ?? 0) > 0;
+    const derivedExtras: typeof wizardExtras = {
+      ...wizardExtras,
+      location: {
+        ...(wizardExtras.location ?? {}),
+        method_polygon: hasPolygon,
+        method_commute: hasCommutePoints,
+      },
+    };
+    return ({
     ...(profile ?? {}),
     layouts: selectedLayouts.length ? { values: selectedLayouts } : null,
     walkability_preferences_json: walkPrefs,
     filter_json: {
       ...(profile?.filter_json ?? {}),
-      wizard: wizardExtras,
-      structured_wizard: buildStructuredWizard(wizardExtras, profile, selectedLayouts),
+      wizard: derivedExtras,
+      structured_wizard: buildStructuredWizard(derivedExtras, profile, selectedLayouts),
     },
     polygon_geojson:
       locationPolygons.length === 0 || locationPolygons[0].length < 3
@@ -386,9 +409,10 @@ export function useCaseData() {
           tolerance_minutes: p.tolerance_minutes,
           address: p.address,
           place_id: p.place_id,
+          arrival_time: p.arrival_time,
         })) ?? [],
     },
-  }), [profile, selectedLayouts, walkPrefs, wizardExtras, locationPolygons]);
+  });}, [profile, selectedLayouts, walkPrefs, wizardExtras, locationPolygons]);
 
   const handleSaveProfile = async () => {
     if (!token || !clientId) return;
@@ -407,6 +431,7 @@ export function useCaseData() {
       if (!res.ok) throw new Error(await res.text());
       const json = (await res.json()) as ClientProfile;
       setProfile(json);
+      setProfileDirty(false);
       setProfileSavedMessage("Profil uložen, přepočítávám doporučení…");
       fetch(`${API_BASE}/clients/${clientId}/recommendations/recompute`, {
         method: "POST",
@@ -443,48 +468,99 @@ export function useCaseData() {
         body: JSON.stringify(body),
       });
       if (res.ok) {
-        const json = (await res.json()) as ClientProfile;
-        setProfile(json);
+        setProfileDirty(false);
       }
     } catch {
-      console.warn("[wizard] auto-save failed, continuing navigation");
+      console.warn("[wizard] save failed, continuing navigation");
     }
   };
 
-  // Debounced auto-save: fires 1.5 s after last change to profile/wizard state
+  const handleExplicitSave = async () => {
+    if (!token || !clientId) return;
+    setProfileSaving(true);
+    try {
+      const body = buildProfileBody();
+      const res = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      setProfileDirty(false);
+      setProfileSavedMessage("Uloženo");
+      setTimeout(() => setProfileSavedMessage(null), 2000);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Chyba při ukládání");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  // Mark profile as dirty when user edits wizard/layout/walk/polygon state.
+  // Resets after explicit save or recompute.
   useEffect(() => {
     if (isFirstLoad.current) return;
-    if (!token || !clientId || !hydrated) return;
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current);
-    setAutoSaveStatus("saving");
-    autoSaveTimer.current = setTimeout(async () => {
-      try {
-        const body = buildProfileBody();
-        const res = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (res.ok) {
-          const json = (await res.json()) as ClientProfile;
-          setProfile(json);
-          setAutoSaveStatus("saved");
-          setTimeout(() => setAutoSaveStatus("idle"), 2000);
-        } else {
-          setAutoSaveStatus("error");
-        }
-      } catch {
-        setAutoSaveStatus("error");
-      }
-    }, 1500);
-    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current); };
+    setProfileDirty(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wizardExtras, selectedLayouts, walkPrefs, locationPolygons]);
+
+  // Auto-persist working filters: fires 1 s after the broker changes any filter,
+  // so changes survive a refresh even without an explicit recompute.
+  useEffect(() => {
+    if (isFirstLoad.current) return;
+    if (!token || !clientId || !hydrated || !clientModeState) return;
+    const t = setTimeout(() => {
+      fetch(`${API_BASE}/clients/${clientId}/client-mode/working-filters`, {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          workingFilters: clientModeState.workingFilters,
+          modifiedKeys: clientModeState.modifiedKeys,
+        }),
+      }).catch(() => {});
+    }, 1000);
+    return () => clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientModeState]);
 
   const handleRecompute = async () => {
     if (!token || !clientId) return;
     setRecomputing(true);
+    setRecomputeProgress(null);
+    // Spusť polling progressu každé 1.5s
+    recomputeProgressInterval.current = setInterval(async () => {
+      try {
+        const r = await fetch(`${API_BASE}/clients/${clientId}/recommendations/recompute/progress`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (r.ok) {
+          const data = await r.json() as { total: number; done: number; status: string };
+          if (data.total > 0) setRecomputeProgress({ total: data.total, done: data.done, status: data.status });
+        }
+      } catch { /* ignore */ }
+    }, 500);
     try {
+      // Step 0: Persist the current profile so the backend sees the latest
+      // wizard state (polygon, area_min, walkability, etc.) even if the 1.5 s
+      // auto-save debounce hasn't fired yet.
+      try {
+        const body = buildProfileBody();
+        const profileRes = await fetch(`${API_BASE}/clients/${clientId}/profile`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (profileRes.ok) {
+          const json = (await profileRes.json()) as ClientProfile;
+          setProfile(json);
+        }
+      } catch {
+        // Best-effort — backend will use whatever is already in DB
+      }
+
       // Step 1: Persist working filters if client-mode is active
       if (clientModeState) {
         try {
@@ -554,7 +630,12 @@ export function useCaseData() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba při přepočtu doporučení");
     } finally {
+      if (recomputeProgressInterval.current) {
+        clearInterval(recomputeProgressInterval.current);
+        recomputeProgressInterval.current = null;
+      }
       setRecomputing(false);
+      setRecomputeProgress(null);
     }
   };
 
@@ -804,8 +885,9 @@ export function useCaseData() {
     error,
     profileSaving,
     recomputing,
+    recomputeProgress,
     profileSavedMessage,
-    autoSaveStatus,
+    profileDirty,
     walkPrefsOpen, setWalkPrefsOpen,
     walkPrefs, setWalkPrefs,
     hydrated,
@@ -830,6 +912,7 @@ export function useCaseData() {
     buildProfileBody,
     handleSaveProfile,
     handleSilentSave,
+    handleExplicitSave,
     handleRecompute,
     handlePin,
     handleRecommendationFeedback,

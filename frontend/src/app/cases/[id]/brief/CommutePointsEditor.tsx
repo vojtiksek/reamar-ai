@@ -45,10 +45,11 @@ export type CommutePoint = {
   label: string;
   lat: number | null;
   lng: number | null;
-  mode: "drive" | "transit";
+  mode: "drive" | "transit" | "park_and_ride";
   max_minutes: number | null;
   priority: "must_have" | "prefer" | "ignore";
   tolerance_minutes?: number | null;
+  arrival_time?: string | null;  // HH:MM — požadovaný čas příjezdu (jen transit)
   address?: string | null;
   place_id?: string | null;
 };
@@ -58,6 +59,8 @@ type Props = {
   onChange: (next: CommutePoint[]) => void;
   /** Maximum number of points allowed. When reached, the add-new section is hidden. */
   maxPoints?: number;
+  /** Skryje sekci pro přidávání nových bodů — body se přidávají externě (kliknutím do mapy). */
+  hideAddFlow?: boolean;
 };
 
 // ────────────────────────────────────────────────────────────────────────
@@ -72,14 +75,14 @@ const PRESETS: { key: string; label: string; icon: string }[] = [
 ];
 
 const MODE_OPTIONS: { value: CommutePoint["mode"]; label: string }[] = [
-  { value: "transit", label: "MHD" },
-  { value: "drive",   label: "Auto" },
+  { value: "transit",       label: "MHD" },
+  { value: "drive",         label: "Auto" },
+  { value: "park_and_ride", label: "Auto + MHD" },
 ];
 
 const PRIORITY_OPTIONS: { value: CommutePoint["priority"]; label: string }[] = [
   { value: "must_have", label: "Musí být" },
   { value: "prefer",    label: "Preferovaně" },
-  { value: "ignore",    label: "Ignorovat" },
 ];
 
 // Stable-ish random ID — no external deps
@@ -90,7 +93,7 @@ const newId = () =>
 // Component
 // ────────────────────────────────────────────────────────────────────────
 
-export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
+export function CommutePointsEditor({ points, onChange, maxPoints, hideAddFlow = false }: Props) {
   // `pendingLabel` is the label the next added point will take (from preset
   // click).  Reset to "" after the point is added.
   const [pendingLabel, setPendingLabel] = useState<string>("");
@@ -135,7 +138,7 @@ export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
             Dojezdové body
           </h5>
           <p className="mt-1 text-[11px] text-slate-500">
-            Zadejte klíčová místa (práce, škola, …). Priorita „Musí být“ se chová
+            Zadejte klíčová místa (práce, škola, …). Priorita „Musí být" se chová
             jako hard filter — projekty mimo časový limit vypadnou.
           </p>
         </div>
@@ -187,7 +190,7 @@ export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
                 </button>
               </div>
 
-              <div className="mt-2 grid grid-cols-3 gap-2">
+              <div className="mt-2 grid grid-cols-4 gap-2">
                 <div>
                   <label className={reamarLabelClass}>Max čas (min)</label>
                   <input
@@ -200,7 +203,22 @@ export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
                       })
                     }
                     className={cn("mt-1 text-xs", reamarInputClass)}
-                    placeholder="Např. 30"
+                    placeholder="30"
+                  />
+                </div>
+                <div>
+                  <label className={reamarLabelClass}>Tolerance (min)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={p.tolerance_minutes ?? ""}
+                    onChange={(e) =>
+                      updatePoint(p.id, {
+                        tolerance_minutes: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    className={cn("mt-1 text-xs", reamarInputClass)}
+                    placeholder="0"
                   />
                 </div>
                 <div>
@@ -210,6 +228,9 @@ export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
                     onChange={(e) =>
                       updatePoint(p.id, {
                         mode: e.target.value as CommutePoint["mode"],
+                        // Vyčistit arrival_time při přepnutí na drive
+                        arrival_time: e.target.value === "drive" ? null : p.arrival_time,
+
                       })
                     }
                     className={cn("mt-1 text-xs", reamarSelectClass)}
@@ -240,65 +261,87 @@ export function CommutePointsEditor({ points, onChange, maxPoints }: Props) {
                   </select>
                 </div>
               </div>
+              {(p.mode === "transit" || p.mode === "park_and_ride") && (
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="w-32">
+                    <label className={reamarLabelClass}>Příjezd do (volitelné)</label>
+                    <input
+                      type="time"
+                      value={p.arrival_time ?? ""}
+                      onChange={(e) =>
+                        updatePoint(p.id, {
+                          arrival_time: e.target.value || null,
+                        })
+                      }
+                      className={cn("mt-1 text-xs", reamarInputClass)}
+                    />
+                  </div>
+                  <p className="mt-4 text-[11px] text-slate-400">
+                    Systém najde nejlepší spoj který tam stihne v tento čas.
+                    Bez zadání hledá optimum ráno 7–9h.
+                  </p>
+                </div>
+              )}
             </li>
           ))}
         </ul>
       )}
 
-      {/* Add-new-point flow ───────────────────────────────────────── */}
-      {maxPoints != null && points.length >= maxPoints ? (
-        <p className="text-[11px] text-slate-400">
-          Dosažen limit {maxPoints} bodů — odeberte bod pro přidání nového.
-        </p>
-      ) : (
-      <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2.5">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-[11px] font-medium text-slate-500">
-            Typ:
-          </span>
-          {PRESETS.map((preset) => {
-            const active = pendingLabel === preset.label;
-            return (
-              <button
-                key={preset.key}
-                type="button"
-                onClick={() =>
-                  setPendingLabel(active ? "" : preset.key === "custom" ? "" : preset.label)
-                }
-                className={cn(
-                  "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                  active
-                    ? "border-slate-900 bg-slate-900 text-white"
-                    : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
-                )}
-              >
-                <span className="mr-1">{preset.icon}</span>
-                {preset.label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-2">
-          <AddressSearch
-            placeholder={
-              pendingLabel
-                ? `Adresa pro „${pendingLabel}“…`
-                : "Hledat adresu (práce, škola, …)…"
-            }
-            onSelect={addPoint}
-          />
-        </div>
-        <p className="mt-1.5 text-[10px] text-slate-500">
-          Po výběru z nabídky se bod přidá s výchozími hodnotami (30 min, MHD,
-          Preferovaně). Můžete je upravit kdykoli níže.
-        </p>
-      </div>
+      {/* Add-new-point flow — skryto když hideAddFlow=true (body přidávány přes mapu) */}
+      {!hideAddFlow && (
+        <>
+          {maxPoints != null && points.length >= maxPoints ? (
+            <p className="text-[11px] text-slate-400">
+              Dosažen limit {maxPoints} bodů — odeberte bod pro přidání nového.
+            </p>
+          ) : (
+            <div className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-2.5">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="mr-1 text-[11px] font-medium text-slate-500">Typ:</span>
+                {PRESETS.map((preset) => {
+                  const active = pendingLabel === preset.label;
+                  return (
+                    <button
+                      key={preset.key}
+                      type="button"
+                      onClick={() =>
+                        setPendingLabel(active ? "" : preset.key === "custom" ? "" : preset.label)
+                      }
+                      className={cn(
+                        "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
+                        active
+                          ? "border-slate-900 bg-slate-900 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                      )}
+                    >
+                      <span className="mr-1">{preset.icon}</span>
+                      {preset.label}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="mt-2">
+                <AddressSearch
+                  placeholder={pendingLabel ? `Adresa pro „${pendingLabel}"…` : "Hledat adresu (práce, škola, …)…"}
+                  onSelect={addPoint}
+                />
+              </div>
+              <p className="mt-1.5 text-[10px] text-slate-500">
+                Po výběru z nabídky se bod přidá s výchozími hodnotami (30 min, MHD, Preferovaně).
+              </p>
+            </div>
+          )}
+          {points.length === 0 && (
+            <p className="text-[11px] italic text-slate-500">
+              Zatím nejsou přidané žádné body. Vyberte typ a začněte psát adresu.
+            </p>
+          )}
+        </>
       )}
 
-      {points.length === 0 && (
+      {hideAddFlow && points.length === 0 && (
         <p className="text-[11px] italic text-slate-500">
-          Zatím nejsou přidané žádné body. Vyberte typ a začněte psát adresu.
+          Zatím nejsou přidané žádné body. Vyberte typ výše a klikněte do mapy.
         </p>
       )}
 

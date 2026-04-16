@@ -6,15 +6,11 @@ import { useState } from "react";
 
 import { API_BASE } from "@/lib/api";
 
-type StatusValue = "new" | "active" | "shortlist" | "closed";
-
 export default function NewClientPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [status, setStatus] = useState<StatusValue>("new");
-  const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,8 +36,7 @@ export default function NewClientPage() {
           name,
           email: email || null,
           phone: phone || null,
-          status,
-          notes: notes || null,
+          status: "new",
         }),
       });
       if (!res.ok) {
@@ -49,7 +44,7 @@ export default function NewClientPage() {
         throw new Error(text || "Nepodařilo se vytvořit klienta");
       }
       const client = await res.json();
-      router.push(`/clients/${client.id}`);
+      router.push(`/cases/${client.id}/brief`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba při vytváření klienta");
     } finally {
@@ -124,30 +119,6 @@ export default function NewClientPage() {
                 className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               />
             </div>
-          </div>
-          <div className="grid gap-4 md:grid-cols-2">
-            <div>
-              <label className="block text-xs font-medium text-slate-600">Stav</label>
-              <select
-                value={status}
-                onChange={(e) => setStatus(e.target.value as StatusValue)}
-                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              >
-                <option value="new">Nový</option>
-                <option value="active">Aktivní</option>
-                <option value="shortlist">Užší výběr</option>
-                <option value="closed">Uzavřený</option>
-              </select>
-            </div>
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Poznámky</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={4}
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-            />
           </div>
           {error && <p className="text-sm text-rose-600">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">

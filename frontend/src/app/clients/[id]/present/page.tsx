@@ -91,6 +91,7 @@ export default function PresentPage() {
 
   const [token, setToken] = useState<string | null>(null);
   const [clientName, setClientName] = useState("");
+  const [clientEmail, setClientEmail] = useState<string | null | undefined>(undefined);
   const [budgetMax, setBudgetMax] = useState<number | null>(null);
   const [pinnedRecs, setPinnedRecs] = useState<PinnedRec[]>([]);
   const [recsLoading, setRecsLoading] = useState(true);
@@ -101,9 +102,8 @@ export default function PresentPage() {
   const [dislikeOpen, setDislikeOpen] = useState(false);
   const [feedbackNote, setFeedbackNote] = useState("");
 
-  type ShareStatus = "idle" | "loading" | "copied" | "fallback" | "error";
-  const [shareStatus, setShareStatus] = useState<ShareStatus>("idle");
-  const [fallbackUrl, setFallbackUrl] = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
 
   // Auth guard
   useEffect(() => {
@@ -124,6 +124,7 @@ export default function PresentPage() {
     ])
       .then(([client, recs, profile]) => {
         setClientName(client?.name ?? "Klient");
+        setClientEmail(client?.email ?? null);
         setBudgetMax(profile?.budget_max ?? null);
         const pinned: PinnedRec[] = (Array.isArray(recs) ? recs : [])
           .filter((r: PinnedRec) => r.pinned_by_broker)
@@ -160,30 +161,25 @@ export default function PresentPage() {
     if (selectedId) fetchUnit(selectedId);
   }, [selectedId, fetchUnit]);
 
-  const handleShare = useCallback(async () => {
+  const handlePortalInvite = useCallback(async () => {
     if (!token) return;
-    setShareStatus("loading");
-    setFallbackUrl(null);
+    setInviteLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/clients/${clientId}/share-link`, {
+      const res = await fetch(`${API_BASE}/clients/${clientId}/portal-invite`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const { url } = await res.json() as { url: string; expires_at: string };
-      try {
-        await navigator.clipboard.writeText(url);
-        setShareStatus("copied");
-      } catch {
-        // Clipboard blocked (non-HTTPS or permissions denied) — show URL inline
-        setFallbackUrl(url);
-        setShareStatus("fallback");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "Chyba" }));
+        alert(err.detail ?? "Nepodařilo se vytvořit pozvánku");
+        return;
       }
-    } catch {
-      setShareStatus("error");
+      const data = await res.json();
+      setInviteLink(data.magic_link_url);
+      navigator.clipboard.writeText(data.magic_link_url).catch(() => undefined);
+    } finally {
+      setInviteLoading(false);
     }
-    // Reset to idle after 4 s (except fallback — stays until dismissed)
-    setTimeout(() => setShareStatus((s) => s === "fallback" ? s : "idle"), 4000);
   }, [token, clientId]);
 
   // Derived unit fields
@@ -269,26 +265,30 @@ export default function PresentPage() {
           <div className="flex flex-col items-end gap-1">
             <button
               type="button"
-              onClick={handleShare}
-              disabled={shareStatus === "loading" || pinnedRecs.length === 0}
+              onClick={handlePortalInvite}
+              disabled={inviteLoading || pinnedRecs.length === 0 || clientEmail === null}
+              title={clientEmail === null ? "Klient nemá vyplněný e-mail" : undefined}
               className="rounded-full bg-violet-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-violet-700 disabled:opacity-50"
             >
-              {shareStatus === "loading" ? "Generuji odkaz…" : shareStatus === "copied" ? "✓ Odkaz zkopírován" : "Sdílet s klientem"}
+              {inviteLoading ? "Vytvářím…" : inviteLink ? "✓ Pozvánka zkopírována" : "Pozvat do portálu"}
             </button>
-            {shareStatus === "error" && (
-              <p className="text-[11px] text-red-500">Nepodařilo se vygenerovat odkaz.</p>
+            {clientEmail === null && (
+              <p className="text-[11px] text-amber-600">
+                Klient nemá e-mail —{" "}
+                <a href={`/clients/${clientId}`} className="underline hover:text-amber-800">doplnit v detailu</a>
+              </p>
             )}
-            {shareStatus === "fallback" && fallbackUrl && (
+            {inviteLink && (
               <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 shadow-sm">
                 <input
                   readOnly
-                  value={fallbackUrl}
+                  value={inviteLink}
                   className="w-64 bg-transparent text-[11px] text-slate-700 outline-none"
                   onFocus={(e) => e.target.select()}
                 />
                 <button
                   type="button"
-                  onClick={() => setShareStatus("idle")}
+                  onClick={() => setInviteLink(null)}
                   className="text-[11px] text-slate-400 hover:text-slate-600"
                 >
                   ✕

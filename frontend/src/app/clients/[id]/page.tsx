@@ -272,7 +272,6 @@ export default function ClientDetailPage() {
     budget?: {
       max_price?: number | null;
       tolerate_plus_10?: boolean;
-      ideal_area?: number | null;
       min_area?: number | null;
       tolerate_minus_10?: boolean;
       payment_schedule?: "upfront" | "during_construction" | "on_completion" | "ignore";
@@ -1128,14 +1127,8 @@ export default function ClientDetailPage() {
                       )}
                     </div>
                     {/* Wizard extras summary */}
-                    {wizardExtras.budget && (wizardExtras.budget.ideal_area) && (
+                    {wizardExtras.budget && (wizardExtras.budget.max_payment_contract_pct != null) && (
                       <div className="mt-4 grid grid-cols-2 gap-x-8 gap-y-3 sm:grid-cols-3 lg:grid-cols-4 text-sm">
-                        {wizardExtras.budget.ideal_area != null && (
-                          <div>
-                            <p className="text-[11px] font-medium text-slate-500">Idealni plocha</p>
-                            <p className="font-medium text-slate-900">{formatAreaM2(wizardExtras.budget.ideal_area)}</p>
-                          </div>
-                        )}
                         {wizardExtras.budget.max_payment_contract_pct != null && (
                           <div>
                             <p className="text-[11px] font-medium text-slate-500">Max. platba pri podpisu</p>
@@ -2019,27 +2012,6 @@ export default function ClientDetailPage() {
                               <p className="mt-1 text-xs text-slate-500">{formatAreaM2(profile.area_max)}</p>
                             )}
                           </div>
-                        </div>
-                        <div>
-                          <label className={reamarLabelClass}>Ideální plocha (m²)</label>
-                          <input
-                            type="number"
-                            value={wizardExtras.budget?.ideal_area ?? ""}
-                            onChange={(e) =>
-                              setWizardExtras((prev) => ({
-                                ...prev,
-                                budget: {
-                                  ...(prev.budget ?? {}),
-                                  ideal_area: e.target.value ? Number(e.target.value) : null,
-                                },
-                              }))
-                            }
-                            className={cn("mt-1", reamarInputClass)}
-                            placeholder="Např. 75"
-                          />
-                          {wizardExtras.budget?.ideal_area != null && (
-                            <p className="mt-1 text-xs text-slate-500">{formatAreaM2(wizardExtras.budget.ideal_area)}</p>
-                          )}
                         </div>
                       </div>
 

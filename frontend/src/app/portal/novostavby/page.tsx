@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { API_BASE } from "@/lib/api";
 import { formatCurrencyCzk } from "@/lib/format";
@@ -60,6 +60,10 @@ type Rec = {
   distance_to_primary_road_m: number | null;
   distance_to_tram_tracks_m: number | null;
   distance_to_railway_m: number | null;
+  // MHD stop distances
+  distance_to_tram_stop_m: number | null;
+  distance_to_metro_station_m: number | null;
+  distance_to_bus_stop_m: number | null;
   feedback: Feedback | null;
   // Broker curation metadata
   pinned_by_broker: boolean;
@@ -69,6 +73,9 @@ type Rec = {
   // Project metadata
   construction_completion: string | null;
   project_url: string | null;
+  noise_label: string | null;
+  price_diff_pct: number | null;
+  poi_counts: Record<string, number> | null;
 };
 
 type ProjectGroup = {
@@ -93,7 +100,7 @@ type ProjectGroup = {
   construction_completion: string | null;
 };
 
-type ProjectSortKey = "score" | "match" | "price" | "price_m2" | "area";
+type ProjectSortKey = "score" | "match" | "price" | "price_m2" | "area" | "market_dev";
 
 const PROJECT_SORT_OPTIONS: { key: ProjectSortKey; label: string }[] = [
   { key: "score", label: "Doporučeno" },
@@ -101,6 +108,7 @@ const PROJECT_SORT_OPTIONS: { key: ProjectSortKey; label: string }[] = [
   { key: "price", label: "Cena" },
   { key: "price_m2", label: "Cena/m²" },
   { key: "area", label: "Plocha" },
+  { key: "market_dev", label: "Trh" },
 ];
 
 function sortProjectGroups(groups: ProjectGroup[], key: ProjectSortKey): ProjectGroup[] {
@@ -118,6 +126,21 @@ function sortProjectGroups(groups: ProjectGroup[], key: ProjectSortKey): Project
     case "area":
       sorted.sort((a, b) => (b.avg_area ?? 0) - (a.avg_area ?? 0));
       break;
+    case "market_dev": {
+      const bestDev = (g: ProjectGroup) => {
+        const vals = g.units.map((u) => u.price_diff_pct).filter((v): v is number => v != null);
+        return vals.length ? Math.min(...vals) : null;
+      };
+      sorted.sort((a, b) => {
+        const av = bestDev(a);
+        const bv = bestDev(b);
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return av - bv; // ascending: most below market first
+      });
+      break;
+    }
     default: // "score" / "Doporučeno" — broker-shortlisted projects first
       sorted.sort((a, b) => {
         if (a.has_shortlisted !== b.has_shortlisted) return a.has_shortlisted ? -1 : 1;
@@ -139,7 +162,7 @@ type PreferenceItem = {
 };
 
 type ViewMode = "projects" | "units" | "map" | "cards";
-type SortKey = "score" | "match_count" | "price_czk" | "price_per_m2_czk" | "floor_area_m2" | "exterior_area_m2";
+type SortKey = "score" | "match_count" | "price_czk" | "price_per_m2_czk" | "floor_area_m2" | "exterior_area_m2" | "price_diff_pct";
 type SortDir = "asc" | "desc";
 type QuickFilter = "all" | "broker_pick" | "liked" | "hide_disliked" | "undecided";
 
@@ -474,6 +497,111 @@ const VIEW_MODES: { key: ViewMode; label: string }[] = [
 
 const PortalMap = dynamic(() => import("./PortalMap"), { ssr: false });
 
+// ── Shared display helpers ─────────────────────────────────────────────
+
+function PortalPriceDiffBadge({ pct }: { pct?: number | null }) {
+  if (pct == null) return null;
+  if (pct <= -5) return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-medium text-emerald-700">{Math.round(pct)} %</span>;
+  if (pct >= 5) return <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[9px] font-medium text-rose-700">+{Math.round(pct)} %</span>;
+  return <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-medium text-slate-500">±trh</span>;
+}
+
+function PortalTip({ text, children }: { text: string; children: React.ReactNode }) {
+  return (
+    <span className="group/tip relative inline-flex">
+      {children}
+      <span className="pointer-events-none absolute bottom-full left-1/2 mb-1 -translate-x-1/2 whitespace-nowrap rounded bg-slate-800 px-1.5 py-0.5 text-[10px] leading-tight text-white opacity-0 group-hover/tip:opacity-100 transition-opacity duration-0 z-50">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+function PortalNearSourceBadges({ tramM, railM, roadM }: { tramM?: number | null; railM?: number | null; roadM?: number | null }) {
+  const badges: { label: string; tip: string }[] = [];
+  if (tramM != null && tramM <= 150) badges.push({ label: "Tram", tip: `Tramvajová trať ${Math.round(tramM)} m` });
+  if (railM != null && railM <= 200) badges.push({ label: "Vlak", tip: `Železnice ${Math.round(railM)} m` });
+  if (roadM != null && roadM <= 80) badges.push({ label: "Silnice", tip: `Hlavní silnice ${Math.round(roadM)} m` });
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map((b) => (
+        <PortalTip key={b.label} text={b.tip}>
+          <span className="rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[9px] font-medium text-amber-700">{b.label}</span>
+        </PortalTip>
+      ))}
+    </>
+  );
+}
+
+const PORTAL_POI_EMOJI: Record<string, string> = {
+  cafe: "☕",
+  restaurant: "🍽️",
+  park: "🌳",
+  fitness: "🏋️",
+  playground: "🛝",
+  supermarket: "🛒",
+  primary_school: "🎓",
+  kindergarten: "👶",
+};
+
+const PORTAL_POI_LABELS: Record<string, string> = {
+  supermarket: "Obchod",
+  park: "Parky",
+  cafe: "Kavárny",
+  restaurant: "Restaurace",
+  fitness: "Fitness",
+  playground: "Hřiště",
+  kindergarten: "Školka",
+  primary_school: "ZŠ",
+};
+
+function PortalPoiBadges({ poiCounts, activePrefs }: { poiCounts: Record<string, number> | null; activePrefs: string[] }) {
+  if (!poiCounts || !activePrefs.length) return null;
+  const badges = activePrefs.filter((k) => (poiCounts[k] ?? 0) > 0).slice(0, 5);
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map((k) => (
+        <PortalTip key={k} text={`${PORTAL_POI_LABELS[k] ?? k}: ${poiCounts[k]} do 500 m`}>
+          <span className="rounded-full bg-teal-50 border border-teal-200 px-1 py-0.5 text-[10px] font-medium text-teal-700">
+            {PORTAL_POI_EMOJI[k] ?? k} {poiCounts[k]}
+          </span>
+        </PortalTip>
+      ))}
+    </>
+  );
+}
+
+const MHD_CONFIG: { key: "metro" | "tram" | "bus"; field: "distance_to_metro_station_m" | "distance_to_tram_stop_m" | "distance_to_bus_stop_m"; threshold: number; emoji: string; label: string }[] = [
+  { key: "metro", field: "distance_to_metro_station_m", threshold: 600, emoji: "🚇", label: "Metro" },
+  { key: "tram",  field: "distance_to_tram_stop_m",     threshold: 300, emoji: "🚋", label: "Tramvaj" },
+  { key: "bus",   field: "distance_to_bus_stop_m",      threshold: 200, emoji: "🚌", label: "Bus" },
+];
+
+function PortalMhdBadges({ rec, activePrefs }: { rec: Rec; activePrefs: string[] }) {
+  const badges = MHD_CONFIG.filter(({ key, field, threshold }) => {
+    if (!activePrefs.includes(key)) return false;
+    const d = rec[field];
+    return d != null && d <= threshold;
+  });
+  if (!badges.length) return null;
+  return (
+    <>
+      {badges.map(({ key, field, emoji, label }) => {
+        const d = rec[field];
+        return (
+          <PortalTip key={key} text={`${label} ${Math.round(d!)} m`}>
+            <span className="rounded-full bg-blue-50 border border-blue-200 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+              {emoji} {Math.round(d!)} m
+            </span>
+          </PortalTip>
+        );
+      })}
+    </>
+  );
+}
+
 // ── Match badge ────────────────────────────────────────────────────────
 
 function MatchBadge({
@@ -644,6 +772,7 @@ export default function PortalNovostavbyPage() {
   // Preference-based filters
   const [myPrefs, setMyPrefs] = useState<PreferenceItem[]>([]);
   const [activePrefKeys, setActivePrefKeys] = useState<Set<string>>(new Set());
+  const [activePoiPrefs, setActivePoiPrefs] = useState<string[]>([]);
 
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "projects";
@@ -680,6 +809,7 @@ export default function PortalNovostavbyPage() {
         setAllRecs(recsData);
         const items: PreferenceItem[] = prefsData.items ?? [];
         setMyPrefs(items);
+        setActivePoiPrefs(prefsData.active_poi_prefs ?? []);
         // Default sort = match if client has >= 3 preferences
         if (items.length >= 3) {
           setSortKey("match_count");
@@ -715,8 +845,11 @@ export default function PortalNovostavbyPage() {
         const bm = getMatch(b.rec_id).matched;
         return sortDir === "asc" ? am - bm : bm - am;
       }
-      const av = (a[sortKey as keyof Rec] as number) ?? -Infinity;
-      const bv = (b[sortKey as keyof Rec] as number) ?? -Infinity;
+      const av = a[sortKey as keyof Rec] as number | null | undefined;
+      const bv = b[sortKey as keyof Rec] as number | null | undefined;
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
       return sortDir === "asc" ? av - bv : bv - av;
     });
     return arr;
@@ -946,65 +1079,82 @@ export default function PortalNovostavbyPage() {
             return (
               <ReamarCard key={g.project_id ?? "null"} className="overflow-hidden">
                 {/* Project header */}
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => toggleProject(g.project_id)}
-                  className="flex w-full items-center justify-between gap-3 p-4 text-left hover:bg-slate-50"
+                  onKeyDown={(e) => e.key === "Enter" || e.key === " " ? toggleProject(g.project_id) : undefined}
+                  className="flex w-full cursor-pointer items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50/80 transition-colors"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="font-semibold text-slate-800 truncate">{g.project_name}</p>
-                      {g.has_shortlisted && (
-                        <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
-                          ★{g.best_shortlist_order != null ? ` #${g.best_shortlist_order}` : ""} Výběr makléře
-                        </span>
-                      )}
-                      {g.liked_count > 0 && (
-                        <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                          {g.liked_count}× líbí se
-                        </span>
-                      )}
+                  {/* Left: score circle + title block */}
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
+                      g.best_score >= 85 ? "bg-emerald-100 text-emerald-800" :
+                      g.best_score >= 70 ? "bg-blue-100 text-blue-800" :
+                      g.best_score >= 55 ? "bg-amber-100 text-amber-800" :
+                      "bg-slate-100 text-slate-700"
+                    }`}>
+                      {Math.round(g.best_score)}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="text-base font-semibold text-slate-900 truncate">{g.project_name}</h3>
+                        {g.units[0]?.noise_label && (() => {
+                          const lower = g.units[0].noise_label!.toLowerCase();
+                          const cls = lower.includes("nízký") || lower.includes("nizky")
+                            ? "bg-emerald-100 text-emerald-700"
+                            : lower.includes("vyšší") || lower.includes("vysoký")
+                            ? "bg-rose-100 text-rose-700"
+                            : "bg-slate-100 text-slate-500";
+                          return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>Hluk: {lower}</span>;
+                        })()}
+                        <PortalNearSourceBadges tramM={g.units[0]?.distance_to_tram_tracks_m} railM={g.units[0]?.distance_to_railway_m} roadM={g.units[0]?.distance_to_primary_road_m} />
+                        {g.has_shortlisted && (
+                          <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                            ★{g.best_shortlist_order != null ? ` #${g.best_shortlist_order}` : ""} Výběr makléře
+                          </span>
+                        )}
+                        {g.liked_count > 0 && (
+                          <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
+                            {g.liked_count}× líbí se
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-0.5 text-sm text-slate-500">
+                        {[
+                          g.district,
+                          `${g.units.length} ${g.units.length === 1 ? "jednotka" : g.units.length < 5 ? "jednotky" : "jednotek"}`,
+                          g.layouts.length > 0 ? g.layouts.map(formatLayout).join(", ") : null,
+                          g.area_range[0] != null
+                            ? `${g.area_range[0]}${g.area_range[1] != null && g.area_range[1] !== g.area_range[0] ? `–${g.area_range[1]}` : ""} m²`
+                            : null,
+                          g.construction_completion && parseInt(g.construction_completion.slice(0, 4)) >= 2024
+                            ? `Dokončení: ${g.construction_completion}`
+                            : null,
+                        ].filter(Boolean).join(" · ")}
+                      </p>
                     </div>
-                    <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-slate-500">
-                      {g.district && <span>{g.district}</span>}
-                      <span>
-                        {g.units.length} {g.units.length === 1 ? "jednotka" : g.units.length < 5 ? "jednotky" : "jednotek"}
-                      </span>
-                      {g.layouts.length > 0 && <span>{g.layouts.map(formatLayout).join(", ")}</span>}
+                  </div>
+                  {/* Right: price + match badge + chevron */}
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="text-right">
                       {g.price_range[0] != null && (
-                        <span>
+                        <p className="text-sm font-medium text-slate-900">
                           {formatCurrencyCzk(g.price_range[0])}
                           {g.price_range[1] != null && g.price_range[1] !== g.price_range[0]
                             ? ` – ${formatCurrencyCzk(g.price_range[1])}`
                             : ""}
-                        </span>
-                      )}
-                      {g.area_range[0] != null && (
-                        <span>
-                          {g.area_range[0]}
-                          {g.area_range[1] != null && g.area_range[1] !== g.area_range[0]
-                            ? `–${g.area_range[1]}`
-                            : ""}{" "}
-                          m²
-                        </span>
-                      )}
-                      {g.construction_completion && parseInt(g.construction_completion.slice(0, 4)) >= 2024 && (
-                        <span className="text-slate-400">Dokončení: {g.construction_completion}</span>
+                        </p>
                       )}
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
                     {g.best_match && <MatchBadge info={g.best_match} prefs={myPrefs} />}
-                    <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-                      {formatScore(g.best_score)}
-                    </span>
                     <span className="text-slate-400 text-xs">{expanded ? "▲" : "▼"}</span>
                   </div>
-                </button>
+                </div>
 
                 {/* Expanded units */}
                 {expanded && (
-                  <div className="border-t border-slate-100">
+                  <div className="border-t-2 border-slate-200">
                     {g.units[0]?.project_url && g.units[0].project_url.startsWith("http") && (
                       <div className="border-b border-slate-50 px-4 py-2">
                         <a
@@ -1055,6 +1205,9 @@ export default function PortalNovostavbyPage() {
                           )}
                         </div>
                         <div className="flex items-center gap-2">
+                          <PortalPriceDiffBadge pct={r.price_diff_pct} />
+                          <PortalMhdBadges rec={r} activePrefs={activePoiPrefs} />
+                          <PortalPoiBadges poiCounts={r.poi_counts} activePrefs={activePoiPrefs} />
                           {myPrefs.length > 0 && <MatchBadge info={getMatch(r.rec_id)} size="xs" prefs={myPrefs} />}
                           {r.score != null && (
                             <span className="text-xs font-medium text-slate-500">{formatScore(r.score)}</span>
@@ -1087,6 +1240,7 @@ export default function PortalNovostavbyPage() {
                 <SortHeader label="Ext." sortKey="exterior_area_m2" current={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader label="Cena" sortKey="price_czk" current={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader label="Kč/m²" sortKey="price_per_m2_czk" current={sortKey} dir={sortDir} onSort={handleSort} />
+                <SortHeader label="Trh" sortKey="price_diff_pct" current={sortKey} dir={sortDir} onSort={handleSort} />
                 <SortHeader label="Skóre" sortKey="score" current={sortKey} dir={sortDir} onSort={handleSort} />
                 {myPrefs.length > 0 && (
                   <SortHeader label="Shoda" sortKey="match_count" current={sortKey} dir={sortDir} onSort={handleSort} />
@@ -1138,6 +1292,9 @@ export default function PortalNovostavbyPage() {
                     {r.price_per_m2_czk != null
                       ? `${new Intl.NumberFormat("cs-CZ").format(r.price_per_m2_czk)}`
                       : "—"}
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <PortalPriceDiffBadge pct={r.price_diff_pct} />
                   </td>
                   <td className="px-2 py-2">
                     {r.score != null && (

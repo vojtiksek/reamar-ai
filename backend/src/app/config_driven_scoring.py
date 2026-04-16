@@ -405,18 +405,6 @@ def _compute_legacy_area_fit(unit, project, profile) -> Optional[float]:
         center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
         diff_ratio = abs(area - center) / max(center, 1.0)
         return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-    else:
-        wizard_budget = (
-            ((getattr(profile, "filter_json", None) or {}).get("wizard") or {}).get("budget") or {}
-        )
-        ideal_area = wizard_budget.get("ideal_area")
-        if ideal_area is not None:
-            try:
-                ideal_area = float(ideal_area)
-                diff_ratio = abs(area - ideal_area) / max(ideal_area, 1.0)
-                return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-            except (TypeError, ValueError):
-                pass
     return 50.0
 
 
@@ -465,7 +453,7 @@ def _compute_legacy_commute_fit(unit, project, profile, db=None) -> tuple[Option
     ):
         return None, [], False
 
-    from .routing_provider import get_cached_travel_time_minutes
+    from .routing_provider import get_cached_commute_result
 
     points = profile.commute_points_json or []
     if isinstance(points, dict):
@@ -488,16 +476,19 @@ def _compute_legacy_commute_fit(unit, project, profile, db=None) -> tuple[Option
         priority = str(cp.get("priority") or "ignore")
         tol = cp.get("tolerance_minutes")
         tolerance_minutes = float(tol) if tol is not None else 0.0
-        travel_min = get_cached_travel_time_minutes(db, project, cp)
+        commute_result = get_cached_commute_result(db, project, cp)
 
-        if travel_min is None:
+        if commute_result is None:
             continue
 
+        travel_min = commute_result.minutes
         limit = max_minutes + tolerance_minutes
         if priority == "must_have" and travel_min > limit:
             commute_details.append({
                 "label": label, "mode": mode, "minutes": travel_min,
                 "max_minutes": max_minutes, "priority": priority, "passed": False,
+                "itinerary": commute_result.itinerary,
+                "is_estimated": commute_result.is_estimated,
             })
             commute_hard_fail = True
             break
@@ -517,6 +508,8 @@ def _compute_legacy_commute_fit(unit, project, profile, db=None) -> tuple[Option
                 "label": label, "mode": mode, "minutes": travel_min,
                 "max_minutes": max_minutes, "priority": priority,
                 "passed": travel_min <= limit,
+                "itinerary": commute_result.itinerary,
+                "is_estimated": commute_result.is_estimated,
             })
 
     if commute_hard_fail:

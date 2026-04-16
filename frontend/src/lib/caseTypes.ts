@@ -112,10 +112,22 @@ export type RecommendationItem = {
   broker_note?: string | null;
   shortlist_role?: string | null;
   shortlist_reason?: string | null;
+  shortlist_risks?: string | null;
   shortlist_order?: number | null;
   reason?: Record<string, unknown> | null;
   feedback?: RecommendationFeedback | null;
   construction_completion?: string | null;
+  noise_label?: string | null;
+  noise_day_db?: number | null;
+  noise_night_db?: number | null;
+  distance_to_tram_tracks_m?: number | null;
+  distance_to_primary_road_m?: number | null;
+  distance_to_railway_m?: number | null;
+  distance_to_tram_stop_m?: number | null;
+  distance_to_metro_station_m?: number | null;
+  distance_to_bus_stop_m?: number | null;
+  price_diff_pct?: number | null;
+  poi_counts?: Record<string, number> | null;
 };
 
 export type MarketFitBlocker = {
@@ -190,11 +202,9 @@ export type WizardExtras = {
     administrative_region?: string | null;
   };
   budget?: {
-    ideal_price?: number | null;
     max_price?: number | null;
     tolerate_plus_10?: boolean;
     max_price_tolerance_pct?: number | null;
-    ideal_area?: number | null;
     min_area?: number | null;
     tolerate_minus_10?: boolean;
     max_area_tolerance_pct?: number | null;
@@ -281,12 +291,13 @@ export type WizardExtras = {
       label: string;
       lat: number | null;
       lng: number | null;
-      mode: "drive" | "transit";
+      mode: "drive" | "transit" | "park_and_ride";
       max_minutes: number | null;
       priority: "must_have" | "prefer" | "ignore";
       tolerance_minutes?: number | null;
       address?: string | null;
       place_id?: string | null;
+      arrival_time?: string | null;
     }[];
   };
   skip_categories?: {

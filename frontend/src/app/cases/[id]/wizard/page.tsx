@@ -9,6 +9,8 @@ import type { Priority } from "@/lib/caseTypes";
 import { normalizeAdminAreaList } from "@/lib/wizardTransform";
 import { ClientLocationMap } from "@/components/ClientLocationMap";
 import { CommutePointsEditor, type CommutePoint } from "../brief/CommutePointsEditor";
+import { AreaMultiSelect } from "@/components/AreaMultiSelect";
+import { AreaHierarchyPicker } from "@/components/AreaHierarchyPicker";
 import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
 import { DEFAULT_PREFERENCES } from "@/lib/walkabilityPreferences";
 import {
@@ -16,8 +18,6 @@ import {
   STANDARD_ENUMS,
   STANDARD_FEATURES,
   AMENITY_FEATURES,
-  NOISE_FEATURES,
-  NOISE_LABELS,
   ENUM_OPTION_LABELS,
   ENUM_FIELD_LABELS,
   STANDARD_FEATURE_LABELS,
@@ -37,7 +37,11 @@ const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 const TOTAL_STEPS = WIZARD_STEPS.length;
 
 const STEP_LABELS: Record<number, string> = Object.fromEntries(
-  WIZARD_STEPS.map((s) => [s.index, s.label]),
+  WIZARD_STEPS.map((s) => [
+    s.index,
+    // Noise controls removed from step 7; only POI/walkability remains.
+    s.key === "noise" ? "Okolí projektu" : s.label,
+  ]),
 );
 
 /* ─── Shared UI ─── */
@@ -390,7 +394,9 @@ export default function ClientWizardPage() {
     clientId,
     handleSaveProfile,
     handleNextStep,
-    autoSaveStatus,
+    profileDirty,
+    handleExplicitSave,
+    profileSaving,
     walkPrefs, setWalkPrefs,
   } = useCaseData();
 
@@ -1015,213 +1021,160 @@ export default function ClientWizardPage() {
 
   const renderStep4 = () => {
     const step4 = WIZARD_STEPS.find((s) => s.key === "location")!;
-    const areaGroup = step4.groups.find((g) => g.key === "area");
     const characterGroup = step4.groups.find((g) => g.key === "character");
-    // Split area-group fields into two visual rows:
-    //   1) text inputs go into a 2-col grid
-    //   2) bool_toggle status pills go into a vertical stack
-    // Rendering is driven by `f.render` from wizardModel (metadata-driven
-    // dispatch, same pattern as renderStep8).
-    const textFields = areaGroup?.fields.filter((f) => f.render === "text") ?? [];
-    const boolFields = areaGroup?.fields.filter((f) => f.render === "bool_toggle") ?? [];
     const characterFields =
       characterGroup?.fields.filter(
         (f) => f.render === "toggle" && f.visibility !== "broker",
       ) ?? [];
 
     const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
+    const hasCommutePoints = commutePoints.length > 0;
+    const effectiveMapMode = hasCommutePoints ? mapMode : "polygon";
     const canAddMore = commutePoints.length < 4;
-    const showPolygon = wizardExtras.location?.method_polygon ?? true;
-    const showCommute = !!wizardExtras.location?.method_commute;
-    const showMap = showPolygon || showCommute;
-    const bothActive = showPolygon && showCommute;
-    const effectiveMapMode = bothActive ? mapMode : showCommute ? "commute" : "polygon";
+    const isAdminFilter = !!wizardExtras.location?.method_admin;
 
     return (
       <div className="space-y-8">
-        {areaGroup && (
-          <div>
-            <h3 className="mb-4 text-base font-semibold text-slate-800">{areaGroup.heading}</h3>
-            {areaGroup.description && (
-              <p className="mb-4 text-sm text-slate-500">{areaGroup.description}</p>
-            )}
-            {/* Location methods — explicit rows for clarity */}
-            <div className="mb-4 space-y-2">
-              {/* Polygon — status driven by map drawing */}
-              <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-700">Oblast na mapě</div>
-                  <div className="mt-0.5 text-xs text-slate-500">
-                    {locationPolygons.some((a) => a.length >= 3)
-                      ? "Oblast nakreslena — klikněte tlačítko Kreslit oblast pro úpravu"
-                      : "Zakreslete oblast klikáním do mapy níže"}
-                  </div>
-                </div>
-                <span className={cn(
-                  "rounded-full border px-3 py-1.5 text-xs font-medium",
-                  locationPolygons.some((a) => a.length >= 3)
-                    ? "border-emerald-400 bg-emerald-50 text-emerald-800"
-                    : "border-slate-200 bg-white text-slate-400"
-                )}>
-                  {locationPolygons.some((a) => a.length >= 3) ? "Nakresleno" : "Nenakresleno"}
-                </span>
-              </div>
-
-              {/* Commute — explicit toggle with CTA hint */}
-              <div className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-                <div>
-                  <div className="text-sm font-medium text-slate-700">Dojezdové body</div>
-                  <div className="mt-0.5 text-xs text-slate-500">
-                    {showCommute
-                      ? commutePoints.length > 0
-                        ? `${commutePoints.length} ${commutePoints.length === 1 ? "bod přidán" : "body přidány"} — klikejte do mapy pro další`
-                        : "Zapnuto — vyberte typ bodu a klikněte do mapy"
-                      : "Filtrovat projekty podle dojezdové vzdálenosti"}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !showCommute;
-                    setWizardExtras((prev) => ({
-                      ...prev,
-                      location: { ...(prev.location ?? {}), method_commute: next },
-                    }));
-                    if (next) setMapMode("commute");
-                  }}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    showCommute
-                      ? "border-violet-400 bg-violet-50 text-violet-800"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300"
-                  )}
-                >
-                  {showCommute ? "Zapnuto" : "Zapnout"}
-                </button>
-              </div>
-
-              {/* Admin hard filter — label changed in wizardModel */}
-              {boolFields.filter((f) => f.key === "method_admin").map((f) => renderBoolToggleField(f))}
-            </div>
-            {textFields.length > 0 && (
-              <div className="grid gap-4 md:grid-cols-2">
-                {textFields.map((f) => renderTextField(f))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Map: polygon drawing + commute point placement */}
-        {showMap && (
-          <div className="space-y-3">
-            <div className="flex items-center justify-between gap-2">
-              {bothActive ? (
-                <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
-                  <button type="button"
-                    onClick={() => { setMapMode("polygon"); setNextCommuteLabel(""); }}
-                    className={cn("px-2.5 py-1 transition-colors",
-                      effectiveMapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
-                    Oblast
-                  </button>
-                  <button type="button"
-                    onClick={() => setMapMode("commute")}
-                    className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
-                      effectiveMapMode === "commute" ? "bg-violet-600 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
-                    Dojezdové body
-                  </button>
-                </div>
-              ) : (
-                <span className="text-[11px] text-slate-500">
-                  {effectiveMapMode === "commute"
-                    ? "Vyberte typ bodu níže a klikněte do mapy"
-                    : "Klikněte Kreslit oblast a klikejte do mapy"}
-                </span>
-              )}
-              <button
-                type="button"
-                onClick={() => setMapTall((t) => !t)}
-                className="text-[11px] text-slate-400 underline decoration-dotted underline-offset-2 hover:text-slate-700"
-              >
-                {mapTall ? "Zmenšit mapu" : "Zvětšit mapu"}
+        {/* Map: Oblast / Dojezd — always visible */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
+              <button type="button"
+                onClick={() => { setMapMode("polygon"); setNextCommuteLabel(""); }}
+                className={cn("px-2.5 py-1 transition-colors",
+                  effectiveMapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                Oblast
+              </button>
+              <button type="button"
+                onClick={() => setMapMode("commute")}
+                className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
+                  effectiveMapMode === "commute" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                Dojezd
               </button>
             </div>
-
-            {effectiveMapMode === "commute" && (
-              canAddMore ? (
-                <div className="space-y-1.5">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <span className="mr-1 text-[11px] font-medium text-slate-500">Typ bodu:</span>
-                    {["Práce", "Škola", "Školka", "Vlastní"].map((preset) => (
-                      <button key={preset} type="button"
-                        onClick={() => setNextCommuteLabel(nextCommuteLabel === preset || preset === "Vlastní" ? "" : preset)}
-                        className={cn(
-                          "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
-                          nextCommuteLabel === preset
-                            ? "border-violet-600 bg-violet-600 text-white"
-                            : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
-                        )}>
-                        {preset}
-                      </button>
-                    ))}
-                  </div>
-                  <p className="text-[11px] text-violet-700">
-                    {nextCommuteLabel
-                      ? `Vybráno „${nextCommuteLabel}" — klikněte do mapy`
-                      : "Vyberte typ bodu výše a klikněte do mapy"}
-                  </p>
-                </div>
-              ) : (
-                <p className="text-[11px] text-slate-400">
-                  4 body jsou maximum — odeberte bod v editoru níže.
-                </p>
-              )
-            )}
-
-            <ClientLocationMap
-              areas={locationPolygons}
-              activeAreaIndex={activeAreaIndex}
-              projects={locationProjects}
-              onChange={(next) => {
-                setLocationPolygons(next);
-                if (activeAreaIndex >= next.length) setActiveAreaIndex(Math.max(0, next.length - 1));
-                // Auto-enable polygon method when user draws
-                if (next.length > 0 && !wizardExtras.location?.method_polygon) {
-                  setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), method_polygon: true } }));
-                }
-              }}
-              onActiveAreaChange={setActiveAreaIndex}
-              mapMode={effectiveMapMode}
-              tall={mapTall}
-              commutePoints={commutePoints}
-              onCommuteClick={canAddMore ? (lat, lng) => {
-                const label = nextCommuteLabel || "Vlastní";
-                setWizardExtras((prev) => ({
-                  ...prev,
-                  commute: {
-                    ...(prev.commute ?? {}),
-                    points: [
-                      ...(prev.commute?.points ?? []),
-                      { id: `cp-${Date.now()}`, label, lat, lng, mode: "transit" as const, max_minutes: 30, priority: "prefer" as const },
-                    ],
-                  },
-                }));
-                setNextCommuteLabel("");
-              } : undefined}
-            />
-            {showCommute && (
-              <CommutePointsEditor
-                points={commutePoints}
-                onChange={(next) =>
-                  setWizardExtras((prev) => ({
-                    ...prev,
-                    commute: { ...(prev.commute ?? {}), points: next },
-                  }))
-                }
-                maxPoints={4}
-              />
-            )}
+            <button
+              type="button"
+              onClick={() => setMapTall((t) => !t)}
+              className="text-[11px] text-slate-400 underline decoration-dotted underline-offset-2 hover:text-slate-700"
+            >
+              {mapTall ? "Zmenšit mapu" : "Zvětšit mapu"}
+            </button>
           </div>
-        )}
+
+          {effectiveMapMode === "commute" && (
+            canAddMore ? (
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="mr-1 text-[11px] font-medium text-slate-500">Typ bodu:</span>
+                  {["Práce", "Škola", "Školka", "Vlastní"].map((preset) => (
+                    <button key={preset} type="button"
+                      onClick={() => setNextCommuteLabel(nextCommuteLabel === preset || preset === "Vlastní" ? "" : preset)}
+                      className={cn(
+                        "rounded-full border px-2.5 py-0.5 text-[11px] font-medium transition-colors",
+                        nextCommuteLabel === preset
+                          ? "border-violet-600 bg-violet-600 text-white"
+                          : "border-slate-200 bg-white text-slate-700 hover:border-slate-400"
+                      )}>
+                      {preset}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-[11px] text-violet-700">
+                  {nextCommuteLabel
+                    ? `Vybráno „${nextCommuteLabel}" — klikněte do mapy`
+                    : "Vyberte typ bodu výše a klikněte do mapy"}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">
+                4 body jsou maximum — odeberte bod v editoru níže.
+              </p>
+            )
+          )}
+
+          <ClientLocationMap
+            areas={locationPolygons}
+            activeAreaIndex={activeAreaIndex}
+            projects={locationProjects}
+            onChange={(next) => {
+              setLocationPolygons(next);
+              if (activeAreaIndex >= next.length) setActiveAreaIndex(Math.max(0, next.length - 1));
+            }}
+            onActiveAreaChange={setActiveAreaIndex}
+            mapMode={effectiveMapMode}
+            tall={mapTall}
+            commutePoints={commutePoints}
+            onCommuteClick={canAddMore ? (lat, lng) => {
+              const label = nextCommuteLabel || "Vlastní";
+              setWizardExtras((prev) => ({
+                ...prev,
+                commute: {
+                  ...(prev.commute ?? {}),
+                  points: [
+                    ...(prev.commute?.points ?? []),
+                    { id: `cp-${Date.now()}`, label, lat, lng, mode: "transit" as const, max_minutes: 30, priority: "prefer" as const },
+                  ],
+                },
+              }));
+              setNextCommuteLabel("");
+            } : undefined}
+          />
+
+          {/* Commute editor — always visible */}
+          <CommutePointsEditor
+            points={commutePoints}
+            onChange={(next) =>
+              setWizardExtras((prev) => ({
+                ...prev,
+                commute: { ...(prev.commute ?? {}), points: next },
+              }))
+            }
+            maxPoints={4}
+          />
+        </div>
+
+        {/* Preferované části — always visible, Preference / Filtr toggle */}
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-base font-semibold text-slate-800">Preferované části / okresy</h3>
+            <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
+              <button type="button"
+                onClick={() => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), method_admin: false } }))}
+                className={cn("px-2.5 py-1 transition-colors",
+                  !isAdminFilter ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                Preference
+              </button>
+              <button type="button"
+                onClick={() => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), method_admin: true } }))}
+                className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
+                  isAdminFilter ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                Filtr
+              </button>
+            </div>
+          </div>
+          <p className="text-sm text-slate-500">
+            {isAdminFilter
+              ? "Striktní filtr — projekty mimo vybrané části se vyřadí z doporučení."
+              : "Preference — projekty ve vybraných částech dostanou vyšší skóre, ale nevyřadí ostatní."}
+          </p>
+          <AreaHierarchyPicker
+            values={(() => {
+              const raw = wizardExtras.location?.administrative_area;
+              if (Array.isArray(raw)) return raw;
+              if (typeof raw === "string" && raw) return [raw];
+              return [];
+            })()}
+            onChange={(next) =>
+              setWizardExtras((prev) => ({
+                ...prev,
+                location: {
+                  ...(prev.location ?? {}),
+                  administrative_area: next.length ? next : null,
+                },
+              }))
+            }
+          />
+        </div>
 
         {characterGroup && characterFields.length > 0 && (
           <div>
@@ -1356,22 +1309,11 @@ export default function ClientWizardPage() {
     renderNegativeConstraintField(f, "noise");
 
   const renderStep7 = () => {
-    const step7 = WIZARD_STEPS.find((s) => s.key === "noise")!;
     return (
       <div className="space-y-8">
-        {step7.groups.map((group) => (
-          <div key={group.key}>
-            <h3 className="mb-2 text-base font-semibold text-slate-800">{group.heading}</h3>
-            {group.description && (
-              <p className="mb-4 text-sm text-slate-500">{group.description}</p>
-            )}
-            <div className="space-y-3">
-              {group.fields.map((f) => renderNoiseField(f))}
-            </div>
-          </div>
-        ))}
+        {/* Noise controls removed — noise stays in passive backend scoring only */}
 
-        {/* Walkability preferences — mirrors brief/page.tsx renderStep5 */}
+        {/* Walkability / POI preferences — mirrors brief/page.tsx renderStep5 */}
         <div className="space-y-4 rounded-lg bg-slate-50 p-3">
           <div className="flex items-center justify-between gap-2">
             <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí <PrefBadge /></h5>
@@ -1484,7 +1426,6 @@ export default function ClientWizardPage() {
       }
     }
     const amenities = Object.entries(w.house_amenities ?? {}).filter(([, v]) => v && v !== "ignore") as [string, string][];
-    const noise = Object.entries(w.noise ?? {}).filter(([, v]) => v && v !== "ignore") as [string, string][];
 
     return (
       <div className="space-y-6">
@@ -1538,27 +1479,9 @@ export default function ClientWizardPage() {
           </div>
         )}
 
-        {noise.length > 0 && (
+        {false && (
           <div>
-            <p className="mb-2 text-sm font-medium text-slate-700">Hluk</p>
-            <div className="flex flex-wrap gap-1.5">
-              {noise.map(([k, v]) => {
-                // Prefer metadata label; fall back to legacy static map.
-                const noiseLabel =
-                  wizardMeta[`noise.${k}`]?.label ?? NOISE_LABELS[k] ?? k;
-                // Prefer metadata custom_state_labels for severity label.
-                const semanticsMeta = getFieldSemantics(wizardMeta, k, "noise");
-                const stateLabel =
-                  semanticsMeta?.states.find(([sk]) => sk === v)?.[1] ??
-                  (v === "must" ? "Vyloučit" : v === "prefer" ? "Vadí mi" : v);
-                return (
-                  <span key={k} className={cn("rounded-full px-2.5 py-1 text-xs",
-                    v === "must" ? "bg-rose-50 text-rose-800" : "bg-amber-50 text-amber-800")}>
-                    {noiseLabel}: {stateLabel.toLowerCase()}
-                  </span>
-                );
-              })}
-            </div>
+            {/* Noise summary removed — noise preferences stay in backend scoring only */}
           </div>
         )}
 
@@ -1614,7 +1537,7 @@ export default function ClientWizardPage() {
     4: renderStep4,
     5: renderStep5,
     6: renderStep6,
-    7: renderStep7,
+    7: renderStep7,  // noise fields removed; only walkability/POI remains
     8: renderStep8,
     9: renderStep9,
   };
@@ -1631,11 +1554,8 @@ export default function ClientWizardPage() {
             <p className="text-xs text-slate-500">{client.name}</p>
           </div>
           <div className="flex items-center gap-3">
-            {autoSaveStatus === "saving" && (
-              <span className="text-[11px] text-slate-400">Ukládám...</span>
-            )}
-            {autoSaveStatus === "saved" && (
-              <span className="text-[11px] text-emerald-600">Uloženo</span>
+            {profileDirty && (
+              <span className="text-[11px] text-amber-600">Neuložené změny</span>
             )}
             <span className="text-xs text-slate-400">
               {step}/{TOTAL_STEPS}
@@ -1704,13 +1624,26 @@ export default function ClientWizardPage() {
           </button>
 
           {step < TOTAL_STEPS ? (
-            <button
-              type="button"
-              onClick={goNext}
-              className="rounded-xl bg-sky-500 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-sky-600"
-            >
-              Další →
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleExplicitSave}
+                disabled={!profileDirty || profileSaving}
+                className={cn(
+                  "rounded-xl px-5 py-2.5 text-sm font-medium transition-colors",
+                  profileDirty ? "text-sky-600 hover:bg-sky-50" : "text-slate-300 cursor-not-allowed",
+                )}
+              >
+                {profileSaving ? "Ukládám…" : "Uložit"}
+              </button>
+              <button
+                type="button"
+                onClick={goNext}
+                className="rounded-xl bg-sky-500 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-sky-600"
+              >
+                Další →
+              </button>
+            </div>
           ) : recomputeStatus === "done" ? (
             <button
               type="button"

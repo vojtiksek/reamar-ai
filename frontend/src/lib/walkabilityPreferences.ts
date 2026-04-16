@@ -3,7 +3,7 @@
  * Keys match backend WalkabilityPreferences (supermarket, pharmacy, park, …).
  */
 
-export type WalkabilityPreferenceValue = "high" | "normal" | "ignore";
+export type WalkabilityPreferenceValue = "required" | "high" | "normal" | "ignore";
 
 export type WalkabilityPreferences = {
   supermarket: WalkabilityPreferenceValue;
@@ -37,7 +37,7 @@ export const DEFAULT_PREFERENCES: WalkabilityPreferences = {
   bus: "normal",
 };
 
-const VALID_VALUES: Set<string> = new Set(["high", "normal", "ignore"]);
+const VALID_VALUES: Set<string> = new Set(["required", "high", "normal", "ignore"]);
 
 function normalize(value: unknown): WalkabilityPreferenceValue {
   const s = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -113,6 +113,7 @@ const CATEGORY_LABELS_CZ: Record<keyof WalkabilityPreferences, string> = {
 };
 
 function preferenceLabel(value: WalkabilityPreferenceValue): string {
+  if (value === "required") return "vyžaduji";
   if (value === "high") return "vysoká";
   if (value === "ignore") return "nezajímá";
   return "normální";

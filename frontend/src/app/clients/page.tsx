@@ -17,8 +17,6 @@ type DashboardClient = {
   unseen_matches: number;
   last_note_at?: string | null;
   days_since_last_note?: number | null;
-  share_link_expires_at?: string | null;
-  share_link_expired: boolean;
   has_profile: boolean;
   priority: "high" | "medium" | "normal";
 };
@@ -36,7 +34,6 @@ function nextAction(c: DashboardClient): string {
   if (!c.has_profile) return "Doplnit zadání";
   if (c.recommendations_count === 0) return "Vygenerovat doporučení";
   if (c.unseen_matches > 0) return `${c.unseen_matches} nových shod`;
-  if (c.share_link_expired) return "Obnovit sdílení";
   if (c.days_since_last_note != null && c.days_since_last_note > 14) return "Ozvat se klientovi";
   return "Zkontrolovat výběr";
 }

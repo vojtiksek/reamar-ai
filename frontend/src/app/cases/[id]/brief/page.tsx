@@ -18,7 +18,10 @@ import { AddressSearch } from "@/components/AddressSearch";
 import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import { QuickEdit } from "./QuickEdit";
+import { QuarterPicker, dateToQuarterLabel } from "@/components/QuarterPicker";
 import { CommutePointsEditor, type CommutePoint } from "./CommutePointsEditor";
+import { AreaMultiSelect } from "@/components/AreaMultiSelect";
+import { AreaHierarchyPicker } from "@/components/AreaHierarchyPicker";
 import {
   ReamarButton,
   ReamarCard,
@@ -63,12 +66,6 @@ const FINANCING_TYPE_OPTIONS = [
   { key: "unknown", label: "Neví", desc: "Klient ještě nemá jasno" },
 ] as const;
 
-const NOISE_SOURCES = [
-  { key: "main_road", label: "Hlavní silnice" },
-  { key: "tram", label: "Tramvaj" },
-  { key: "railway", label: "Železnice" },
-  { key: "airport", label: "Letiště" },
-] as const;
 
 const HEATING_OPTIONS = [
   { value: "floor_heating", label: "Podlahové vytápění" },
@@ -266,8 +263,10 @@ export default function BriefPage() {
     token,
     profileSaving,
     recomputing,
+    recomputeProgress,
     profileSavedMessage,
-    autoSaveStatus,
+    profileDirty,
+    handleExplicitSave,
     walkPrefsOpen, setWalkPrefsOpen,
     walkPrefs, setWalkPrefs,
     wizardExtras, setWizardExtras,
@@ -364,14 +363,6 @@ export default function BriefPage() {
     }
   }
 
-  const noiseLabels: Record<string, string> = { main_road: "Hlavní silnice", tram: "Tramvaj", railway: "Železnice", airport: "Letiště" };
-  if (wizardExtras.noise) {
-    Object.entries(noiseLabels).forEach(([key, label]) => {
-      const value = (wizardExtras.noise as any)[key] as Priority | undefined;
-      if (value === "must") mustHaveSummary.push(`${label}: vyloučit`);
-      else if (value === "prefer") preferSummary.push(`${label}: citlivý/á`);
-    });
-  }
 
   if (wizardExtras.project_amenities) {
     const amenityLabels: Record<string, string> = { reception: "Recepce", fitness: "Fitness", ev_charger: "Elektro nabíječka", courtyard_garden: "Vnitroblok" };
@@ -389,21 +380,19 @@ export default function BriefPage() {
       <h3 className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Živé shrnutí</h3>
 
       {/* Budget */}
-      {(profile?.budget_max != null || wizardExtras.budget?.ideal_price != null) && (
+      {profile?.budget_max != null && (
         <div>
           <p className="font-semibold text-slate-700">Rozpočet</p>
-          {wizardExtras.budget?.ideal_price != null && <p className="text-slate-600">Ideál: {formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>}
-          {profile?.budget_max != null && <p className="text-slate-600">Max: {formatCurrencyCzk(profile.budget_max)}</p>}
+          <p className="text-slate-600">Max: {formatCurrencyCzk(profile.budget_max)}</p>
           {wizardExtras.budget?.max_price_tolerance_pct != null && <p className="text-slate-600">Tolerance: +{wizardExtras.budget.max_price_tolerance_pct}%</p>}
         </div>
       )}
 
       {/* Area */}
-      {(profile?.area_min != null || wizardExtras.budget?.ideal_area != null) && (
+      {profile?.area_min != null && (
         <div>
           <p className="font-semibold text-slate-700">Plocha</p>
-          {wizardExtras.budget?.ideal_area != null && <p className="text-slate-600">Ideál: {formatAreaM2(wizardExtras.budget.ideal_area)}</p>}
-          {profile?.area_min != null && <p className="text-slate-600">Min: {formatAreaM2(profile.area_min)}</p>}
+          <p className="text-slate-600">Min: {formatAreaM2(profile.area_min)}</p>
           {wizardExtras.budget?.max_area_tolerance_pct != null && <p className="text-slate-600">Tolerance: -{wizardExtras.budget.max_area_tolerance_pct}%</p>}
         </div>
       )}
@@ -471,9 +460,9 @@ export default function BriefPage() {
 
   /* Step 1: Klient */
   const renderStep1 = () => (
-    <div className="space-y-6">
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Účel nákupu <CtxBadge /></p>
+    <div className="space-y-4">
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Účel nákupu <CtxBadge /></p>
         <div className="grid grid-cols-2 gap-3">
           {([
             { key: "own_use", label: "Vlastní bydlení", icon: "🏠", desc: "Klient hledá bydlení pro sebe" },
@@ -494,10 +483,10 @@ export default function BriefPage() {
             );
           })}
         </div>
-      </div>
+      </ReamarSubtleCard>
 
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Typ klienta <CtxBadge /></p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Typ klienta <CtxBadge /></p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {CLIENT_TYPE_CARDS.map(({ key, label, icon, desc }) => {
             const active = wizardExtras.client_type === key;
@@ -515,41 +504,33 @@ export default function BriefPage() {
             );
           })}
         </div>
-      </div>
+      </ReamarSubtleCard>
     </div>
   );
 
   /* Step 2: Cena a financování (merged from old steps 3 + 4) */
   const renderStep2 = () => (
-    <div className="space-y-6">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Rozpočet</p>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={reamarLabelClass}>Ideální cena (Kč) <PrefBadge /></label>
-          <input type="number" value={wizardExtras.budget?.ideal_price ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_price: e.target.value ? Number(e.target.value) : null } }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Např. 8 500 000" />
-          {wizardExtras.budget?.ideal_price != null && <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>}
-        </div>
-        <div>
+    <div className="space-y-4">
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Rozpočet</p>
+        <div className="max-w-xs">
           <label className={reamarLabelClass}>Maximální cena (Kč) <FilterBadge /></label>
           <input type="number" value={profile?.budget_max ?? ""}
             onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), budget_max: e.target.value ? Number(e.target.value) : null }))}
             className={cn("mt-1", reamarInputClass)} placeholder="Absolutní strop" />
           {profile?.budget_max != null && <p className="mt-1 text-xs text-slate-500">{formatCurrencyCzk(profile.budget_max)}</p>}
         </div>
-      </div>
+        <div className="max-w-xs">
+          <label className={reamarLabelClass}>Max. překročení ceny (%)</label>
+          <input type="number" min={0} max={50} value={wizardExtras.budget?.max_price_tolerance_pct ?? ""}
+            onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_price_tolerance_pct: e.target.value ? Number(e.target.value) : null } }))}
+            className={cn("mt-1", reamarInputClass)} placeholder="Např. 10" />
+          <p className="mt-1 text-[11px] text-slate-500">Jednotky nad max. cenou se vyřadí, ale do tolerance se ještě ukáží s nižším skóre.</p>
+        </div>
+      </ReamarSubtleCard>
 
-      <div className="max-w-xs">
-        <label className={reamarLabelClass}>Max. překročení ceny (%)</label>
-        <input type="number" min={0} max={50} value={wizardExtras.budget?.max_price_tolerance_pct ?? ""}
-          onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_price_tolerance_pct: e.target.value ? Number(e.target.value) : null } }))}
-          className={cn("mt-1", reamarInputClass)} placeholder="Např. 10" />
-        <p className="mt-1 text-[11px] text-slate-500">Jednotky nad max. cenou se vyřadí, ale do tolerance se ještě ukáží s nižším skóre.</p>
-      </div>
-
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Typ financování <CtxBadge /></p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Typ financování <CtxBadge /></p>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           {FINANCING_TYPE_OPTIONS.map(({ key, label, desc }) => {
             const active = wizardExtras.financing_type === key;
@@ -566,27 +547,30 @@ export default function BriefPage() {
             );
           })}
         </div>
-      </div>
+      </ReamarSubtleCard>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className={reamarLabelClass}>Max. platba při podpisu (%)</label>
-          <input type="number" min={0} max={100} value={wizardExtras.budget?.max_payment_contract_pct ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_payment_contract_pct: e.target.value ? Number(e.target.value) : null } }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Např. 20" />
-          <p className="mt-1 text-[11px] text-slate-500">Kolik % z ceny je klient ochotný zaplatit hned po podpisu SoSBK.</p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Platební podmínky</p>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className={reamarLabelClass}>Max. platba při podpisu (%)</label>
+            <input type="number" min={0} max={100} value={wizardExtras.budget?.max_payment_contract_pct ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_payment_contract_pct: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 20" />
+            <p className="mt-1 text-[11px] text-slate-500">Kolik % z ceny je klient ochotný zaplatit hned po podpisu SoSBK.</p>
+          </div>
+          <div>
+            <label className={reamarLabelClass}>Max. platba během výstavby (%)</label>
+            <input type="number" min={0} max={100} value={wizardExtras.budget?.max_payment_construction_pct ?? ""}
+              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_payment_construction_pct: e.target.value ? Number(e.target.value) : null } }))}
+              className={cn("mt-1", reamarInputClass)} placeholder="Např. 30" />
+            <p className="mt-1 text-[11px] text-slate-500">Kolik % během výstavby před dokončením.</p>
+          </div>
         </div>
-        <div>
-          <label className={reamarLabelClass}>Max. platba během výstavby (%)</label>
-          <input type="number" min={0} max={100} value={wizardExtras.budget?.max_payment_construction_pct ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), max_payment_construction_pct: e.target.value ? Number(e.target.value) : null } }))}
-            className={cn("mt-1", reamarInputClass)} placeholder="Např. 30" />
-          <p className="mt-1 text-[11px] text-slate-500">Kolik % během výstavby před dokončením.</p>
-        </div>
-      </div>
+      </ReamarSubtleCard>
 
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Možnost postoupení smlouvy</p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Možnost postoupení smlouvy</p>
         <div className="flex flex-wrap gap-2">
           {([
             { key: "yes", label: "Ano, řeší" },
@@ -603,103 +587,41 @@ export default function BriefPage() {
             );
           })}
         </div>
-      </div>
+      </ReamarSubtleCard>
     </div>
   );
 
   /* Step 3: Lokalita (same as old step 5) */
-  const renderStep3 = () => (
-    <div className="space-y-6">
-      {/* Location method selection */}
-      <div className="grid gap-4 md:grid-cols-3">
-        {[
-          { key: "method_polygon", title: "Oblast na mapě", desc: "Hlavní hard filtr lokality — co je mimo polygon, vypadne z doporučení." },
-          { key: "method_commute", title: "Dojíždění do práce / školy", desc: "Doplňkový hard filtr — must-have body musí být v časovém limitu." },
-          { key: "method_admin", title: "Preferované části jako striktní požadavek", desc: "Volitelný opt-in. Bez zaškrtnutí jsou preferované oblasti jen soft ranking uvnitř polygonu." },
-        ].map(({ key, title, desc }) => {
-          const checked = (wizardExtras.location as any)?.[key] ?? false;
-          return (
-            <button key={key} type="button"
-              onClick={() => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), [key]: !checked } }))}
-              className={cn(
-                "flex h-full min-h-[148px] flex-col items-start rounded-3xl border px-5 py-4 text-left transition-colors",
-                checked ? "border-indigo-400 bg-white ring-2 ring-indigo-300/40 shadow-sm" : "border-slate-200/90 bg-slate-50/90 hover:border-slate-300 hover:bg-white"
-              )}>
-              <div className="mb-1 flex w-full items-center justify-between gap-2">
-                <span className={cn("inline-flex h-4 w-4 items-center justify-center rounded-full border text-[10px]",
-                  checked ? "border-indigo-500 bg-indigo-500 text-white" : "border-slate-300 bg-white text-slate-500")}>
-                  {checked ? "✓" : ""}
-                </span>
-                <span className="text-[11px] font-medium uppercase tracking-[0.14em] opacity-70">Metoda lokality</span>
-              </div>
-              <div className="space-y-0.5">
-                <p className={cn("text-sm font-semibold", checked ? "text-indigo-800" : "text-slate-900")}>{title}</p>
-                <p className={cn("text-xs", checked ? "text-indigo-600/80" : "text-slate-600")}>{desc}</p>
-              </div>
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-[11px] text-slate-500">
-        Polygon je hlavní hard filtr lokality. Preferované oblasti uvnitř polygonu
-        ovlivňují řazení a stávají se striktním požadavkem jen s výslovným opt-in.
-      </p>
+  const renderStep3 = () => {
+    const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
+    const hasCommutePoints = commutePoints.length > 0;
+    const effectiveMapMode = hasCommutePoints ? mapMode : "polygon";
+    const canAddMore = commutePoints.length < 4;
+    return (
+    <div className="space-y-4">
 
-      {/* Market info bar */}
-      <div className="grid gap-3 rounded-2xl bg-slate-50/70 p-3 text-[11px] text-slate-700 md:grid-cols-3">
-        <div className="space-y-1">
-          <p className="font-semibold text-slate-900">Zvolené metody lokality <FilterBadge /></p>
-          <ul className="list-disc pl-4">
-            {(wizardExtras.location?.method_polygon ?? true) && <li>Polygon v mapě</li>}
-            {wizardExtras.location?.method_commute && <li>Dojíždění na klíčová místa</li>}
-            {wizardExtras.location?.method_admin && <li>Preferované oblasti jako striktní požadavek</li>}
-          </ul>
-        </div>
-        <div className="space-y-1">
-          <p className="font-semibold text-slate-900">Trh v oblasti</p>
-          {areaMarket ? (
-            <>
-              <p>{areaMarket.projects_count} projektů · {areaMarket.active_units_count} aktivních jednotek</p>
-              <p>{areaMarket.matching_units_count} jednotek odpovídá aktuálnímu profilu klienta</p>
-            </>
-          ) : (
-            <p className="text-slate-500">Po uložení profilu a zakreslení oblasti se zobrazí přehled trhu.</p>
-          )}
-        </div>
-        <div className="space-y-1">
-          <p className="font-semibold text-slate-900">Tip</p>
-          <p>Ptejte se klienta, které oblasti jsou „určitě ano" a kam se nechce stěhovat.</p>
-        </div>
-      </div>
-
-      {/* Unified map: polygon + commute */}
-      {((wizardExtras.location?.method_polygon ?? true) || wizardExtras.location?.method_commute) && (() => {
-        const bothActive = !!((wizardExtras.location?.method_polygon ?? true) && wizardExtras.location?.method_commute);
-        const effectiveMapMode = bothActive ? mapMode : wizardExtras.location?.method_commute ? "commute" : "polygon";
-        const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
-        const canAddMore = commutePoints.length < 4;
+      {/* Unified map: polygon + commute — always visible */}
+      {(() => {
         return (
           <ReamarSubtleCard className="space-y-3 p-3">
             <div className="flex items-center justify-between">
               <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-                {effectiveMapMode === "commute" ? "Mapa — body dojíždění" : "Polygon na mapě"}
+                {effectiveMapMode === "commute" ? "Mapa — dojezdové body" : "Mapa — oblast"}
               </h5>
-              {bothActive && (
-                <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
-                  <button type="button"
-                    onClick={() => { setMapMode("polygon"); setNextCommuteLabel(""); }}
-                    className={cn("px-2.5 py-1 transition-colors",
-                      mapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
-                    Polygon
-                  </button>
-                  <button type="button"
-                    onClick={() => setMapMode("commute")}
-                    className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
-                      mapMode === "commute" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
-                    Dojezdové body
-                  </button>
-                </div>
-              )}
+              <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
+                <button type="button"
+                  onClick={() => { setMapMode("polygon"); setNextCommuteLabel(""); }}
+                  className={cn("px-2.5 py-1 transition-colors",
+                    effectiveMapMode === "polygon" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                  Oblast
+                </button>
+                <button type="button"
+                  onClick={() => setMapMode("commute")}
+                  className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
+                    effectiveMapMode === "commute" ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+                  Dojezd
+                </button>
+              </div>
             </div>
 
             {effectiveMapMode === "polygon" && (
@@ -762,6 +684,19 @@ export default function BriefPage() {
                 }));
                 setNextCommuteLabel("");
               } : undefined}
+            />
+
+            {/* Commute points editor — always visible */}
+            <CommutePointsEditor
+              points={commutePoints}
+              onChange={(next) =>
+                setWizardExtras((prev) => ({
+                  ...prev,
+                  commute: { ...(prev.commute ?? {}), points: next },
+                }))
+              }
+              maxPoints={4}
+              hideAddFlow
             />
 
             {effectiveMapMode === "polygon" && (
@@ -841,75 +776,62 @@ export default function BriefPage() {
         );
       })()}
 
-      {/* Admin areas */}
-      {wizardExtras.location?.method_admin && (
-        <ReamarSubtleCard className="space-y-3 p-3">
+      {/* Admin areas — always visible */}
+      <ReamarSubtleCard className="space-y-3 p-3">
+        <div className="flex items-center justify-between">
           <h5 className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
-            Preferované části — striktní požadavek
+            Preferované části / okresy
           </h5>
-          <p className="text-[10px] text-slate-500">
-            Tato karta je aktivní proto, že je zapnutý opt-in. Seznam níže se aplikuje
-            jako tvrdý filtr uvnitř polygonu.
-          </p>
-          <div className="grid gap-3 md:grid-cols-2">
-            <div>
-              <label className={reamarLabelClass}>Preferované obvody / okresy</label>
-              <input
-                type="text"
-                value={(() => {
-                  const raw = wizardExtras.location?.administrative_area;
-                  if (Array.isArray(raw)) return raw.join(", ");
-                  return raw ?? "";
-                })()}
-                onChange={(e) => {
-                  const next = e.target.value
-                    .split(",")
-                    .map((s) => s.trim())
-                    .filter(Boolean);
-                  setWizardExtras((prev) => ({
-                    ...prev,
-                    location: {
-                      ...(prev.location ?? {}),
-                      administrative_area: next.length ? next : null,
-                    },
-                  }));
-                }}
-                className={cn("mt-1 text-xs", reamarInputClass)}
-                placeholder="Např. Praha 6, Praha-západ"
-              />
-            </div>
-            <div>
-              <label className={reamarLabelClass}>Region / kraj</label>
-              <input type="text" value={wizardExtras.location?.administrative_region ?? ""}
-                onChange={(e) => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), administrative_region: e.target.value || null } }))}
-                className={cn("mt-1 text-xs", reamarInputClass)} placeholder="Např. Praha, Středočeský kraj" />
-            </div>
+          {/* Preference vs. Filtr toggle */}
+          <div className="flex overflow-hidden rounded-lg border border-slate-200 text-[11px]">
+            <button type="button"
+              onClick={() => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), method_admin: false } }))}
+              className={cn("px-2.5 py-1 transition-colors",
+                !wizardExtras.location?.method_admin ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+              Preference
+            </button>
+            <button type="button"
+              onClick={() => setWizardExtras((prev) => ({ ...prev, location: { ...(prev.location ?? {}), method_admin: true } }))}
+              className={cn("border-l border-slate-200 px-2.5 py-1 transition-colors",
+                wizardExtras.location?.method_admin ? "bg-slate-900 text-white" : "bg-white text-slate-600 hover:bg-slate-50")}>
+              Filtr <FilterBadge />
+            </button>
           </div>
-        </ReamarSubtleCard>
-      )}
-
-      {/* Commute points editor */}
-      {wizardExtras.location?.method_commute && (
-        <CommutePointsEditor
-          points={(wizardExtras.commute?.points ?? []) as CommutePoint[]}
+        </div>
+        <p className="text-[10px] text-slate-400">
+          {wizardExtras.location?.method_admin
+            ? "Striktní filtr — projekty mimo vybrané části se vyřadí z doporučení."
+            : "Preference — projekty ve vybraných částech dostanou vyšší skóre, ale nevyřadí ostatní."}
+        </p>
+        <AreaHierarchyPicker
+          values={(() => {
+            const raw = wizardExtras.location?.administrative_area;
+            if (Array.isArray(raw)) return raw;
+            if (typeof raw === "string" && raw) return [raw];
+            return [];
+          })()}
           onChange={(next) =>
             setWizardExtras((prev) => ({
               ...prev,
-              commute: { ...(prev.commute ?? {}), points: next },
+              location: {
+                ...(prev.location ?? {}),
+                administrative_area: next.length ? next : null,
+              },
             }))
           }
-          maxPoints={4}
         />
-      )}
+      </ReamarSubtleCard>
+
     </div>
-  );
+  );};
+
 
   /* Step 4: Dispozice a prostor (NEW) */
   const renderStep4 = () => (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Layout selection */}
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dispozice <FilterBadge /></p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dispozice <FilterBadge /></p>
         <div className="flex flex-wrap gap-2">
           {LAYOUT_OPTIONS.map((opt) => {
             const checked = selectedLayouts.includes(opt.value);
@@ -923,18 +845,12 @@ export default function BriefPage() {
             );
           })}
         </div>
-      </div>
+      </ReamarSubtleCard>
 
       {/* Unit area */}
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Velikost bytu</p>
-        <div className="grid grid-cols-3 gap-3">
-          <div>
-            <label className={reamarLabelClass}>Ideální (m²) <PrefBadge /></label>
-            <input type="number" value={wizardExtras.budget?.ideal_area ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1", reamarInputClass)} placeholder="Např. 75" />
-          </div>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Velikost bytu</p>
+        <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={reamarLabelClass}>Minimální (m²) <FilterBadge /></label>
             <input type="number" value={profile?.area_min ?? ""}
@@ -949,11 +865,11 @@ export default function BriefPage() {
             <p className="mt-1 text-[11px] text-slate-500">Jednotky menší než minimum - odchylka se vyřadí. Čím větší byt, tím vyšší skóre.</p>
           </div>
         </div>
-      </div>
+      </ReamarSubtleCard>
 
       {/* Outdoor space */}
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Venkovní prostor <FilterBadge /></p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Venkovní prostor <FilterBadge /></p>
         <div className="grid grid-cols-2 gap-3">
           <div>
             <label className={reamarLabelClass}>Minimální venkovní prostor (m²)</label>
@@ -969,10 +885,10 @@ export default function BriefPage() {
             <p className="mt-1 text-[11px] text-slate-500">Čím větší venkovní prostor, tím vyšší skóre (max do 50 m²).</p>
           </div>
         </div>
-      </div>
+      </ReamarSubtleCard>
 
       {/* Property type */}
-      <div>
+      <ReamarSubtleCard className="space-y-3 p-4">
         <label className={reamarLabelClass}>Typ nemovitosti</label>
         <select value={profile?.property_type ?? "any"}
           onChange={(e) => setProfile((prev) => ({ ...(prev ?? {}), property_type: e.target.value }))}
@@ -981,11 +897,11 @@ export default function BriefPage() {
           <option value="apartment">Byt</option>
           <option value="house">Dům</option>
         </select>
-      </div>
+      </ReamarSubtleCard>
 
       {/* Floor preference */}
-      <div>
-        <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Preferované patro <PrefBadge /></p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Preferované patro <PrefBadge /></p>
         <div className="flex flex-wrap gap-2">
           {FLOOR_RULE_OPTIONS.map(({ value, label }) => {
             const active = (wizardExtras.outdoor?.floor_rule ?? "ignore") === value;
@@ -999,94 +915,50 @@ export default function BriefPage() {
             );
           })}
         </div>
-        <p className="mt-2 text-[11px] text-slate-500">Při nesplnění podmínek se skóre bytu výrazně snižuje.</p>
-      </div>
+        <p className="text-[11px] text-slate-500">Při nesplnění podmínek se skóre bytu výrazně snižuje.</p>
+      </ReamarSubtleCard>
     </div>
   );
 
-  /* Step 5: Okolí projektu (restructured — gate noise, gate walkability, no character/orientation) */
+  /* Step 5: Okolí projektu (walkability only — noise removed) */
   const renderStep5 = () => (
-    <div className="space-y-6">
-      {/* Gate 1: Noise */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <p className="mb-3 text-sm font-medium text-slate-800">Řešíte rušnost (klid) v lokalitě projektu?</p>
-        <div className="flex gap-2">
-          <button type="button"
-            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, surroundings: false } }))}
-            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-              !(wizardExtras.skip_categories?.surroundings) ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
-            Ano
-          </button>
-          <button type="button"
-            onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, surroundings: true } }))}
-            className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-              wizardExtras.skip_categories?.surroundings ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400")}>
-            Ne, přeskočit
-          </button>
+    <div className="space-y-4">
+      {/* Walkability preferences */}
+      <ReamarSubtleCard className="space-y-4 p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí <PrefBadge /></h5>
+          <div className="flex gap-1">
+            {[
+              { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+              { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
+              { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
+            ].map(({ label, prefs }) => (
+              <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
+                className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-        {wizardExtras.skip_categories?.surroundings && (
-          <p className="mt-2 text-xs text-slate-400">Váhy hluku a walkability budou 0 — přerozděli se do ostatních aspektů.</p>
-        )}
-      </div>
-
-      {!wizardExtras.skip_categories?.surroundings && (
-        <>
-          {/* Noise sensitivity */}
-          <div className="space-y-3">
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Hlučnost lokality <FilterBadge /><PrefBadge /></p>
-            <p className="text-xs text-slate-600">
-              Neřeším = žádné skóre. Citlivý/á = snížení skóre. Vyloučit = projekty do 200 m od zdroje se vyřadí.
-            </p>
-            <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
-              {NOISE_SOURCES.map(({ key, label }) => (
-                <div key={key} className="flex items-center justify-between gap-3 px-4 py-2.5">
-                  <span className="text-sm text-slate-700">{label}</span>
-                  <PrefToggle hard value={(wizardExtras.noise as any)?.[key] ?? "ignore"}
-                    onChange={(v) => setWizardExtras((prev) => ({ ...prev, noise: { ...(prev.noise ?? {}), [key]: v as Priority } }))}
-                    preferLabel="Citlivý/á" mustLabel="Vyloučit" />
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Walkability preferences */}
-          <div className="space-y-4 rounded-lg bg-slate-50 p-3">
-            <div className="flex items-center justify-between gap-2">
-              <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí <PrefBadge /></h5>
-              <div className="flex gap-1">
-                {[
-                  { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-                  { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
-                  { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-                ].map(({ label, prefs }) => (
-                  <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
-                    className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <WalkabilityPreferencesGroup title="Služby a příroda"
-              items={[{ key: "supermarket", label: "Supermarket" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
-              prefs={walkPrefs} onChange={setWalkPrefs} />
-            <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
-              items={[{ key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
-              prefs={walkPrefs} onChange={setWalkPrefs} />
-            <WalkabilityPreferencesGroup title="Doprava"
-              items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
-              prefs={walkPrefs} onChange={setWalkPrefs} />
-          </div>
-        </>
-      )}
+        <WalkabilityPreferencesGroup title="Služby a příroda"
+          items={[{ key: "supermarket", label: "Supermarket" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
+          prefs={walkPrefs} onChange={setWalkPrefs} />
+        <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
+          items={[{ key: "playground", label: "Hřiště" }, { key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
+          prefs={walkPrefs} onChange={setWalkPrefs} />
+        <WalkabilityPreferencesGroup title="Doprava"
+          items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
+          prefs={walkPrefs} onChange={setWalkPrefs} />
+      </ReamarSubtleCard>
     </div>
   );
 
   /* Step 6: Standardy (specific pickers per document) */
   const renderStep6 = () => (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Gate question */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <p className="mb-3 text-sm font-medium text-slate-800">Zajímají klienta standardy a chce si nastavit preference?</p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-sm font-medium text-slate-800">Zajímají klienta standardy a chce si nastavit preference?</p>
         <div className="flex gap-2">
           <button type="button"
             onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, standards: false } }))}
@@ -1102,12 +974,12 @@ export default function BriefPage() {
           </button>
         </div>
         {wizardExtras.skip_categories?.standards && (
-          <p className="mt-2 text-xs text-slate-400">Váhy standardů budou 0 — přerozděli se do ostatních aspektů.</p>
+          <p className="text-xs text-slate-400">Váhy standardů budou 0 — přerozděli se do ostatních aspektů.</p>
         )}
-      </div>
+      </ReamarSubtleCard>
 
       {!wizardExtras.skip_categories?.standards && (
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+        <ReamarSubtleCard className="divide-y divide-slate-100 p-0 overflow-hidden">
           {/* Heating type */}
           <div className="flex items-center justify-between gap-3 px-4 py-3">
             <div className="min-w-0">
@@ -1255,17 +1127,17 @@ export default function BriefPage() {
               </select>
             </div>
           </div>
-        </div>
+        </ReamarSubtleCard>
       )}
     </div>
   );
 
   /* Step 7: Vybavení projektu (NEW) */
   const renderStep7 = () => (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Gate question */}
-      <div className="rounded-xl border border-slate-200 bg-white p-4">
-        <p className="mb-3 text-sm font-medium text-slate-800">Zajímá klienta něco z vybavení projektu?</p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-sm font-medium text-slate-800">Zajímá klienta něco z vybavení projektu?</p>
         <div className="flex gap-2">
           <button type="button"
             onClick={() => setWizardExtras((prev) => ({ ...prev, skip_categories: { ...prev.skip_categories, amenities: false } }))}
@@ -1281,12 +1153,12 @@ export default function BriefPage() {
           </button>
         </div>
         {wizardExtras.skip_categories?.amenities && (
-          <p className="mt-2 text-xs text-slate-400">Váhy vybavení projektu budou 0 — přerozděli se do ostatních aspektů.</p>
+          <p className="text-xs text-slate-400">Váhy vybavení projektu budou 0 — přerozděli se do ostatních aspektů.</p>
         )}
-      </div>
+      </ReamarSubtleCard>
 
       {!wizardExtras.skip_categories?.amenities && (
-        <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 bg-white">
+        <ReamarSubtleCard className="divide-y divide-slate-100 p-0 overflow-hidden">
           {PROJECT_AMENITY_ITEMS.map(({ key, label }) => (
             <div key={key} className="flex items-center justify-between gap-3 px-4 py-3">
               <span className="text-sm text-slate-700">{label}</span>
@@ -1299,93 +1171,106 @@ export default function BriefPage() {
               />
             </div>
           ))}
-        </div>
+        </ReamarSubtleCard>
       )}
     </div>
   );
 
   /* Step 8: Dokončení (NEW) */
   const renderStep8 = () => (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      <ReamarSubtleCard className="space-y-3 p-4">
       <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Termín nastěhování</p>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className={reamarLabelClass}>Nejdřívější nastěhování <CtxBadge /></label>
-          <input type="date" value={wizardExtras.earliest_move_in ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: e.target.value || null }))}
-            className={cn("mt-1", reamarInputClass)} />
+          <QuarterPicker
+            value={wizardExtras.earliest_move_in}
+            onChange={(v) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: v }))}
+            mode="start"
+            className={cn("mt-1 w-full", reamarInputClass)}
+            placeholder="Neřeším"
+          />
           <p className="mt-1 text-[11px] text-slate-500">Kdy nejdříve by se klient stěhoval.</p>
         </div>
         <div>
-          <label className={reamarLabelClass}>Nejzazší datum nastěhování <FilterBadge /></label>
-          <input type="date" value={wizardExtras.latest_move_in ?? ""}
-            onChange={(e) => setWizardExtras((prev) => ({ ...prev, latest_move_in: e.target.value || null }))}
-            className={cn("mt-1", reamarInputClass)} />
-          <p className="mt-1 text-[11px] text-slate-500">Automatická tolerance ± 3 měsíce. Funguje jako hard filter.</p>
+          <label className={reamarLabelClass}>Nejzazší nastěhování <FilterBadge /></label>
+          <QuarterPicker
+            value={wizardExtras.latest_move_in}
+            onChange={(v) => setWizardExtras((prev) => ({ ...prev, latest_move_in: v }))}
+            mode="end"
+            className={cn("mt-1 w-full", reamarInputClass)}
+            placeholder="Neřeším"
+          />
+          <p className="mt-1 text-[11px] text-slate-500">Projekty dokončené po tomto kvartálu se vyřadí.</p>
         </div>
       </div>
-
+      </ReamarSubtleCard>
     </div>
   );
 
   /* Step 9: Novostavba vs rekonstrukce (NEW separate step) */
   const renderStepNovo = () => (
-    <div className="space-y-6">
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Novostavba vs. rekonstrukce <FilterBadge /><PrefBadge /></p>
-      <div className="flex flex-wrap gap-2">
-        {([
-          { value: "any", label: "Neřeším" },
-          { value: "prefer_new", label: "Spíše novostavba" },
-          { value: "only_new", label: "Jen novostavba" },
-          { value: "prefer_renovation", label: "Spíše rekonstrukce" },
-          { value: "only_renovation", label: "Jen rekonstrukce" },
-        ] as const).map(({ value, label }) => {
-          const active = (wizardExtras.renovation_preference ?? "any") === value;
-          return (
-            <button key={value} type="button"
-              onClick={() => setWizardExtras((prev) => ({ ...prev, renovation_preference: value }))}
-              className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-                active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-              {label}
-            </button>
-          );
-        })}
-      </div>
+    <div className="space-y-4">
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Novostavba vs. rekonstrukce <FilterBadge /><PrefBadge /></p>
+        <div className="flex flex-wrap gap-2">
+          {([
+            { value: "any", label: "Neřeším" },
+            { value: "prefer_new", label: "Spíše novostavba" },
+            { value: "only_new", label: "Jen novostavba" },
+            { value: "prefer_renovation", label: "Spíše rekonstrukce" },
+            { value: "only_renovation", label: "Jen rekonstrukce" },
+          ] as const).map(({ value, label }) => {
+            const active = (wizardExtras.renovation_preference ?? "any") === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => setWizardExtras((prev) => ({ ...prev, renovation_preference: value }))}
+                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+                  active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </ReamarSubtleCard>
 
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Standard dokončení <PrefBadge /></p>
-      <div className="flex flex-wrap gap-2">
-        {COMPLETION_STANDARD_OPTIONS.map(({ value, label }) => {
-          const active = (wizardExtras as any).completion_standard === value;
-          return (
-            <button key={value} type="button"
-              onClick={() => setWizardExtras((prev) => ({ ...prev, completion_standard: value }))}
-              className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
-                active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
-              {label}
-            </button>
-          );
-        })}
-      </div>
-      <p className="text-[11px] text-slate-500">Shell &amp; Core = holé stěny, White Wall = bílé stěny bez podlah, Fit Out = kompletní dokončení.</p>
+      <ReamarSubtleCard className="space-y-3 p-4">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Standard dokončení <PrefBadge /></p>
+        <div className="flex flex-wrap gap-2">
+          {COMPLETION_STANDARD_OPTIONS.map(({ value, label }) => {
+            const active = (wizardExtras as any).completion_standard === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => setWizardExtras((prev) => ({ ...prev, completion_standard: value }))}
+                className={cn("rounded-full border px-4 py-2 text-xs font-medium transition-colors",
+                  active ? "border-slate-900 bg-slate-900 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400")}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-slate-500">Shell &amp; Core = holé stěny, White Wall = bílé stěny bez podlah, Fit Out = kompletní dokončení.</p>
+      </ReamarSubtleCard>
     </div>
   );
 
   /* Step 10: Shrnutí */
   const renderStep9 = () => (
-    <div className="space-y-5">
+    <div className="space-y-4">
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {profile?.budget_max != null && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <ReamarSubtleCard className="px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Max. cena</p>
             <p className="mt-1 text-base font-bold text-slate-900">{formatCurrencyCzk(profile.budget_max)}</p>
             {wizardExtras.budget?.max_price_tolerance_pct != null && (
               <p className="text-[10px] text-slate-500">tolerance +{wizardExtras.budget.max_price_tolerance_pct}%</p>
             )}
-          </div>
+          </ReamarSubtleCard>
         )}
         {(profile?.area_min != null || profile?.area_max != null) && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <ReamarSubtleCard className="px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Plocha</p>
             <p className="mt-1 text-base font-bold text-slate-900">
               {profile?.area_min != null ? `${profile.area_min}` : "—"}&thinsp;–&thinsp;{profile?.area_max != null ? `${profile.area_max} m²` : "bez max."}
@@ -1393,38 +1278,37 @@ export default function BriefPage() {
             {wizardExtras.budget?.max_area_tolerance_pct != null && (
               <p className="text-[10px] text-slate-500">tolerance -{wizardExtras.budget.max_area_tolerance_pct}%</p>
             )}
-          </div>
+          </ReamarSubtleCard>
         )}
         {selectedLayouts.length > 0 && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <ReamarSubtleCard className="px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Dispozice</p>
             <p className="mt-1 text-base font-bold text-slate-900">{selectedLayouts.join(", ")}</p>
-          </div>
+          </ReamarSubtleCard>
         )}
         {recs.length > 0 && (
-          <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
+          <ReamarSubtleCard className="px-4 py-3">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-400">Doporučení</p>
             <p className="mt-1 text-base font-bold text-slate-900">{recs.length} jednotek</p>
-          </div>
+          </ReamarSubtleCard>
         )}
       </div>
 
       {/* Skipped categories */}
-      {(wizardExtras.skip_categories?.standards || wizardExtras.skip_categories?.amenities || wizardExtras.skip_categories?.surroundings) && (
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Přeskočené kategorie</p>
+      {(wizardExtras.skip_categories?.standards || wizardExtras.skip_categories?.amenities) && (
+        <ReamarSubtleCard className="space-y-2 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Přeskočené kategorie</p>
           <div className="flex flex-wrap gap-2">
             {wizardExtras.skip_categories?.standards && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Standardy</span>}
             {wizardExtras.skip_categories?.amenities && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Vybavení projektu</span>}
-            {wizardExtras.skip_categories?.surroundings && <span className="rounded-full bg-slate-200 px-3 py-1 text-xs text-slate-700">Okolí projektu</span>}
           </div>
-          <p className="mt-2 text-[11px] text-slate-500">Váhy těchto kategorií jsou 0 a přerozděly se do ostatních aspektů.</p>
-        </div>
+          <p className="text-[11px] text-slate-500">Váhy těchto kategorií jsou 0 a přerozděly se do ostatních aspektů.</p>
+        </ReamarSubtleCard>
       )}
 
       {/* Must-haves */}
-      <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-emerald-700">Musí být</p>
+      <ReamarSubtleCard className="space-y-2 border-emerald-100 bg-emerald-50 px-4 py-3">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-700">Musí být</p>
         {mustHaveSummary.length === 0 ? (
           <p className="text-xs text-emerald-600/60">Žádné pevné podmínky.</p>
         ) : (
@@ -1436,11 +1320,11 @@ export default function BriefPage() {
             ))}
           </ul>
         )}
-      </div>
+      </ReamarSubtleCard>
 
       {/* Preferences */}
-      <div className="rounded-xl border border-violet-100 bg-violet-50 px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-violet-700">Preferované</p>
+      <ReamarSubtleCard className="space-y-2 border-violet-100 bg-violet-50 px-4 py-3">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-violet-700">Preferované</p>
         {preferSummary.length === 0 ? (
           <p className="text-xs text-violet-600/60">Žádné preference.</p>
         ) : (
@@ -1452,26 +1336,26 @@ export default function BriefPage() {
             ))}
           </ul>
         )}
-      </div>
+      </ReamarSubtleCard>
 
       {/* Dokončení */}
       {(wizardExtras.earliest_move_in || wizardExtras.latest_move_in || (wizardExtras.renovation_preference && wizardExtras.renovation_preference !== "any")) && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dokončení</p>
+        <ReamarSubtleCard className="space-y-2 px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Dokončení</p>
           <div className="space-y-1 text-xs text-slate-700">
-            {wizardExtras.earliest_move_in && <p>Nejdříve: {wizardExtras.earliest_move_in}</p>}
-            {wizardExtras.latest_move_in && <p>Nejpozději: {wizardExtras.latest_move_in}</p>}
+            {wizardExtras.earliest_move_in && <p>Nejdříve: {dateToQuarterLabel(wizardExtras.earliest_move_in) ?? wizardExtras.earliest_move_in}</p>}
+            {wizardExtras.latest_move_in && <p>Nejpozději: {dateToQuarterLabel(wizardExtras.latest_move_in) ?? wizardExtras.latest_move_in}</p>}
             {wizardExtras.renovation_preference && wizardExtras.renovation_preference !== "any" && (
               <p>{({ prefer_new: "Spíše novostavba", only_new: "Jen novostavba", prefer_renovation: "Spíše rekonstrukce", only_renovation: "Jen rekonstrukce" } as Record<string, string>)[wizardExtras.renovation_preference]}</p>
             )}
           </div>
-        </div>
+        </ReamarSubtleCard>
       )}
 
       {/* Market simulation */}
       {profile?.budget_max != null && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-4">
-          <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Simulace trhu — co kdyby?</p>
+        <ReamarSubtleCard className="space-y-3 px-4 py-4">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Simulace trhu — co kdyby?</p>
           <div className="space-y-3">
             {[5, 10, 20].map((pct) => {
               const simBudget = Math.round((profile.budget_max ?? 0) * (1 + pct / 100));
@@ -1493,13 +1377,13 @@ export default function BriefPage() {
               );
             })}
           </div>
-        </div>
+        </ReamarSubtleCard>
       )}
 
       {/* CTA */}
-      <div className="rounded-xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-700">
+      <ReamarSubtleCard className="border-indigo-100 bg-indigo-50 px-4 py-3 text-xs text-indigo-700">
         Klikněte na <strong>Přepočítat doporučení →</strong> níže pro vygenerování výsledků dle aktuálního zadání.
-      </div>
+      </ReamarSubtleCard>
     </div>
   );
 
@@ -1585,10 +1469,13 @@ export default function BriefPage() {
           {/* Nejzazší nastěhování */}
           <div className="space-y-1 rounded-xl border border-slate-200 bg-white p-3">
             <label className={reamarLabelClass}>Nejzazší nastěhování <FilterBadge /></label>
-            <input type="date" value={wizardExtras.latest_move_in ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, latest_move_in: e.target.value || null }))}
-              className={cn("mt-1", reamarInputClass)} />
-            <p className="text-[10px] text-slate-400">Tolerance ± 3 měsíce — hard filter</p>
+            <QuarterPicker
+              value={wizardExtras.latest_move_in}
+              onChange={(v) => setWizardExtras((prev) => ({ ...prev, latest_move_in: v }))}
+              mode="end"
+              className={cn("mt-1 w-full", reamarInputClass)}
+              placeholder="Neřeším"
+            />
           </div>
 
           {/* Lokalita */}
@@ -1645,23 +1532,7 @@ export default function BriefPage() {
             <span className="font-normal normal-case tracking-normal text-[10px] text-slate-400">ovlivňují pořadí</span>
           </p>
 
-          {/* Ideální cena */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3">
-            <label className={reamarLabelClass}>Ideální cena (Kč) <PrefBadge /></label>
-            <input type="number" value={wizardExtras.budget?.ideal_price ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_price: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1", reamarInputClass)} placeholder="Např. 8 500 000" />
-            {wizardExtras.budget?.ideal_price != null && <p className="mt-0.5 text-[10px] text-slate-500">{formatCurrencyCzk(wizardExtras.budget.ideal_price)}</p>}
-          </div>
-
           {/* Ideální plocha */}
-          <div className="rounded-xl border border-slate-200 bg-white p-3">
-            <label className={reamarLabelClass}>Ideální plocha (m²) <PrefBadge /></label>
-            <input type="number" value={wizardExtras.budget?.ideal_area ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, budget: { ...(prev.budget ?? {}), ideal_area: e.target.value ? Number(e.target.value) : null } }))}
-              className={cn("mt-1", reamarInputClass)} placeholder="Např. 75" />
-          </div>
-
           {/* Preferované patro */}
           <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
             <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Preferované patro <PrefBadge /></p>
@@ -1702,19 +1573,6 @@ export default function BriefPage() {
                 );
               })}
             </div>
-          </div>
-
-          {/* Hlučnost */}
-          <div className="space-y-0 rounded-xl border border-slate-200 bg-white divide-y divide-slate-100">
-            <p className="px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Hlučnost <FilterBadge /><PrefBadge /></p>
-            {NOISE_SOURCES.map(({ key, label }) => (
-              <div key={key} className="flex items-center justify-between gap-3 px-3 py-2">
-                <span className="text-xs text-slate-700">{label}</span>
-                <PrefToggle hard value={(wizardExtras.noise as any)?.[key] ?? "ignore"}
-                  onChange={(v) => setWizardExtras((prev) => ({ ...prev, noise: { ...(prev.noise ?? {}), [key]: v as Priority } }))}
-                  preferLabel="Citlivý/á" mustLabel="Vyloučit" />
-              </div>
-            ))}
           </div>
 
           {/* Klíčové standardy */}
@@ -1836,9 +1694,13 @@ export default function BriefPage() {
           {/* Nejdřívější nastěhování */}
           <div className="rounded-xl border border-slate-200 bg-white p-3">
             <label className={reamarLabelClass}>Nejdřívější nastěhování <CtxBadge /></label>
-            <input type="date" value={wizardExtras.earliest_move_in ?? ""}
-              onChange={(e) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: e.target.value || null }))}
-              className={cn("mt-1", reamarInputClass)} />
+            <QuarterPicker
+              value={wizardExtras.earliest_move_in}
+              onChange={(v) => setWizardExtras((prev) => ({ ...prev, earliest_move_in: v }))}
+              mode="start"
+              className={cn("mt-1 w-full", reamarInputClass)}
+              placeholder="Neřeším"
+            />
           </div>
 
           {/* Doporučení count */}
@@ -1853,14 +1715,10 @@ export default function BriefPage() {
 
       {/* Quick Edit footer */}
       <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-        <span className={cn("text-[11px] transition-opacity duration-300",
-          autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
-          autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
-          autoSaveStatus === "error" ? "text-rose-500 opacity-100" : "opacity-0")}>
-          {autoSaveStatus === "saving" && "Ukládám…"}
-          {autoSaveStatus === "saved" && "✓ Uloženo"}
-          {autoSaveStatus === "error" && "Chyba ukládání"}
-        </span>
+        {profileSavedMessage && <span className="text-[11px] text-emerald-600">{profileSavedMessage}</span>}
+        <ReamarButton type="button" variant="ghost" size="sm" onClick={handleExplicitSave} disabled={!profileDirty || profileSaving}>
+          {profileSaving ? "Ukládám…" : profileDirty ? "Uložit" : "Uloženo"}
+        </ReamarButton>
         <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
           {recomputing ? "Přepočítávám…" : "Přepočítat doporučení →"}
         </ReamarButton>
@@ -1887,6 +1745,23 @@ export default function BriefPage() {
 
   return (
     <div className="space-y-5">
+      {recomputing && (
+        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          <svg className="h-4 w-4 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span>
+            {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
+              ? <>Počítám dojezdy… <span className="font-medium">({recomputeProgress.done}/{recomputeProgress.total} projektů)</span></>
+              : recomputeProgress && recomputeProgress.total > 0
+              ? <>Skóruji projekty… <span className="font-medium text-blue-600">({recomputeProgress.total} projektů)</span></>
+              : "Počítám doporučení…"
+            }
+          </span>
+        </div>
+      )}
+
       <section className="w-full">
         <ReamarCard className="px-6 py-5 md:px-10 md:py-6">
           {/* Header */}
@@ -1915,11 +1790,8 @@ export default function BriefPage() {
                 <ReamarButton type="button" variant="ghost" size="sm" onClick={() => window.open(`/cases/${clientId}/wizard`, "_blank")}>
                   Spustit wizard
                 </ReamarButton>
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => router.push(`/clients/${clientId}/present`)}>
-                  Schůzka →
-                </ReamarButton>
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => window.open(`/clients/${clientId}/report`, "_blank")}>
-                  PDF
+                <ReamarButton type="button" variant="ghost" size="sm" onClick={handleExplicitSave} disabled={!profileDirty || profileSaving}>
+                  {profileSaving ? "Ukládám…" : profileDirty ? "Uložit" : "Uloženo"}
                 </ReamarButton>
                 <ReamarButton type="button" variant="primary" size="sm" onClick={handleRecompute} disabled={recomputing}>
                   {recomputing ? "Přepočítávám…" : "Přepočítat"}
@@ -1942,23 +1814,20 @@ export default function BriefPage() {
             locationPolygons={locationPolygons}
             projectsInsidePolygon={projectsInsidePolygon}
             recs={recs}
-            autoSaveStatus={autoSaveStatus}
+            profileDirty={profileDirty}
             recomputing={recomputing}
             handleRecompute={handleRecompute}
             mustHaveSummary={mustHaveSummary}
             preferSummary={preferSummary}
             onSwitchToWizard={openFullscreenWizard}
+            walkPrefs={walkPrefs}
+            setWalkPrefs={setWalkPrefs}
           />
-          <div className="mt-4 flex items-center justify-end">
-            <span className={cn("text-[11px] transition-opacity duration-300",
-              autoSaveStatus === "saving" ? "text-slate-400 opacity-100" :
-              autoSaveStatus === "saved" ? "text-emerald-600 opacity-100" :
-              autoSaveStatus === "error" ? "text-rose-500 opacity-100" : "opacity-0")}>
-              {autoSaveStatus === "saving" && "Ukládám…"}
-              {autoSaveStatus === "saved" && "✓ Uloženo"}
-              {autoSaveStatus === "error" && "Chyba ukládání"}
-            </span>
-          </div>
+          {profileDirty && (
+            <div className="mt-4 flex items-center justify-end">
+              <span className="text-[11px] text-amber-600">Neuložené změny</span>
+            </div>
+          )}
         </ReamarCard>
 
         {/* Filter funnel (Phase 7b) */}

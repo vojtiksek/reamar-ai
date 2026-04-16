@@ -50,10 +50,6 @@ export function profileToFilters(profile: ClientProfileForFilters): CurrentFilte
   if (profile.area_min != null && profile.area_min > 0) {
     const factor = budget.tolerate_minus_10 === true ? 0.9 : 1.0;
     filters.floor_area_min = Math.round(profile.area_min * factor);
-  } else if (typeof budget.ideal_area === "number" && budget.ideal_area > 0) {
-    // No explicit minimum set — derive a soft floor from ideal_area (−30 %).
-    // Mirrors the backend's ideal_area fallback in _compute_unit_match_score.
-    filters.floor_area_min = Math.round(budget.ideal_area * 0.7);
   }
   if (profile.area_max != null && profile.area_max > 0) {
     filters.floor_area_max = profile.area_max;

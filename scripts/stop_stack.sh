@@ -28,6 +28,16 @@ fi
 # Kill any remaining uvicorn on port 8001
 lsof -ti:8001 | xargs kill -9 2>/dev/null && echo "[$(date)] Killed remaining processes on port 8001" || true
 
+# --- OTP ---
+if [ -f "$LOGS/otp.pid" ]; then
+    PID=$(cat "$LOGS/otp.pid")
+    if kill -0 "$PID" 2>/dev/null; then
+        kill "$PID" 2>/dev/null && echo "[$(date)] OTP stopped (PID $PID)"
+    fi
+    rm -f "$LOGS/otp.pid"
+fi
+lsof -ti:8080 | xargs kill -9 2>/dev/null && echo "[$(date)] Killed remaining processes on port 8080" || true
+
 # --- DB (keep running by default) ---
 echo "[$(date)] DB left running (use 'docker compose stop' to stop DB manually)"
 

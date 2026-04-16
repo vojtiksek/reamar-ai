@@ -315,8 +315,9 @@ export default function ShortlistPage() {
   const [token, setToken] = useState<string | null>(null);
   const [recs, setRecs] = useState<RecommendationItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareLoading, setShareLoading] = useState(false);
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<number | null>(null);
   const [noteText, setNoteText] = useState("");
   const [roles, setRoles] = useState<Record<number, ShortlistRole>>({});
@@ -436,20 +437,29 @@ export default function ShortlistPage() {
     setNoteText("");
   };
 
-  const handleCreateShareLink = async () => {
+  const handlePortalInvite = async () => {
     if (!token) return;
-    setShareLoading(true);
+    setInviteLoading(true);
+    setInviteError(null);
     try {
-      const res = await fetch(`${API_BASE}/clients/${clientId}/share-link`, {
+      const res = await fetch(`${API_BASE}/clients/${clientId}/portal-invite`, {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       });
-      if (res.ok) {
-        const data = await res.json();
-        setShareUrl(data.url);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "" }));
+        const detail: string = err.detail ?? "";
+        if (detail.toLowerCase().includes("no email")) {
+          setInviteError("no_email");
+        } else {
+          setInviteError(detail || "Nepodařilo se vytvořit pozvánku");
+        }
+        return;
       }
+      const data = await res.json();
+      setInviteLink(data.magic_link_url);
     } finally {
-      setShareLoading(false);
+      setInviteLoading(false);
     }
   };
 
@@ -529,7 +539,18 @@ export default function ShortlistPage() {
               </button>
             ))}
           </div>
-          <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>{shareLoading ? "Vytvářím…" : "Odkaz pro klienta"}</ReamarButton>
+          <div className="flex flex-col items-end gap-1">
+            <ReamarButton variant="subtle" size="sm" onClick={handlePortalInvite} disabled={inviteLoading}>{inviteLoading ? "Vytvářím…" : "Pozvat do portálu"}</ReamarButton>
+            {inviteError === "no_email" && (
+              <p className="text-[11px] text-amber-600">
+                Klient nemá e-mail —{" "}
+                <a href={`/clients/${clientId}`} className="underline hover:text-amber-800">doplnit v detailu</a>
+              </p>
+            )}
+            {inviteError && inviteError !== "no_email" && (
+              <p className="text-[11px] text-red-500">{inviteError}</p>
+            )}
+          </div>
           <Link href={`/cases/${clientId}/presentation`}><ReamarButton variant="primary" size="sm">Prezentace</ReamarButton></Link>
         </div>
       </div>
@@ -539,14 +560,14 @@ export default function ShortlistPage() {
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Ve výběru</p><p className="mt-1 text-2xl font-semibold text-slate-900">{orderedPinned.length}</p></ReamarCard>
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Projektů</p><p className="mt-1 text-2xl font-semibold text-slate-900">{groups.length}</p></ReamarCard>
         <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Poznámky</p><p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount}</p></ReamarCard>
-        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Sdílený odkaz</p><p className="mt-1 text-sm font-medium text-slate-900">{shareUrl ? "Připravený" : "Ještě nevytvořen"}</p></ReamarCard>
+        <ReamarCard className="p-4"><p className="text-[11px] uppercase tracking-wide text-slate-500">Portálová pozvánka</p><p className="mt-1 text-sm font-medium text-slate-900">{inviteLink ? "Připravená" : "Ještě nevytvořena"}</p></ReamarCard>
       </div>
 
-      {shareUrl && (
+      {inviteLink && (
         <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
-          <span className="text-emerald-700 font-medium">Sdílený odkaz:</span>
-          <code className="flex-1 truncate text-emerald-900">{shareUrl}</code>
-          <button className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700" onClick={() => navigator.clipboard.writeText(shareUrl)}>Kopírovat</button>
+          <span className="text-emerald-700 font-medium">Odkaz do portálu:</span>
+          <code className="flex-1 truncate text-emerald-900">{inviteLink}</code>
+          <button className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700" onClick={() => navigator.clipboard.writeText(inviteLink)}>Kopírovat</button>
         </div>
       )}
 

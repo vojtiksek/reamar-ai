@@ -61,7 +61,7 @@ export type WizardField = {
   render: FieldRender;
   role: FieldRole;
   visibility: FieldVisibility;
-  /** Dot-notation path in wizardExtras, e.g. "standards.heating_type" or "budget.ideal_price".
+  /** Dot-notation path in wizardExtras, e.g. "standards.heating_type" or "budget.max_price_tolerance_pct".
    *  Top-level keys omit the dot: "client_type", "renovation_preference". */
   dataPath: string;
   /** For toggle/enum fields. */

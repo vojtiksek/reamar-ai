@@ -48,6 +48,7 @@ class Project(Base):
     cadastral_area_iga: Mapped[str | None] = mapped_column(String(255), nullable=True)
     administrative_district_iga: Mapped[str | None] = mapped_column(String(255), nullable=True)
     region_iga: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    neighborhood: Mapped[str | None] = mapped_column(String(255), nullable=True)
     gps_latitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 8), nullable=True)
     gps_longitude: Mapped[Decimal | None] = mapped_column(Numeric(10, 8), nullable=True)
     ride_to_center_min: Mapped[Decimal | None] = mapped_column(Numeric(10, 1), nullable=True)
@@ -474,6 +475,7 @@ class ClientRecommendation(Base):
     broker_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     shortlist_role: Mapped[str | None] = mapped_column(String(32), nullable=True)
     shortlist_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    shortlist_risks: Mapped[str | None] = mapped_column(Text, nullable=True)
     shortlist_order: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'suggested'"))
     created_at: Mapped[datetime] = mapped_column(
@@ -555,6 +557,7 @@ class CommuteCache(Base):
     dest_lng: Mapped[float] = mapped_column(Float, primary_key=True)
     mode: Mapped[str] = mapped_column(String(16), primary_key=True)
     minutes: Mapped[float] = mapped_column(Float, nullable=False)
+    itinerary_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False, default="mock")
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

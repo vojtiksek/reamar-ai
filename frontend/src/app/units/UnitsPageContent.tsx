@@ -21,7 +21,6 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors } from 
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import React from "react";
 import {
   type WalkabilityPreferences,
   loadPreferences as loadWalkPrefs,
@@ -2529,7 +2528,7 @@ export default function Home() {
                           {visibleColumns.map(
                           ({ key, accessor, align, data_type, display_format: df }, columnIndex) => {
                             let raw: unknown;
-                            let formatted: string | number | null | undefined;
+                            let formatted: string | number | React.ReactElement | null | undefined;
                             if (key === "financing_scheme") {
                               const aRaw = getValue(u, "payment_contract", "payment_contract");
                               const bRaw = getValue(u, "payment_construction", "payment_construction");
@@ -2930,7 +2929,7 @@ export default function Home() {
                                 >
                                   Detail jednotky
                                 </a>
-                                {u.project && (u.project as Record<string, unknown>).id && (
+                                {u.project && (u.project as Record<string, unknown>).id != null && (
                                   <a
                                     href={`/projects/${(u.project as Record<string, unknown>).id}`}
                                     className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"

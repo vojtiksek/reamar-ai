@@ -256,6 +256,7 @@ def build_client_mode_state(profile: Any) -> dict[str, Any]:
 
 def working_filters_overrides_for_recompute(
     working_filters: dict[str, Any] | None,
+    modified_keys: list[str] | None = None,
 ) -> dict[str, Any]:
     """Extract the subset of working filters that influences recompute.
 
@@ -264,9 +265,19 @@ def working_filters_overrides_for_recompute(
     Only keys present in ``working_filters`` are returned — absent keys leave
     the profile value untouched.
 
+    ``modified_keys`` is the server-computed list of keys the broker has
+    explicitly changed from the base profile.  A null value in working_filters
+    is only treated as an intentional "remove this filter" override when the
+    key appears in modified_keys; otherwise null means "not set at
+    initialisation time — fall back to profile value".  This prevents stale
+    null initialisations from silently disabling profile filters (e.g. a
+    profile that later gains an area_min via the wizard would have its filter
+    bypassed if the frozen working_filters still contains areaMin=null).
+
     Location keys (``locationMode``, ``polygon``, ``adminAreas``) are only
-    extracted when ``locationMode`` is explicitly present in working_filters.
-    The semantics are:
+    extracted when ``locationMode`` is explicitly present in *modified_keys*
+    so that an initialisation-time "none" never strips a polygon that was
+    drawn after the working-filter snapshot was frozen.
 
     * ``"polygon"``     — use ``polygon`` GeoJSON; clear admin-area filter
     * ``"admin_area"``  — use ``adminAreas`` as a **hard** filter; clear polygon
@@ -275,28 +286,39 @@ def working_filters_overrides_for_recompute(
     if not isinstance(working_filters, dict) or not working_filters:
         return {}
 
+    _modified: frozenset[str] = frozenset(modified_keys or [])
+
+    # Only fields the broker has EXPLICITLY modified (present in modified_keys)
+    # should override the profile.  All other working_filter values are stale
+    # copies from base_profile initialisation and must be ignored — the
+    # profile is the source of truth for unmodified fields.
     out: dict[str, Any] = {}
-    if "budgetMax" in working_filters:
-        out["budget_max"] = working_filters["budgetMax"]
-    if "areaMin" in working_filters:
-        out["area_min"] = working_filters["areaMin"]
-    if "propertyTypes" in working_filters:
-        pts = working_filters["propertyTypes"] or []
+    if "budgetMax" in _modified:
+        out["budget_max"] = working_filters.get("budgetMax")
+    if "areaMin" in _modified:
+        out["area_min"] = working_filters.get("areaMin")
+    if "propertyTypes" in _modified:
+        pts = working_filters.get("propertyTypes") or []
         if isinstance(pts, list) and len(pts) == 1:
             out["property_type"] = pts[0]
-        elif not pts:
+        else:
             out["property_type"] = "any"
-    if "layouts" in working_filters:
-        layouts = working_filters["layouts"]
+    if "layouts" in _modified:
+        layouts = working_filters.get("layouts")
         if isinstance(layouts, list) and layouts:
             out["layouts"] = {"values": list(layouts)}
         else:
             out["layouts"] = None
 
-    # Location overrides — only when locationMode is explicitly present so
-    # records that have never set a location mode preserve existing behaviour.
-    if "locationMode" in working_filters:
-        mode = str(working_filters.get("locationMode") or "none")
+    # Location overrides — only when locationMode is in modified_keys AND has
+    # a non-null value.  A null locationMode is never an intentional broker
+    # choice (the UI always sets an explicit string: "polygon", "admin_area",
+    # or "none").  Null appears when working_filters were initialised before
+    # the polygon was drawn; treating it as "none" would silently disable the
+    # polygon hard filter.
+    _raw_loc_mode = working_filters.get("locationMode")
+    if "locationMode" in working_filters and "locationMode" in _modified and _raw_loc_mode is not None:
+        mode = str(_raw_loc_mode)
 
         if mode == "polygon":
             raw_poly = working_filters.get("polygon")

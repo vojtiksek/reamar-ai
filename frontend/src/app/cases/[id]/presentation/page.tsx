@@ -1,111 +1,407 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import clsx from "clsx";
 import { API_BASE } from "@/lib/api";
-import { formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
-import { ReamarCard, ReamarButton, ReamarSubtleCard } from "@/components/ui/reamar-ui";
+import { formatCurrencyCzk } from "@/lib/format";
+import { ReamarCard, ReamarButton } from "@/components/ui/reamar-ui";
 import type { RecommendationItem } from "@/lib/caseTypes";
 
 type ShortlistRole = "top_pick" | "alternative" | "fallback" | "wild_card";
 
-const ROLE_CONFIG: Record<ShortlistRole, { label: string; cls: string }> = {
-  top_pick:   { label: "Hlavní volba", cls: "bg-slate-900 text-white" },
-  alternative:{ label: "Alternativa", cls: "bg-blue-100 text-blue-800" },
-  fallback:   { label: "Záložní varianta", cls: "bg-amber-100 text-amber-800" },
-  wild_card:  { label: "Odvážnější tip", cls: "bg-purple-100 text-purple-800" },
+const ROLE_OPTIONS: { value: ShortlistRole; label: string; cls: string }[] = [
+  { value: "top_pick",    label: "Hlavní volba",      cls: "bg-slate-900 text-white" },
+  { value: "alternative", label: "Alternativa",       cls: "bg-blue-100 text-blue-800" },
+  { value: "fallback",    label: "Záložní varianta",  cls: "bg-amber-100 text-amber-800" },
+  { value: "wild_card",   label: "Odvážnější tip",    cls: "bg-purple-100 text-purple-800" },
+];
+
+type CommuteDetail = { label: string; mode: string; minutes: number; passed: boolean; is_estimated?: boolean };
+
+function NoiseBadge({ label }: { label?: string | null }) {
+  if (!label) return null;
+  const isHigh = /vyšší|vysoký|vysoká/i.test(label);
+  const isMed = /střední/i.test(label);
+  return (
+    <span className={clsx("rounded px-1 py-0.5 text-[10px] font-medium",
+      isHigh ? "bg-rose-100 text-rose-700" : isMed ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-600"
+    )}>Hluk: {label}</span>
+  );
+}
+
+function NearBadge({ label }: { label: string }) {
+  return <span className="rounded bg-rose-50 px-1 py-0.5 text-[10px] font-medium text-rose-600">{label}</span>;
+}
+
+function MhdBadges({ rec }: { rec: RecommendationItem }) {
+  const items: { emoji: string; label: string; dist: number }[] = [];
+  if (rec.distance_to_metro_station_m != null && rec.distance_to_metro_station_m <= 600)
+    items.push({ emoji: "🚇", label: "Metro", dist: rec.distance_to_metro_station_m });
+  if (rec.distance_to_tram_stop_m != null && rec.distance_to_tram_stop_m <= 300)
+    items.push({ emoji: "🚋", label: "Tram", dist: rec.distance_to_tram_stop_m });
+  if (rec.distance_to_bus_stop_m != null && rec.distance_to_bus_stop_m <= 200)
+    items.push({ emoji: "🚌", label: "Bus", dist: rec.distance_to_bus_stop_m });
+  if (!items.length) return null;
+  return (
+    <>
+      {items.map((i) => (
+        <span key={i.label} className="rounded-full bg-sky-50 px-1.5 py-0.5 text-[10px] text-sky-700" title={`${i.label}: ${i.dist} m`}>
+          {i.emoji} {Math.round(i.dist)} m
+        </span>
+      ))}
+    </>
+  );
+}
+
+const POI_LABELS: Record<string, string> = {
+  supermarket: "🛒", pharmacy: "💊", park: "🌳", playground: "🎪",
+  kindergarten: "👶", primary_school: "🏫", cafe: "☕", restaurant: "🍽️",
+  gym: "🏋️", atm: "🏧", post_office: "📮", drugstore: "🧴",
 };
 
-function assignRole(index: number): ShortlistRole {
-  if (index === 0) return "top_pick";
-  if (index === 1) return "alternative";
-  if (index === 2) return "fallback";
-  return "wild_card";
+function PoiBadges({ rec, activePrefs }: { rec: RecommendationItem; activePrefs: string[] }) {
+  const counts = rec.poi_counts;
+  if (!counts || !activePrefs.length) return null;
+  const items = activePrefs.filter((k) => (counts[k] ?? 0) > 0).slice(0, 5);
+  if (!items.length) return null;
+  return (
+    <>
+      {items.map((k) => (
+        <span key={k} className="rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
+          {POI_LABELS[k] ?? k}{counts[k]}
+        </span>
+      ))}
+    </>
+  );
 }
 
-function confidenceHuman(label?: string): string {
-  if (label === "high") return "Vysoká jistota";
-  if (label === "medium") return "Střední jistota";
-  if (label === "low") return "Nutno ověřit";
-  return "—";
+/* ─── Editable row ─── */
+function PinnedRow({
+  rec,
+  token,
+  clientId,
+  commuteLabels,
+  activePoiPrefs,
+  onUpdate,
+}: {
+  rec: RecommendationItem;
+  token: string;
+  clientId: number;
+  commuteLabels: string[];
+  activePoiPrefs: string[];
+  onUpdate: (recId: number, patch: Partial<RecommendationItem>) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [note, setNote] = useState(rec.broker_note ?? "");
+  const [reasonLines, setReasonLines] = useState<string[]>(() => (rec.shortlist_reason ?? "").split("\n").filter(Boolean));
+  const [risksLines, setRisksLines] = useState<string[]>(() => (rec.shortlist_risks ?? "").split("\n").filter(Boolean));
+  const [newReason, setNewReason] = useState("");
+  const [newRisk, setNewRisk] = useState("");
+  const [role, setRole] = useState<ShortlistRole>((rec.shortlist_role as ShortlistRole) ?? "alternative");
+  const [saving, setSaving] = useState(false);
+
+  const roleCfg = ROLE_OPTIONS.find((r) => r.value === role) ?? ROLE_OPTIONS[1];
+  const details = (rec.reason?.commute_details ?? []) as CommuteDetail[];
+
+  const saveNote = async () => {
+    setSaving(true);
+    try {
+      await fetch(`${API_BASE}/clients/${clientId}/recommendations/${rec.rec_id}/note`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ broker_note: note }),
+      });
+      onUpdate(rec.rec_id, { broker_note: note });
+    } finally { setSaving(false); }
+  };
+
+  const saveShortlist = async (patch: { shortlist_role?: string; shortlist_reason?: string; shortlist_risks?: string }) => {
+    setSaving(true);
+    try {
+      await fetch(`${API_BASE}/clients/${clientId}/recommendations/${rec.rec_id}/shortlist`, {
+        method: "PATCH",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      onUpdate(rec.rec_id, patch as Partial<RecommendationItem>);
+    } finally { setSaving(false); }
+  };
+
+  const commuteSum = (() => {
+    let sum = 0; let any = false;
+    for (const label of commuteLabels) { const d = details.find((cd) => cd.label === label); if (d) { sum += d.minutes; any = true; } }
+    return any ? sum : null;
+  })();
+
+  const fbType = rec.feedback?.feedback_type;
+  const priceDiffPct = rec.price_diff_pct;
+
+  return (
+    <>
+      <tr
+        className={clsx(
+          "border-b border-slate-100 text-sm hover:bg-slate-50/80 transition-colors cursor-pointer",
+          fbType === "liked" && "bg-emerald-50/40",
+          fbType === "disliked" && "bg-rose-50/40 opacity-60",
+        )}
+        onClick={() => setExpanded((v) => !v)}
+      >
+        {/* Score */}
+        <td className="px-3 py-2.5 text-center">
+          <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-800">
+            {Math.round(rec.score)}
+          </span>
+        </td>
+        {/* Project */}
+        <td className="px-3 py-2.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="font-medium text-slate-900 truncate max-w-[200px]">{rec.project_name ?? "—"}</span>
+            <NoiseBadge label={rec.noise_label} />
+            {rec.distance_to_railway_m != null && rec.distance_to_railway_m < 200 && <NearBadge label="Vlak" />}
+            {rec.distance_to_tram_tracks_m != null && rec.distance_to_tram_tracks_m < 50 && <NearBadge label="Tram" />}
+            {rec.distance_to_primary_road_m != null && rec.distance_to_primary_road_m < 50 && <NearBadge label="Silnice" />}
+          </div>
+          {(rec.district || rec.construction_completion) && (
+            <p className="text-[11px] text-slate-400">
+              {rec.district}{rec.district && rec.construction_completion ? " · " : ""}{rec.construction_completion ? `Dokončení: ${rec.construction_completion}` : ""}
+            </p>
+          )}
+          <span className={clsx("rounded-full px-2 py-0.5 text-[10px] font-semibold", roleCfg.cls)}>{roleCfg.label}</span>
+          <div className="mt-0.5 flex flex-wrap gap-1">
+            <MhdBadges rec={rec} />
+            <PoiBadges rec={rec} activePrefs={activePoiPrefs} />
+          </div>
+        </td>
+        {/* Layout */}
+        <td className="px-3 py-2.5 text-slate-700">{rec.layout_label ?? "—"}</td>
+        {/* Area */}
+        <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{rec.floor_area_m2 != null ? `${Math.round(rec.floor_area_m2)} m²` : "—"}</td>
+        {/* Ext */}
+        <td className="px-3 py-2.5 text-right tabular-nums text-slate-700">{rec.exterior_area_m2 != null ? `${Math.round(rec.exterior_area_m2)} m²` : "—"}</td>
+        {/* Floor */}
+        <td className="px-3 py-2.5 text-center tabular-nums text-slate-700">{rec.floor ?? "—"}</td>
+        {/* Price */}
+        <td className="px-3 py-2.5 text-right tabular-nums font-medium text-slate-900">{rec.price_czk != null ? formatCurrencyCzk(rec.price_czk) : "—"}</td>
+        {/* Kč/m² */}
+        <td className="px-3 py-2.5 text-right tabular-nums text-slate-500 text-xs">{rec.price_per_m2_czk != null ? `${Math.round(rec.price_per_m2_czk / 1000)}k Kč` : "—"}</td>
+        {/* Market deviation */}
+        <td className="px-3 py-2.5 text-center text-xs">
+          {priceDiffPct != null ? (
+            <span className={clsx("rounded px-1 py-0.5 font-medium", priceDiffPct < -5 ? "bg-emerald-100 text-emerald-800" : priceDiffPct > 5 ? "bg-rose-100 text-rose-800" : "text-slate-500")}>
+              {priceDiffPct > 0 ? "+" : ""}{Math.round(priceDiffPct)} %
+            </span>
+          ) : "—"}
+        </td>
+        {/* Commute columns */}
+        {commuteLabels.map((label) => {
+          const d = details.find((cd) => cd.label === label);
+          if (!d) return <td key={label} className="px-2 py-2.5 text-center text-xs text-slate-300">—</td>;
+          return (
+            <td key={label} className="px-2 py-2.5 text-center tabular-nums text-xs">
+              <span className={d.passed ? "text-slate-700" : "text-rose-600 font-medium"}>
+                {d.is_estimated && "~"}{Math.round(d.minutes)} min
+              </span>
+            </td>
+          );
+        })}
+        {/* Commute sum */}
+        {commuteLabels.length > 0 && (
+          <td className="px-2 py-2.5 text-center tabular-nums text-xs font-medium text-slate-600">
+            {commuteSum != null ? `${Math.round(commuteSum)} min` : "—"}
+          </td>
+        )}
+        {/* Status */}
+        <td className="px-3 py-2.5">
+          {rec.pinned_by_broker && <span className="inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">★ Ve výběru</span>}
+        </td>
+        {/* Broker note indicator */}
+        <td className="px-2 py-2.5 text-center text-xs">
+          {rec.broker_note ? <span className="text-slate-500" title={rec.broker_note}>📝</span> : <span className="text-slate-300">—</span>}
+        </td>
+      </tr>
+
+      {/* Expanded edit row */}
+      {expanded && (
+        <tr className="border-b border-slate-200 bg-slate-50/50">
+          <td colSpan={100} className="px-5 py-5">
+            <div className="grid gap-5 md:grid-cols-5">
+              {/* Col 1: Role */}
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Role</label>
+                <div className="mt-1.5 flex flex-col gap-1">
+                  {ROLE_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      className={clsx(
+                        "rounded-lg px-3 py-1.5 text-xs font-medium transition-colors text-left",
+                        role === opt.value ? opt.cls : "bg-slate-100 text-slate-500 hover:bg-slate-200",
+                      )}
+                      onClick={(e) => { e.stopPropagation(); setRole(opt.value); saveShortlist({ shortlist_role: opt.value }); }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Col 2: Plusy brokera — line by line */}
+              <div onClick={(e) => e.stopPropagation()}>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Plusy (pro klienta)</label>
+                <ul className="mt-1.5 space-y-1">
+                  {reasonLines.map((line, i) => (
+                    <li key={i} className="flex items-center gap-1.5 text-sm text-slate-700">
+                      <span className="text-emerald-500">+</span>
+                      <span className="flex-1">{line}</span>
+                      <button type="button" className="text-slate-300 hover:text-rose-500 text-xs" onClick={() => {
+                        const next = reasonLines.filter((_, j) => j !== i);
+                        setReasonLines(next);
+                        saveShortlist({ shortlist_reason: next.join("\n") });
+                      }}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-1.5 flex gap-1">
+                  <input
+                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-emerald-300 focus:outline-none"
+                    value={newReason}
+                    onChange={(e) => setNewReason(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newReason.trim()) {
+                        const next = [...reasonLines, newReason.trim()];
+                        setReasonLines(next);
+                        setNewReason("");
+                        saveShortlist({ shortlist_reason: next.join("\n") });
+                      }
+                    }}
+                    placeholder="Přidat plus…"
+                  />
+                  <button type="button" className="rounded-lg bg-emerald-100 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-200" onClick={() => {
+                    if (!newReason.trim()) return;
+                    const next = [...reasonLines, newReason.trim()];
+                    setReasonLines(next);
+                    setNewReason("");
+                    saveShortlist({ shortlist_reason: next.join("\n") });
+                  }}>+</button>
+                </div>
+              </div>
+
+              {/* Col 3: Rizika — line by line */}
+              <div onClick={(e) => e.stopPropagation()}>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">Rizika (pro klienta)</label>
+                <ul className="mt-1.5 space-y-1">
+                  {risksLines.map((line, i) => (
+                    <li key={i} className="flex items-center gap-1.5 text-sm text-slate-700">
+                      <span className="text-amber-500">!</span>
+                      <span className="flex-1">{line}</span>
+                      <button type="button" className="text-slate-300 hover:text-rose-500 text-xs" onClick={() => {
+                        const next = risksLines.filter((_, j) => j !== i);
+                        setRisksLines(next);
+                        saveShortlist({ shortlist_risks: next.join("\n") });
+                      }}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-1.5 flex gap-1">
+                  <input
+                    className="flex-1 rounded-lg border border-slate-200 px-2 py-1 text-sm focus:border-amber-300 focus:outline-none"
+                    value={newRisk}
+                    onChange={(e) => setNewRisk(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newRisk.trim()) {
+                        const next = [...risksLines, newRisk.trim()];
+                        setRisksLines(next);
+                        setNewRisk("");
+                        saveShortlist({ shortlist_risks: next.join("\n") });
+                      }
+                    }}
+                    placeholder="Přidat riziko…"
+                  />
+                  <button type="button" className="rounded-lg bg-amber-100 px-2 py-1 text-xs font-medium text-amber-700 hover:bg-amber-200" onClick={() => {
+                    if (!newRisk.trim()) return;
+                    const next = [...risksLines, newRisk.trim()];
+                    setRisksLines(next);
+                    setNewRisk("");
+                    saveShortlist({ shortlist_risks: next.join("\n") });
+                  }}>+</button>
+                </div>
+              </div>
+
+              {/* Col 4: Interní poznámka */}
+              <div>
+                <label className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Interní poznámka</label>
+                <textarea
+                  className="mt-1.5 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-sky-300 focus:outline-none"
+                  rows={5}
+                  value={note}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setNote(e.target.value)}
+                  onBlur={() => { if (note !== (rec.broker_note ?? "")) saveNote(); }}
+                  placeholder="Interní poznámka (klient neuvidí)…"
+                />
+              </div>
+
+              {/* Col 4: Detail link + unit ID */}
+              <div className="space-y-2">
+                {rec.unit_external_id && (
+                  <Link
+                    href={`/units/${rec.unit_external_id}`}
+                    className="inline-block text-xs text-sky-600 hover:text-sky-800 hover:underline"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    Detail jednotky →
+                  </Link>
+                )}
+                {saving && <p className="text-[11px] text-slate-400">Ukládám…</p>}
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
 }
 
-function eligibilityHuman(elig?: string): { text: string; cls: string } {
-  if (elig === "pass") return { text: "Silná volba", cls: "text-emerald-700" };
-  if (elig === "review") return { text: "Nutno ověřit", cls: "text-amber-700" };
-  return { text: "—", cls: "text-slate-500" };
-}
-
-function readinessState(pinned: RecommendationItem[], notesCount: number, reviewCount: number, hasShare: boolean): { text: string; cls: string } {
-  if (pinned.length === 0) return { text: "Výběr je prázdný", cls: "text-slate-500" };
-  if (reviewCount > 0) return { text: "Je potřeba něco ověřit", cls: "text-amber-700" };
-  if (notesCount < pinned.length || !hasShare) return { text: "Rozpracováno", cls: "text-slate-600" };
-  return { text: "Připraveno na schůzku", cls: "text-emerald-700" };
-}
-
-function buildMeetingStrategy(pinned: RecommendationItem[], roles: Record<number, ShortlistRole>): string[] {
-  const steps: string[] = [];
-  const topPicks = pinned.filter((r) => roles[r.rec_id] === "top_pick");
-  const alternatives = pinned.filter((r) => roles[r.rec_id] === "alternative");
-  const fallbacks = pinned.filter((r) => roles[r.rec_id] === "fallback");
-  const wildcards = pinned.filter((r) => roles[r.rec_id] === "wild_card");
-
-  if (topPicks.length > 0) steps.push(`Začít hlavní volbou — ${topPicks[0].project_name || "hlavní doporučení"}. Představit jako nejsilnější variantu.`);
-  if (alternatives.length > 0) steps.push(`Pak ukázat alternativu — ${alternatives[0].project_name || "další možnost"}. Bezpečná varianta pro porovnání.`);
-  if (fallbacks.length > 0) steps.push(`Záložní variantu zmínit jen pokud klient chce širší výběr — ${fallbacks[0].project_name || "záložní volba"}.`);
-  if (wildcards.length > 0) steps.push(`Odvážnější tip použít jen pokud klient hledá něco nečekaného — ${wildcards[0].project_name || "překvapení"}.`);
-
-  const reviewItems = pinned.filter((r) => r.eligibility === "review");
-  if (reviewItems.length > 0) steps.push(`Upozornění: ${reviewItems.length} položk${reviewItems.length === 1 ? "a" : "y"} vyžaduj${reviewItems.length === 1 ? "e" : "í"} ověření před schůzkou.`);
-
-  if (steps.length === 0) steps.push("Přiřaďte role položkám výběru pro doporučenou strategii.");
-
-  return steps;
-}
-
+/* ─── Main page ─── */
 export default function PresentationPage() {
   const params = useParams();
   const clientId = Number(params?.id);
   const [token, setToken] = useState<string | null>(null);
   const [recs, setRecs] = useState<RecommendationItem[]>([]);
+  const [activePoiPrefs, setActivePoiPrefs] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
-  const [shareUrl, setShareUrl] = useState<string | null>(null);
-  const [shareLoading, setShareLoading] = useState(false);
-  const [roles, setRoles] = useState<Record<number, ShortlistRole>>({});
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteLoading, setInviteLoading] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   useEffect(() => {
-    const t = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
-    setToken(t);
+    setToken(typeof window !== "undefined" ? localStorage.getItem("broker_token") : null);
   }, []);
 
   useEffect(() => {
     if (!token || !clientId) return;
     setLoading(true);
-    fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-      .then((r) => (r.ok ? r.json() : []))
-      .then((data) => {
-        const items = data as RecommendationItem[];
-        setRecs(items);
-        const pinned = items.filter((r) => r.pinned_by_broker);
-        // Sort by persisted shortlist_order before assigning roles.
-        const sorted = [...pinned].sort((a, b) => {
-          const ao = a.shortlist_order ?? 999999;
-          const bo = b.shortlist_order ?? 999999;
-          if (ao !== bo) return ao - bo;
-          return b.score - a.score;
-        });
-        // Prefer persisted shortlist_role; fall back to positional for legacy records.
-        setRoles(Object.fromEntries(
-          sorted.map((r, i) => [r.rec_id, (r.shortlist_role as ShortlistRole) || assignRole(i)])
-        ));
-      })
-      .finally(() => setLoading(false));
+    Promise.all([
+      fetch(`${API_BASE}/clients/${clientId}/recommendations`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => (r.ok ? r.json() : [])),
+      fetch(`${API_BASE}/clients/${clientId}/profile`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then((r) => (r.ok ? r.json() : null)),
+    ]).then(([recsData, profile]) => {
+      setRecs(recsData as RecommendationItem[]);
+      const wprefs = profile?.walkability_preferences_json ?? {};
+      setActivePoiPrefs(
+        Object.entries(wprefs)
+          .filter(([, v]) => v === "normal" || v === "high" || v === "required")
+          .map(([k]) => k)
+      );
+    }).finally(() => setLoading(false));
   }, [token, clientId]);
 
-  // Sort pinned by persisted shortlist_order (nulls last), then score.
   const pinned = useMemo(() => {
     const p = recs.filter((r) => r.pinned_by_broker);
     return [...p].sort((a, b) => {
@@ -115,243 +411,119 @@ export default function PresentationPage() {
       return b.score - a.score;
     });
   }, [recs]);
-  const notesCount = pinned.filter((r) => Boolean(r.broker_note)).length;
-  const reviewCount = pinned.filter((r) => r.eligibility === "review").length;
-  const readiness = readinessState(pinned, notesCount, reviewCount, !!shareUrl);
-  const strategy = buildMeetingStrategy(pinned, roles);
 
-  const handleCreateShareLink = async () => {
-    if (!token) return;
-    setShareLoading(true);
-    try {
-      const res = await fetch(`${API_BASE}/clients/${clientId}/share-link`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setShareUrl(data.url);
+  const commuteLabels = useMemo(() => {
+    const labels: string[] = [];
+    const seen = new Set<string>();
+    for (const r of pinned) {
+      for (const d of (r.reason?.commute_details ?? []) as CommuteDetail[]) {
+        if (d.label && !seen.has(d.label)) { seen.add(d.label); labels.push(d.label); }
       }
-    } finally {
-      setShareLoading(false);
     }
+    return labels;
+  }, [pinned]);
+
+  const handlePortalInvite = async () => {
+    if (!token) return;
+    setInviteLoading(true);
+    setInviteError(null);
+    try {
+      const res = await fetch(`${API_BASE}/clients/${clientId}/portal-invite`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: "" }));
+        const detail: string = err.detail ?? "";
+        setInviteError(detail.toLowerCase().includes("no email") ? "no_email" : (detail || "Chyba"));
+        return;
+      }
+      const data = await res.json();
+      setInviteLink(data.magic_link_url);
+    } finally { setInviteLoading(false); }
+  };
+
+  const handleUpdate = (recId: number, patch: Partial<RecommendationItem>) => {
+    setRecs((prev) => prev.map((r) => r.rec_id === recId ? { ...r, ...patch } : r));
   };
 
   if (loading) return <p className="text-sm text-slate-600 p-6">Načítání…</p>;
 
   return (
-    <div className="space-y-6">
-      {/* 1. Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-xl font-semibold text-slate-900">Příprava prezentace</h2>
-          <p className="text-sm text-slate-500">Interní příprava na klientskou schůzku — zkontrolujte výběr, poznámky a sdílený odkaz.</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>
-            {shareLoading ? "Vytvářím…" : shareUrl ? "Obnovit sdílený odkaz" : "Vytvořit sdílený odkaz"}
+    <div className="space-y-4">
+      {/* Portal invite button into layout header bar */}
+      {typeof document !== "undefined" && document.getElementById("case-tabs-slot") && createPortal(
+        <div className="flex items-center gap-2">
+          <ReamarButton variant="subtle" size="sm" onClick={handlePortalInvite} disabled={inviteLoading}>
+            {inviteLoading ? "Vytvářím…" : inviteLink ? "Obnovit pozvánku" : "Pozvat klienta do portálu"}
           </ReamarButton>
-          <Link href={`/clients/${clientId}/present`} target="_blank">
-            <ReamarButton variant="primary" size="sm">Otevřít klientskou prezentaci</ReamarButton>
-          </Link>
-          <Link href={`/clients/${clientId}/report`} target="_blank">
-            <ReamarButton variant="ghost" size="sm">Otevřít report</ReamarButton>
-          </Link>
-        </div>
-      </div>
-
-      {/* 2. Readiness panel */}
-      <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-5">
-        <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Výběr</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">{pinned.length}</p>
-        </ReamarCard>
-        <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Poznámky makléře</p>
-          <p className="mt-1 text-2xl font-semibold text-slate-900">{notesCount} / {pinned.length}</p>
-        </ReamarCard>
-        <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Nutno ověřit</p>
-          <p className={`mt-1 text-2xl font-semibold ${reviewCount > 0 ? "text-amber-700" : "text-emerald-700"}`}>{reviewCount}</p>
-        </ReamarCard>
-        <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Sdílený odkaz</p>
-          <p className={`mt-1 text-sm font-medium ${shareUrl ? "text-emerald-700" : "text-slate-500"}`}>{shareUrl ? "Připravený" : "Nevytvořen"}</p>
-        </ReamarCard>
-        <ReamarCard className="p-4">
-          <p className="text-[11px] uppercase tracking-wide text-slate-500">Připravenost</p>
-          <p className={`mt-1 text-sm font-semibold ${readiness.cls}`}>{readiness.text}</p>
-        </ReamarCard>
-      </div>
-
-      {/* Share link block */}
-      {shareUrl ? (
-        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
-          <span className="text-emerald-700 font-medium">Sdílený odkaz:</span>
-          <code className="flex-1 truncate text-emerald-900">{shareUrl}</code>
-          <button
-            className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
-            onClick={() => navigator.clipboard.writeText(shareUrl)}
-          >
-            Kopírovat
-          </button>
-        </div>
-      ) : (
-        <ReamarSubtleCard className="flex items-center justify-between px-4 py-3">
-          <p className="text-sm text-slate-600">Sdílený odkaz zatím není vytvořený — klient ho potřebuje pro přístup k prezentaci.</p>
-          <ReamarButton variant="subtle" size="sm" onClick={handleCreateShareLink} disabled={shareLoading}>
-            {shareLoading ? "Vytvářím…" : "Vytvořit"}
-          </ReamarButton>
-        </ReamarSubtleCard>
+          {inviteError === "no_email" && <span className="text-[11px] text-amber-600">Chybí e-mail</span>}
+          {inviteError && inviteError !== "no_email" && <span className="text-[11px] text-red-500">{inviteError}</span>}
+        </div>,
+        document.getElementById("case-tabs-slot")!
       )}
 
-      {/* 3. Presentation cards */}
+      {/* Portal link */}
+      {inviteLink && (
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm">
+          <span className="text-emerald-700 font-medium">Odkaz do portálu:</span>
+          <code className="flex-1 truncate text-emerald-900">{inviteLink}</code>
+          <button
+            className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700"
+            onClick={() => navigator.clipboard.writeText(inviteLink)}
+          >Kopírovat</button>
+        </div>
+      )}
+
+      {/* Empty state */}
       {pinned.length === 0 ? (
         <ReamarCard className="p-8 text-center">
           <div className="mx-auto max-w-md space-y-3">
             <h3 className="text-lg font-semibold text-slate-900">Výběr je prázdný</h3>
-            <p className="text-sm text-slate-600">Nejdřív přidejte jednotky do výběru z doporučení.</p>
+            <p className="text-sm text-slate-600">Přidejte jednotky do výběru (★) v záložce Doporučení.</p>
             <Link href={`/cases/${clientId}/recommendations`}>
               <ReamarButton variant="primary">Přejít na doporučení</ReamarButton>
             </Link>
           </div>
         </ReamarCard>
       ) : (
-        <div className="space-y-4">
-          {pinned.map((rec) => {
-            const role = roles[rec.rec_id] || "alternative";
-            const roleCfg = ROLE_CONFIG[role];
-            const elig = eligibilityHuman(rec.eligibility);
-            const conf = confidenceHuman(rec.confidence_label);
-
-            return (
-              <ReamarCard key={rec.rec_id} className="overflow-hidden">
-                {/* Card header */}
-                <div className="border-b border-slate-100 bg-slate-50/50 px-5 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <span className={`rounded-full px-3 py-1 text-xs font-semibold ${roleCfg.cls}`}>
-                        {roleCfg.label}
-                      </span>
-                      <h3 className="text-base font-semibold text-slate-900">
-                        {rec.project_name || "—"}
-                      </h3>
-                    </div>
-                    <div className="flex items-center gap-2 text-xs">
-                      <span className={`font-medium ${elig.cls}`}>{elig.text}</span>
-                      <span className="text-slate-300">·</span>
-                      <span className="text-slate-500">{conf}</span>
-                    </div>
-                  </div>
-                  {rec.district && (
-                    <p className="mt-1 text-xs text-slate-500">{rec.district}</p>
-                  )}
-                </div>
-
-                {/* Card body */}
-                <div className="px-5 py-4 space-y-4">
-                  {/* Key facts */}
-                  <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-                    {rec.layout_label && (
-                      <div>
-                        <span className="text-[11px] text-slate-500">Dispozice</span>
-                        <p className="font-medium text-slate-900">{rec.layout_label}</p>
-                      </div>
-                    )}
-                    {rec.floor_area_m2 != null && (
-                      <div>
-                        <span className="text-[11px] text-slate-500">Plocha</span>
-                        <p className="font-medium text-slate-900">{formatAreaM2(rec.floor_area_m2)}</p>
-                      </div>
-                    )}
-                    {rec.price_czk != null && (
-                      <div>
-                        <span className="text-[11px] text-slate-500">Cena</span>
-                        <p className="font-medium text-slate-900">{formatCurrencyCzk(rec.price_czk)}</p>
-                      </div>
-                    )}
-                    {rec.exterior_area_m2 != null && Number(rec.exterior_area_m2) > 0 && (
-                      <div>
-                        <span className="text-[11px] text-slate-500">Venkovní plocha</span>
-                        <p className="font-medium text-slate-900">{formatAreaM2(rec.exterior_area_m2)}</p>
-                      </div>
-                    )}
-                    {rec.floor != null && (
-                      <div>
-                        <span className="text-[11px] text-slate-500">Patro</span>
-                        <p className="font-medium text-slate-900">{rec.floor}.</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Why we recommend + watch out */}
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="rounded-xl bg-emerald-50/70 p-3">
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Proč doporučujeme</p>
-                      {rec.shortlist_reason ? (
-                        <p className="text-sm text-emerald-900">{rec.shortlist_reason}</p>
-                      ) : rec.top_strengths && rec.top_strengths.length > 0 ? (
-                        <ul className="space-y-1 text-sm text-emerald-900">
-                          {rec.top_strengths.slice(0, 3).map((s, i) => (
-                            <li key={i}>+ {s}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-sm text-emerald-800">Dobrý celkový fit s požadavky klienta.</p>
-                      )}
-                    </div>
-                    <div className="rounded-xl bg-amber-50/70 p-3">
-                      <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700">Na co upozornit</p>
-                      {(rec.top_compromises && rec.top_compromises.length > 0) || (rec.eligibility_reasons && rec.eligibility_reasons.length > 0) ? (
-                        <ul className="space-y-1 text-sm text-amber-900">
-                          {(rec.top_compromises && rec.top_compromises.length > 0 ? rec.top_compromises : rec.eligibility_reasons || []).slice(0, 3).map((c, i) => (
-                            <li key={i}>! {c}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p className="text-sm text-amber-800">Bez zásadních výhrad.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Broker note — subtle hint */}
-                  {rec.broker_note && (
-                    <div className="rounded-xl border border-slate-200/70 bg-white/60 px-4 py-2.5">
-                      <p className="text-[11px] font-medium uppercase tracking-wide text-slate-400 mb-1">Interní poznámka</p>
-                      <p className="text-sm text-slate-600 italic whitespace-pre-wrap">{rec.broker_note}</p>
-                    </div>
-                  )}
-
-                  {/* Detail link */}
-                  {rec.unit_external_id && (
-                    <Link
-                      href={`/units/${rec.unit_external_id}`}
-                      className="inline-block text-xs text-slate-500 hover:text-slate-700 hover:underline"
-                    >
-                      Detail jednotky →
-                    </Link>
-                  )}
-                </div>
-              </ReamarCard>
-            );
-          })}
-        </div>
-      )}
-
-      {/* 4. Meeting framing box */}
-      {pinned.length > 0 && (
-        <ReamarCard className="p-5">
-          <h3 className="text-sm font-semibold text-slate-900 mb-3">Doporučená strategie prezentace</h3>
-          <ol className="space-y-2">
-            {strategy.map((step, i) => (
-              <li key={i} className="flex gap-3 text-sm">
-                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[11px] font-semibold text-slate-600">
-                  {i + 1}
-                </span>
-                <span className="text-slate-700">{step}</span>
-              </li>
-            ))}
-          </ol>
+        <ReamarCard className="overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[800px]">
+              <thead>
+                <tr className="border-b border-slate-200 bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="px-3 py-2 text-center w-[70px]">Shoda</th>
+                  <th className="px-3 py-2 text-left">Projekt</th>
+                  <th className="px-3 py-2 text-left">Typ</th>
+                  <th className="px-3 py-2 text-right">Plocha</th>
+                  <th className="px-3 py-2 text-right">Ext.</th>
+                  <th className="px-3 py-2 text-center">Patro</th>
+                  <th className="px-3 py-2 text-right">Cena</th>
+                  <th className="px-3 py-2 text-right">Kč/m²</th>
+                  <th className="px-3 py-2 text-center">Trh</th>
+                  {commuteLabels.map((label) => (
+                    <th key={label} className="px-2 py-2 text-center">{label.split(/\s+/)[0]}</th>
+                  ))}
+                  {commuteLabels.length > 0 && <th className="px-2 py-2 text-center">Celkem</th>}
+                  <th className="px-3 py-2 text-left">Stav</th>
+                  <th className="px-2 py-2 text-center">Pozn.</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pinned.map((rec) => (
+                  <PinnedRow
+                    key={rec.rec_id}
+                    rec={rec}
+                    token={token!}
+                    clientId={clientId}
+                    commuteLabels={commuteLabels}
+                    activePoiPrefs={activePoiPrefs}
+                    onUpdate={handleUpdate}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </ReamarCard>
       )}
     </div>
