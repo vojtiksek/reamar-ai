@@ -1,6 +1,7 @@
 /**
- * Client walkability preferences: persisted in localStorage, used for personalized score.
- * Keys match backend WalkabilityPreferences (supermarket, pharmacy, park, …).
+ * Client walkability preferences: persisted in ClientProfile.walkability_preferences_json.
+ * Keys match backend POI categories. V2 model: required / high / ignore.
+ * "normal" kept in type for backward compat with existing data — treated as "ignore".
  */
 
 export type WalkabilityPreferenceValue = "required" | "high" | "normal" | "ignore";
@@ -18,30 +19,33 @@ export type WalkabilityPreferences = {
   metro: WalkabilityPreferenceValue;
   tram: WalkabilityPreferenceValue;
   bus: WalkabilityPreferenceValue;
+  train: WalkabilityPreferenceValue;
 };
 
 const STORAGE_KEY = "reamar_walkability_preferences";
 
 export const DEFAULT_PREFERENCES: WalkabilityPreferences = {
-  supermarket: "normal",
-  pharmacy: "normal",
-  park: "normal",
-  restaurant: "normal",
-  cafe: "normal",
-  fitness: "normal",
-  playground: "normal",
-  kindergarten: "normal",
-  primary_school: "normal",
-  metro: "normal",
-  tram: "normal",
-  bus: "normal",
+  supermarket: "ignore",
+  pharmacy: "ignore",
+  park: "ignore",
+  restaurant: "ignore",
+  cafe: "ignore",
+  fitness: "ignore",
+  playground: "ignore",
+  kindergarten: "ignore",
+  primary_school: "ignore",
+  metro: "ignore",
+  tram: "ignore",
+  bus: "ignore",
+  train: "ignore",
 };
 
 const VALID_VALUES: Set<string> = new Set(["required", "high", "normal", "ignore"]);
 
 function normalize(value: unknown): WalkabilityPreferenceValue {
   const s = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return VALID_VALUES.has(s) ? (s as WalkabilityPreferenceValue) : "normal";
+  if (s === "normal") return "ignore"; // V2: "normal" → "ignore"
+  return VALID_VALUES.has(s) ? (s as WalkabilityPreferenceValue) : "ignore";
 }
 
 export function getDefaultPreferences(): WalkabilityPreferences {
@@ -110,13 +114,13 @@ const CATEGORY_LABELS_CZ: Record<keyof WalkabilityPreferences, string> = {
   metro: "Metro",
   tram: "Tramvaj",
   bus: "Bus",
+  train: "Vlak",
 };
 
 function preferenceLabel(value: WalkabilityPreferenceValue): string {
-  if (value === "required") return "vyžaduji";
-  if (value === "high") return "vysoká";
-  if (value === "ignore") return "nezajímá";
-  return "normální";
+  if (value === "required") return "musí";
+  if (value === "high") return "chci";
+  return "ne";
 }
 
 export function getNonDefaultChips(prefs: WalkabilityPreferences): string[] {

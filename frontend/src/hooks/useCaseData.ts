@@ -56,6 +56,7 @@ export function useCaseData() {
   const [recsFunnel, setRecsFunnel] = useState<RecommendationFunnel | null>(null);
   const [profileSavedMessage, setProfileSavedMessage] = useState<string | null>(null);
   const [profileDirty, setProfileDirty] = useState(false);
+  const skipDirtyRef = useRef(false);
   const isFirstLoad = useRef(true);
 
   const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
@@ -503,6 +504,7 @@ export function useCaseData() {
   // Resets after explicit save or recompute.
   useEffect(() => {
     if (isFirstLoad.current) return;
+    if (skipDirtyRef.current) { skipDirtyRef.current = false; return; }
     setProfileDirty(true);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [wizardExtras, selectedLayouts, walkPrefs, locationPolygons]);
@@ -555,7 +557,9 @@ export function useCaseData() {
         });
         if (profileRes.ok) {
           const json = (await profileRes.json()) as ClientProfile;
+          skipDirtyRef.current = true;
           setProfile(json);
+          setProfileDirty(false);
         }
       } catch {
         // Best-effort — backend will use whatever is already in DB

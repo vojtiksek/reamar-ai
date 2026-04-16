@@ -249,7 +249,7 @@ export default function PresentPage() {
       <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-5 py-3 shadow-sm">
         <div className="flex items-center gap-3">
           <Link
-            href={`/clients/${clientId}`}
+            href={`/cases/${clientId}/brief`}
             className="text-sm text-slate-500 hover:text-slate-800 transition-colors"
           >
             ← Zpět
@@ -275,7 +275,7 @@ export default function PresentPage() {
             {clientEmail === null && (
               <p className="text-[11px] text-amber-600">
                 Klient nemá e-mail —{" "}
-                <a href={`/clients/${clientId}`} className="underline hover:text-amber-800">doplnit v detailu</a>
+                <a href={`/cases/${clientId}/brief`} className="underline hover:text-amber-800">doplnit v detailu</a>
               </p>
             )}
             {inviteLink && (
@@ -312,7 +312,7 @@ export default function PresentPage() {
           ) : pinnedRecs.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-400">
               Výběr je prázdný.{" "}
-              <Link href={`/clients/${clientId}`} className="underline hover:text-slate-700">
+              <Link href={`/cases/${clientId}/brief`} className="underline hover:text-slate-700">
                 Přidejte jednotky z doporučení.
               </Link>
             </p>

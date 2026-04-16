@@ -58,7 +58,7 @@ function NavLinks() {
       </nav>
       {activeClient && (
         <span className="flex items-center gap-1.5 rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-800 shadow-sm">
-          <Link href={`/clients/${activeClient.clientId}`} className="max-w-[160px] truncate hover:underline">{activeClient.clientName}</Link>
+          <Link href={`/cases/${activeClient.clientId}/brief`} className="max-w-[160px] truncate hover:underline">{activeClient.clientName}</Link>
           <button
             type="button"
             onClick={deactivate}

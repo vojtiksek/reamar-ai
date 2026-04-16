@@ -544,7 +544,7 @@ export default function ShortlistPage() {
             {inviteError === "no_email" && (
               <p className="text-[11px] text-amber-600">
                 Klient nemá e-mail —{" "}
-                <a href={`/clients/${clientId}`} className="underline hover:text-amber-800">doplnit v detailu</a>
+                <a href={`/cases/${clientId}/brief`} className="underline hover:text-amber-800">doplnit v detailu</a>
               </p>
             )}
             {inviteError && inviteError !== "no_email" && (

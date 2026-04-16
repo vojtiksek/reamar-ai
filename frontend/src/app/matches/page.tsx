@@ -78,7 +78,7 @@ export default function MatchesPage() {
                       Klient: {clientName}
                     </h3>
                     <Link
-                      href={`/clients/${cid}`}
+                      href={`/cases/${cid}/brief`}
                       className="text-xs font-medium text-slate-700 underline"
                     >
                       Otevřít klienta

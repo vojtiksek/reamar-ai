@@ -126,8 +126,10 @@ export type RecommendationItem = {
   distance_to_tram_stop_m?: number | null;
   distance_to_metro_station_m?: number | null;
   distance_to_bus_stop_m?: number | null;
+  distance_to_train_station_m?: number | null;
   price_diff_pct?: number | null;
   poi_counts?: Record<string, number> | null;
+  poi_distances?: Record<string, number> | null;
 };
 
 export type MarketFitBlocker = {
@@ -166,7 +168,7 @@ export type AreaMarketAnalysis = {
   area_fit_units_count: number;
 };
 
-export type Priority = "must" | "prefer" | "bonus" | "ignore";
+export type Priority = "must" | "prefer" | "bonus" | "ignore"; // "bonus" kept for backward compat with existing data
 
 export type NoteItem = {
   id: number;
@@ -200,6 +202,8 @@ export type WizardExtras = {
      *  string — callers must normalize on read. */
     administrative_area?: string | string[] | null;
     administrative_region?: string | null;
+    commute_mode?: "primary" | "compromise" | "sum" | null;
+    commute_primary_index?: number | null;
   };
   budget?: {
     max_price?: number | null;
@@ -273,6 +277,7 @@ export type WizardExtras = {
     project_size?: "small" | "medium" | "large" | "ignore";
     calm_vs_city?: "calm" | "city" | "ignore";
     privacy_vs_services?: "privacy" | "services" | "ignore";
+    center_preference?: "closer" | "farther" | null;
   };
   project_amenities?: {
     reception?: "prefer" | "reject" | "ignore";
@@ -283,6 +288,7 @@ export type WizardExtras = {
   renovation_preference?: "any" | "prefer_new" | "only_new" | "prefer_renovation" | "only_renovation";
   completion_standard?: "doesnt_matter" | "shell_and_core" | "white_wall" | "fit_out" | null;
   completion_date?: string | null;
+  completion_preference?: "sooner" | "later" | null;
   energy_class?: "A" | "B" | "C" | "D" | "ignore" | null;
   preferred_developer?: string | null;
   commute?: {
@@ -309,6 +315,8 @@ export type WizardExtras = {
   };
   earliest_move_in?: string | null;
   latest_move_in?: string | null;
+  /** Max distance in meters per POI category (e.g. { supermarket: 500, metro: 800 }) */
+  poi_max_distances?: Record<string, number> | null;
 };
 
 export type FlatWeightKey =

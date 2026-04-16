@@ -112,10 +112,11 @@ function PoiBadges({ poiCounts, activePrefs }: { poiCounts?: Record<string, numb
   );
 }
 
-const MHD_CONFIG: { key: "metro" | "tram" | "bus"; field: "distance_to_metro_station_m" | "distance_to_tram_stop_m" | "distance_to_bus_stop_m"; threshold: number; emoji: string; label: string }[] = [
+const MHD_CONFIG: { key: "metro" | "tram" | "bus" | "train"; field: "distance_to_metro_station_m" | "distance_to_tram_stop_m" | "distance_to_bus_stop_m" | "distance_to_train_station_m"; threshold: number; emoji: string; label: string }[] = [
   { key: "metro", field: "distance_to_metro_station_m", threshold: 600, emoji: "🚇", label: "Metro" },
   { key: "tram",  field: "distance_to_tram_stop_m",     threshold: 300, emoji: "🚋", label: "Tramvaj" },
   { key: "bus",   field: "distance_to_bus_stop_m",      threshold: 200, emoji: "🚌", label: "Bus" },
+  { key: "train", field: "distance_to_train_station_m", threshold: 1000, emoji: "🚆", label: "Vlak" },
 ];
 
 function MhdBadges({ rec, activePrefs }: { rec: RecommendationItem; activePrefs: string[] }) {
@@ -1470,12 +1471,23 @@ function WorkingFiltersBar({
 
 type StdPriority = "ignore" | "prefer" | "must";
 
-const STANDARDS_CONTROLS: { key: string; label: string }[] = [
-  { key: "floor_heating", label: "Podlahové vytápění" },
-  { key: "recuperation", label: "Rekuperace" },
-  { key: "air_conditioning", label: "Klimatizace" },
-  { key: "exterior_blinds", label: "Venkovní žaluzie" },
-  { key: "cellar", label: "Sklep" },
+const STANDARDS_CONTROLS: { key: string; label: string; section: "standards" | "house_amenities" }[] = [
+  // Standards
+  { key: "recuperation", label: "Rekuperace", section: "standards" },
+  { key: "exterior_blinds", label: "Venkovní žaluzie", section: "standards" },
+  { key: "air_conditioning", label: "Klimatizace", section: "standards" },
+  { key: "smart_home", label: "Smart home", section: "standards" },
+  { key: "elevator", label: "Výtah", section: "standards" },
+  { key: "cellar", label: "Sklep", section: "standards" },
+  { key: "parking", label: "Parkování", section: "standards" },
+  // Amenities
+  { key: "parking", label: "Parkování v domě", section: "house_amenities" },
+  { key: "cellar", label: "Sklepní kóje", section: "house_amenities" },
+  { key: "bike_room", label: "Kolárna", section: "house_amenities" },
+  { key: "stroller_room", label: "Kočárkárna", section: "house_amenities" },
+  { key: "fitness", label: "Fitness", section: "house_amenities" },
+  { key: "courtyard_garden", label: "Vnitroblok / zahrada", section: "house_amenities" },
+  { key: "concierge", label: "Recepce / concierge", section: "house_amenities" },
 ];
 
 function StdPill({ value, onChange }: { value: StdPriority; onChange: (v: StdPriority) => void }) {
@@ -1510,17 +1522,21 @@ function StandardsBar({
   recomputing,
 }: {
   wizardExtras: WizardExtras;
-  onChange: (key: string, value: StdPriority) => void;
+  onChange: (section: string, key: string, value: StdPriority) => void;
   onApply: () => void;
   recomputing: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const standards = wizardExtras.standards ?? {};
 
-  // Count active (non-ignore) standards
+  const getValue = (s: typeof STANDARDS_CONTROLS[0]) => {
+    const sec = (wizardExtras as Record<string, any>)[s.section] ?? {};
+    return (sec[s.key] as string | undefined) ?? "ignore";
+  };
+
+  // Count active (non-ignore)
   const activeCount = STANDARDS_CONTROLS.filter(
     (s) => {
-      const v = (standards as Record<string, string | undefined>)[s.key];
+      const v = getValue(s);
       return v && v !== "ignore";
     }
   ).length;
@@ -1543,11 +1559,11 @@ function StandardsBar({
             <span className="text-[11px] text-slate-400">
               {STANDARDS_CONTROLS
                 .filter((s) => {
-                  const v = (standards as Record<string, string | undefined>)[s.key];
+                  const v = getValue(s);
                   return v && v !== "ignore";
                 })
                 .map((s) => {
-                  const v = (standards as Record<string, string | undefined>)[s.key];
+                  const v = getValue(s);
                   return `${s.label} (${v === "must" ? "musí" : "chci"})`;
                 })
                 .join(" · ")}
@@ -1560,11 +1576,11 @@ function StandardsBar({
         <div className="mt-3 space-y-2">
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             {STANDARDS_CONTROLS.map((s) => {
-              const current = ((standards as Record<string, string | undefined>)[s.key] ?? "ignore") as StdPriority;
+              const current = (getValue(s) ?? "ignore") as StdPriority;
               return (
-                <div key={s.key} className="flex items-center gap-2">
-                  <span className="text-xs text-slate-700 w-[130px]">{s.label}</span>
-                  <StdPill value={current} onChange={(v) => onChange(s.key, v)} />
+                <div key={`${s.section}.${s.key}`} className="flex items-center gap-2">
+                  <span className="text-xs text-slate-700 w-[150px]">{s.label}</span>
+                  <StdPill value={current} onChange={(v) => onChange(s.section, s.key, v)} />
                 </div>
               );
             })}
@@ -1598,6 +1614,7 @@ const WALK_CATEGORIES: { key: keyof WalkabilityPreferences; label: string; group
   { key: "metro", label: "Metro", group: "Doprava" },
   { key: "tram", label: "Tramvaj", group: "Doprava" },
   { key: "bus", label: "Bus", group: "Doprava" },
+  { key: "train", label: "Vlak", group: "Doprava" },
 ];
 
 const WALK_VALUES: { value: WalkabilityPreferenceValue; label: string; active: string }[] = [
@@ -1952,6 +1969,27 @@ export default function RecommendationsPage() {
         </div>
         <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
       </div>
+
+      {/* Preference quick-edit bars */}
+      <StandardsBar
+        wizardExtras={wizardExtras}
+        onChange={(section, key, value) => {
+          setWizardExtras((prev) => ({
+            ...prev,
+            [section]: { ...((prev as Record<string, any>)[section] ?? {}), [key]: value },
+          }));
+        }}
+        onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
+        recomputing={recomputing}
+      />
+      {walkPrefs && setWalkPrefs && (
+        <WalkabilityBar
+          walkPrefs={walkPrefs}
+          onChange={(key, value) => setWalkPrefs((prev) => ({ ...prev, [key]: value }))}
+          onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
+          recomputing={recomputing}
+        />
+      )}
 
       {/* Units table view */}
       {viewMode === "units" && (

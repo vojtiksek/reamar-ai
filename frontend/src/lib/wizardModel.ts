@@ -216,6 +216,18 @@ const MAX_PAYMENT_CONSTRUCTION: WizardField = {
   placeholder: "Např. 30",
 };
 
+const MAX_DAYS_ON_MARKET: WizardField = {
+  key: "max_days_on_market",
+  label: "Max. dní na trhu",
+  render: "numeric",
+  role: "hard_filter",
+  visibility: "broker",
+  dataPath: "budget.max_days_on_market",
+  unit: "dní",
+  format: "plain",
+  placeholder: "Např. 180",
+};
+
 // Step 3: Dispozice a prostor
 
 const LAYOUTS: WizardField = {
@@ -345,6 +357,20 @@ const CALM_VS_CITY: WizardField = {
   ],
 };
 
+const CENTER_PREFERENCE: WizardField = {
+  key: "center_preference",
+  label: "Vzdálenost od centra",
+  render: "toggle" as const,
+  role: "preference" as const,
+  visibility: "both" as const,
+  dataPath: "character.center_preference",
+  options: [
+    { value: "closer", label: "Blíž k centru" },
+    { value: "farther", label: "Dál od centra" },
+  ],
+  allow_deselect: true,
+};
+
 // Location method status fields — edited via the map editor / commute
 // editor, displayed here as metadata-driven status pills so the broker
 // sees at a glance whether the methods are active on a given case.
@@ -367,6 +393,21 @@ const COMMUTE_LOCATION: WizardField = {
   role: "hard_filter",
   visibility: "both",
   dataPath: "location.method_commute",
+};
+
+const COMMUTE_MODE: WizardField = {
+  key: "commute_mode",
+  label: "Režim dojezdů",
+  render: "toggle" as const,
+  role: "preference" as const,
+  visibility: "broker" as const,
+  dataPath: "location.commute_mode",
+  options: [
+    { value: "compromise", label: "Kompromis" },
+    { value: "primary", label: "Hlavní bod" },
+    { value: "sum", label: "Celkový čas" },
+  ],
+  allow_deselect: true,
 };
 
 // Opt-in toggle that promotes `administrative_area` from soft preference
@@ -507,6 +548,20 @@ const COMPLETION_DATE: WizardField = {
   visible_when: { field: "move_in_timeline", equals: "by_date" },
 };
 
+const COMPLETION_PREFERENCE: WizardField = {
+  key: "completion_preference",
+  label: "Preferuji nastěhování",
+  render: "toggle" as const,
+  role: "preference" as const,
+  visibility: "both" as const,
+  dataPath: "completion_preference",
+  options: [
+    { value: "sooner", label: "Co nejdřív" },
+    { value: "later", label: "Co nejpozději" },
+  ],
+  allow_deselect: true,
+};
+
 const COMPLETION_STANDARD: WizardField = {
   key: "completion_standard",
   label: "Standard dokončení",
@@ -580,7 +635,7 @@ export const WIZARD_STEPS: WizardStep[] = [
       {
         key: "price",
         heading: "Jaký je váš rozpočet?",
-        fields: [BUDGET_MAX, BUDGET_MAX_TOLERANCE, MAX_PAYMENT_CONTRACT, MAX_PAYMENT_CONSTRUCTION],
+        fields: [BUDGET_MAX, BUDGET_MAX_TOLERANCE, MAX_PAYMENT_CONTRACT, MAX_PAYMENT_CONSTRUCTION, MAX_DAYS_ON_MARKET],
       },
       { key: "financing", heading: "Jak budete financovat?", fields: [FINANCING_TYPE] },
     ],
@@ -618,9 +673,9 @@ export const WIZARD_STEPS: WizardStep[] = [
           "Oblast na mapě určuje, kde se vůbec hledá. Uvnitř oblasti " +
           "můžete zvýraznit preferované části — ty ovlivňují jen pořadí. " +
           "Aktivujte níže, pokud chcete preferované oblasti jako tvrdý filtr.",
-        fields: [POLYGON_LOCATION, COMMUTE_LOCATION, ADMIN_AREA, METHOD_ADMIN, ADMIN_REGION],
+        fields: [POLYGON_LOCATION, COMMUTE_LOCATION, COMMUTE_MODE, ADMIN_AREA, METHOD_ADMIN, ADMIN_REGION],
       },
-      { key: "character", heading: "Charakter okolí", fields: [CALM_VS_CITY] },
+      { key: "character", heading: "Charakter okolí", fields: [CALM_VS_CITY, CENTER_PREFERENCE] },
     ],
   },
   {
@@ -678,7 +733,7 @@ export const WIZARD_STEPS: WizardStep[] = [
     visibility: "both",
     groups: [
       { key: "reno", heading: "Novostavba nebo rekonstrukce?", fields: [RENOVATION_PREFERENCE] },
-      { key: "when", heading: "Kdy chcete bydlet?", fields: [MOVE_IN_TIMELINE, COMPLETION_DATE] },
+      { key: "when", heading: "Kdy chcete bydlet?", fields: [MOVE_IN_TIMELINE, COMPLETION_DATE, COMPLETION_PREFERENCE] },
       { key: "standard", heading: "Standard dokončení", fields: [COMPLETION_STANDARD] },
       { key: "broker_dates", heading: "Upřesnění termínu (broker)", fields: [EARLIEST_MOVE_IN, LATEST_MOVE_IN, ASSIGNMENT_IMPORTANT] },
     ],

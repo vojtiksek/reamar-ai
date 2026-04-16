@@ -113,7 +113,7 @@ export default function DemandAnalyticsPage() {
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex flex-col">
                         <Link
-                          href={`/clients/${item.client_id}`}
+                          href={`/cases/${item.client_id}/brief`}
                           className="text-sm font-semibold text-slate-900 hover:underline"
                         >
                           {item.client_name}

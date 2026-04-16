@@ -11,8 +11,9 @@ import { ClientLocationMap } from "@/components/ClientLocationMap";
 import { CommutePointsEditor, type CommutePoint } from "../brief/CommutePointsEditor";
 import { AreaMultiSelect } from "@/components/AreaMultiSelect";
 import { AreaHierarchyPicker } from "@/components/AreaHierarchyPicker";
-import { WalkabilityPreferencesGroup } from "@/components/WalkabilityPreferencesGroup";
-import { DEFAULT_PREFERENCES } from "@/lib/walkabilityPreferences";
+import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/walkabilityPreferences";
+import { getNonDefaultChips as getWalkChips } from "@/lib/walkabilityPreferences";
+import type { WizardExtras } from "@/lib/caseTypes";
 import {
   WIZARD_STEPS,
   STANDARD_ENUMS,
@@ -28,8 +29,6 @@ import {
 import {
   useWizardMetadata,
   getFieldOptions,
-  getCompoundInfo,
-  getFieldSemantics,
 } from "@/hooks/useWizardMetadata";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
@@ -40,7 +39,7 @@ const STEP_LABELS: Record<number, string> = Object.fromEntries(
   WIZARD_STEPS.map((s) => [
     s.index,
     // Noise controls removed from step 7; only POI/walkability remains.
-    s.key === "noise" ? "Okolí projektu" : s.label,
+    s.key === "noise" ? "Okolí a centrum" : s.label,
   ]),
 );
 
@@ -79,9 +78,9 @@ function OptionCard({
 
 function PriorityPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const options = [
-    { v: "must", label: "Musí být", color: "border-emerald-400 bg-emerald-50 text-emerald-800" },
-    { v: "prefer", label: "Chtěli bychom", color: "border-sky-400 bg-sky-50 text-sky-800" },
-    { v: "bonus", label: "Bonus", color: "border-amber-400 bg-amber-50 text-amber-800" },
+    { v: "must", label: "Musí", color: "border-emerald-400 bg-emerald-50 text-emerald-800" },
+    { v: "prefer", label: "Preferuji", color: "border-blue-400 bg-blue-50 text-blue-800" },
+    { v: "ignore", label: "Ne", color: "border-slate-300 bg-slate-100 text-slate-500" },
   ];
   return (
     <div className="flex gap-1.5">
@@ -489,17 +488,42 @@ export default function ClientWizardPage() {
   const renderEnumField = (f: WizardField, section: string) => {
     const selected = getEnumValues(section, f.key);
     const options = getFieldOptions(wizardMeta, f.key, section, f.options);
+    const sec = (wizardExtras as Record<string, any>)[section] ?? {};
+    const priorityKey = `${f.key}_priority`;
+    const priority = (sec[priorityKey] as string) ?? "ignore";
+    const hasSelection = selected.length > 0;
     return (
       <div key={f.key} className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
-        <span className="mb-2 flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></span>
-        <div className="flex flex-wrap gap-1.5">
+        <div className="flex items-center justify-between">
+          <span className="flex items-center text-sm font-medium text-slate-700">{f.label}<RoleBadge role={f.role} /></span>
+          {hasSelection && (
+            <PriorityPicker
+              value={priority}
+              onChange={(v) => setWizardExtras((prev) => ({
+                ...prev,
+                [section]: { ...((prev as Record<string, any>)[section] ?? {}), [priorityKey]: v as Priority },
+              }))}
+            />
+          )}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
           {options.map((opt) => {
             const active = selected.includes(opt.value);
             return (
               <button
                 key={opt.value}
                 type="button"
-                onClick={() => toggleEnumValue(section, f.key, opt.value)}
+                onClick={() => {
+                  toggleEnumValue(section, f.key, opt.value);
+                  // Clear priority when deselecting last value
+                  const nextSelected = active ? selected.filter((v) => v !== opt.value) : [...selected, opt.value];
+                  if (nextSelected.length === 0) {
+                    setWizardExtras((prev) => ({
+                      ...prev,
+                      [section]: { ...((prev as Record<string, any>)[section] ?? {}), [priorityKey]: undefined },
+                    }));
+                  }
+                }}
                 className={cn(
                   "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
                   active
@@ -519,8 +543,6 @@ export default function ClientWizardPage() {
   const renderFeatureField = (f: WizardField, section: string) => {
     const sec = (wizardExtras as Record<string, any>)[section] ?? {};
     const priority = (sec[f.key] as string) ?? "";
-    const compound = getCompoundInfo(wizardMeta, f.key, section);
-    const isActive = priority === "must" || priority === "prefer" || priority === "bonus";
 
     return (
       <div key={f.key} className="rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3">
@@ -534,72 +556,6 @@ export default function ClientWizardPage() {
             }))}
           />
         </div>
-        {/* Compound detail: sub_options (e.g. air_conditioning type) */}
-        {isActive && compound?.sub_options && compound.sub_options.length > 0 && (
-          <div className="mt-2 flex flex-wrap gap-1.5 border-t border-slate-100 pt-2">
-            <span className="mr-1 self-center text-xs text-slate-500">Typ:</span>
-            {compound.sub_options.map((opt) => {
-              const detailKey = `${f.key}_type`;
-              const currentType = sec[detailKey] as string | undefined;
-              const active = currentType === opt.value;
-              return (
-                <button
-                  key={opt.value}
-                  type="button"
-                  onClick={() => setWizardExtras((prev) => ({
-                    ...prev,
-                    [section]: {
-                      ...((prev as Record<string, any>)[section] ?? {}),
-                      [detailKey]: active ? null : opt.value,
-                    },
-                  }))}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                    active
-                      ? "border-violet-400 bg-violet-50 text-violet-800"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
-                  )}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
-        {/* Compound detail: state acceptance (e.g. exterior_blinds "preparation" OK?) */}
-        {isActive && compound?.states && compound.states.includes("preparation") && (
-          <div className="mt-2 flex items-center gap-2 border-t border-slate-100 pt-2">
-            <span className="text-xs text-slate-500">Stačí příprava?</span>
-            {([true, false] as const).map((val) => {
-              const detailKey = `${f.key}_accept_prep`;
-              const current = sec[detailKey] as boolean | undefined;
-              const active = current === val;
-              return (
-                <button
-                  key={String(val)}
-                  type="button"
-                  onClick={() => setWizardExtras((prev) => ({
-                    ...prev,
-                    [section]: {
-                      ...((prev as Record<string, any>)[section] ?? {}),
-                      [detailKey]: active ? null : val,
-                    },
-                  }))}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
-                    active
-                      ? val
-                        ? "border-emerald-400 bg-emerald-50 text-emerald-800"
-                        : "border-rose-400 bg-rose-50 text-rose-800"
-                      : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
-                  )}
-                >
-                  {val ? "Ano" : "Ne"}
-                </button>
-              );
-            })}
-          </div>
-        )}
       </div>
     );
   };
@@ -988,6 +944,30 @@ export default function ClientWizardPage() {
         </div>
       </div>
 
+      {/* Typ nemovitosti */}
+      <div>
+        <h3 className="mb-4 text-base font-semibold text-slate-800">Typ nemovitosti</h3>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { value: "any", label: "Neřeším" },
+            { value: "apartment", label: "Byt" },
+            { value: "house", label: "Dům" },
+          ].map(({ value, label }) => {
+            const active = (profile?.property_type ?? "any") === value;
+            return (
+              <button key={value} type="button"
+                onClick={() => setProfile((prev) => ({ ...(prev ?? {}), property_type: value }))}
+                className={cn(
+                  "rounded-full border px-4 py-2 text-sm font-medium transition-colors",
+                  active ? "border-sky-500 bg-sky-500 text-white" : "border-slate-200 bg-white text-slate-700 hover:border-slate-400",
+                )}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {areaGroup && (
         <div>
           <h3 className="mb-4 text-base font-semibold text-slate-800">{areaGroup.heading}</h3>
@@ -1024,7 +1004,8 @@ export default function ClientWizardPage() {
     const characterGroup = step4.groups.find((g) => g.key === "character");
     const characterFields =
       characterGroup?.fields.filter(
-        (f) => f.render === "toggle" && f.visibility !== "broker",
+        // center_preference is shown in step 7 (Okolí a centrum) alongside POI
+        (f) => f.render === "toggle" && f.visibility !== "broker" && f.key !== "center_preference",
       ) ?? [];
 
     const commutePoints = (wizardExtras.commute?.points ?? []) as CommutePoint[];
@@ -1237,109 +1218,82 @@ export default function ClientWizardPage() {
     );
   };
 
-  /**
-   * Generic renderer for fields that use a tri-state "negative constraint"
-   * semantics (noise-style: ignore / prefer / must, where higher severity
-   * means stricter filtering).  State labels are driven by the backend
-   * metadata (`custom_state_labels`); colors and visual layout are a UI
-   * concern and stay here.  If metadata is not (yet) loaded, we fall back to
-   * the hardcoded Czech labels to avoid blank UI on first render.
-   */
-  const NEGATIVE_CONSTRAINT_FALLBACK: Array<[string, string]> = [
-    ["ignore", "Neřeším"],
-    ["prefer", "Vadí mi"],
-    ["must", "Vyloučit"],
-  ];
-  const NEGATIVE_CONSTRAINT_COLORS: Record<string, string> = {
-    ignore: "border-slate-200 bg-white text-slate-600",
-    prefer: "border-amber-400 bg-amber-50 text-amber-800",
-    must: "border-rose-400 bg-rose-50 text-rose-800",
-  };
-
-  const renderNegativeConstraintField = (f: WizardField, section: string) => {
-    const sec = (wizardExtras as Record<string, any>)[section] ?? {};
-    const val = (sec[f.key] as string) ?? "ignore";
-    const semanticsMeta = getFieldSemantics(wizardMeta, f.key, section);
-    const states = semanticsMeta?.states ?? NEGATIVE_CONSTRAINT_FALLBACK;
-
-    return (
-      <div
-        key={f.key}
-        className="flex items-center justify-between rounded-xl border border-slate-100 bg-slate-50/50 px-4 py-3"
-      >
-        <span className="text-sm font-medium text-slate-700">{f.label}</span>
-        <div className="flex gap-1.5">
-          {states.map(([stateKey, label]) => {
-            const active = val === stateKey;
-            const activeColor =
-              NEGATIVE_CONSTRAINT_COLORS[stateKey] ??
-              "border-slate-400 bg-slate-50 text-slate-800";
-            return (
-              <button
-                key={stateKey}
-                type="button"
-                onClick={() =>
-                  setWizardExtras((prev) => ({
-                    ...prev,
-                    [section]: {
-                      ...((prev as Record<string, any>)[section] ?? {}),
-                      [f.key]: stateKey as Priority,
-                    },
-                  }))
-                }
-                className={cn(
-                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                  active
-                    ? activeColor
-                    : "border-slate-200 bg-white text-slate-500 hover:border-slate-300",
-                )}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    );
-  };
-
-  // Kept as a thin wrapper so existing callers (renderStep7, summary, etc.)
-  // don't have to know about the generic semantics-based renderer.
-  const renderNoiseField = (f: WizardField) =>
-    renderNegativeConstraintField(f, "noise");
-
   const renderStep7 = () => {
+    const centerField = WIZARD_STEPS.find((s) => s.key === "location")
+      ?.groups.find((g) => g.key === "character")
+      ?.fields.find((f) => f.key === "center_preference");
+
+    const WALK_CATS: { key: keyof WalkabilityPreferences; label: string; defaultDist?: number }[] = [
+      { key: "supermarket", label: "Obchod", defaultDist: 500 }, { key: "pharmacy", label: "Lékárna", defaultDist: 800 },
+      { key: "park", label: "Park", defaultDist: 500 }, { key: "restaurant", label: "Restaurace", defaultDist: 500 },
+      { key: "cafe", label: "Kavárna", defaultDist: 500 }, { key: "fitness", label: "Fitness", defaultDist: 800 },
+      { key: "playground", label: "Hřiště", defaultDist: 500 }, { key: "kindergarten", label: "Školka", defaultDist: 800 },
+      { key: "primary_school", label: "ZŠ", defaultDist: 1000 },
+      { key: "metro", label: "Metro", defaultDist: 600 }, { key: "tram", label: "Tramvaj", defaultDist: 300 },
+      { key: "bus", label: "Bus", defaultDist: 200 }, { key: "train", label: "Vlak", defaultDist: 1000 },
+    ];
+    const poiDist = wizardExtras?.poi_max_distances ?? {};
+    const WALK_VALS: { value: WalkabilityPreferenceValue; label: string; active: string }[] = [
+      { value: "required", label: "Musí", active: "border-emerald-400 bg-emerald-50 text-emerald-800" },
+      { value: "high", label: "Chci", active: "border-blue-400 bg-blue-50 text-blue-800" },
+      { value: "ignore", label: "Ne", active: "border-slate-300 bg-slate-100 text-slate-500" },
+    ];
+
     return (
       <div className="space-y-8">
-        {/* Noise controls removed — noise stays in passive backend scoring only */}
-
-        {/* Walkability / POI preferences — mirrors brief/page.tsx renderStep5 */}
-        <div className="space-y-4 rounded-lg bg-slate-50 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h5 className="text-xs font-semibold text-slate-900">Občanská vybavenost v okolí <PrefBadge /></h5>
-            <div className="flex gap-1">
-              {[
-                { label: "Rodina", prefs: { ...DEFAULT_PREFERENCES, playground: "high" as const, kindergarten: "high" as const, primary_school: "high" as const, park: "high" as const, supermarket: "high" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-                { label: "Městský život", prefs: { ...DEFAULT_PREFERENCES, restaurant: "high" as const, cafe: "high" as const, metro: "high" as const, tram: "high" as const, bus: "high" as const, supermarket: "high" as const, playground: "ignore" as const, kindergarten: "ignore" as const, primary_school: "ignore" as const } },
-                { label: "Klid a zeleň", prefs: { ...DEFAULT_PREFERENCES, park: "high" as const, metro: "ignore" as const, tram: "ignore" as const, restaurant: "ignore" as const, cafe: "ignore" as const, fitness: "ignore" as const } },
-              ].map(({ label, prefs }) => (
-                <button key={label} type="button" onClick={() => setWalkPrefs(prefs)}
-                  className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] text-slate-700 hover:border-slate-500 hover:text-slate-900">
-                  {label}
-                </button>
-              ))}
-            </div>
+        {/* Centrum preference */}
+        {centerField && (
+          <div>
+            <h3 className="mb-4 text-base font-semibold text-slate-800">Vzdálenost od centra Prahy</h3>
+            {renderToggleField(centerField)}
           </div>
-          <WalkabilityPreferencesGroup title="Služby a příroda"
-            items={[{ key: "supermarket", label: "Supermarket" }, { key: "park", label: "Park" }, { key: "restaurant", label: "Restaurace" }, { key: "cafe", label: "Kavárna" }, { key: "fitness", label: "Fitness" }]}
-            prefs={walkPrefs} onChange={setWalkPrefs} />
-          <WalkabilityPreferencesGroup title="Vzdělávání a rodina"
-            items={[{ key: "kindergarten", label: "Školka" }, { key: "primary_school", label: "ZŠ" }]}
-            prefs={walkPrefs} onChange={setWalkPrefs} />
-          <WalkabilityPreferencesGroup title="Doprava"
-            items={[{ key: "metro", label: "Metro" }, { key: "tram", label: "Tramvaj" }, { key: "bus", label: "Bus" }]}
-            prefs={walkPrefs} onChange={setWalkPrefs} />
+        )}
+
+        {/* Okolí a doprava — same as QuickEdit */}
+        <div>
+          <h3 className="mb-2 text-base font-semibold text-slate-800">Okolí a doprava</h3>
+          <p className="mb-3 text-sm text-slate-500">U každé kategorie zvolte důležitost. Pokud vyberete Musí nebo Chci, můžete nastavit maximální vzdálenost.</p>
+          <div className="rounded-xl border border-slate-100 bg-slate-50/50 divide-y divide-slate-100">
+            {WALK_CATS.map((c) => {
+              const cur = walkPrefs[c.key] === "normal" ? "ignore" : walkPrefs[c.key];
+              return (
+                <div key={c.key} className="flex items-center justify-between gap-2 px-4 py-2.5">
+                  <span className="min-w-[80px] text-sm text-slate-700">{c.label}</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                      {WALK_VALS.map((o) => (
+                        <button key={o.value} type="button"
+                          onClick={() => setWalkPrefs((prev) => ({ ...prev, [c.key]: o.value }))}
+                          className={cn("rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                            cur === o.value ? o.active : "border-slate-200 bg-white text-slate-400 hover:border-slate-300")}>
+                          {o.label}
+                        </button>
+                      ))}
+                    </div>
+                    {cur !== "ignore" && (
+                      <div className="flex items-center gap-1">
+                        <input type="number" placeholder={String(c.defaultDist ?? 500)}
+                          value={poiDist[c.key] ?? ""}
+                          onChange={(e) => {
+                            const raw = e.target.value ? Number(e.target.value) : undefined;
+                            setWizardExtras((prev: WizardExtras) => {
+                              const old = { ...(prev.poi_max_distances ?? {}) };
+                              if (raw != null) { old[c.key] = raw; } else { delete old[c.key]; }
+                              return { ...prev, poi_max_distances: old };
+                            });
+                          }}
+                          className="w-16 rounded-lg border border-slate-200 px-2 py-1 text-xs text-right text-slate-700 focus:border-sky-300 focus:outline-none"
+                        />
+                        <span className="text-xs text-slate-400">m</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
+
       </div>
     );
   };
@@ -1479,9 +1433,17 @@ export default function ClientWizardPage() {
           </div>
         )}
 
-        {false && (
+        {/* Walkability / POI summary */}
+        {getWalkChips(walkPrefs).length > 0 && (
           <div>
-            {/* Noise summary removed — noise preferences stay in backend scoring only */}
+            <p className="mb-2 text-sm font-medium text-slate-700">Okolí a doprava</p>
+            <div className="flex flex-wrap gap-1.5">
+              {getWalkChips(walkPrefs).map((chip) => (
+                <span key={chip} className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs text-emerald-800">
+                  {chip}
+                </span>
+              ))}
+            </div>
           </div>
         )}
 
@@ -1537,7 +1499,7 @@ export default function ClientWizardPage() {
     4: renderStep4,
     5: renderStep5,
     6: renderStep6,
-    7: renderStep7,  // noise fields removed; only walkability/POI remains
+    7: renderStep7,  // POI/walkability + center preference
     8: renderStep8,
     9: renderStep9,
   };
@@ -1574,15 +1536,15 @@ export default function ClientWizardPage() {
 
       {/* Step navigation pills */}
       <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-3xl overflow-x-auto px-6 py-2">
-          <div className="flex gap-1">
+        <div className="mx-auto max-w-4xl px-4 py-2">
+          <div className="flex flex-wrap gap-1">
             {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setStep(s)}
                 className={cn(
-                  "shrink-0 rounded-full px-3 py-1 text-xs font-medium transition-colors",
+                  "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
                   s === step
                     ? "bg-sky-100 text-sky-800"
                     : s < step

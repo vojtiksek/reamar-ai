@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { formatCurrencyCzk } from "@/lib/format";
 import clsx from "clsx";
@@ -29,6 +29,14 @@ type Rec = {
   reason?: Record<string, unknown> | null;
 };
 
+type PreferenceItem = {
+  key: string;
+  label: string;
+  value: string;
+  filter_type: string;
+  raw_value: number | null;
+};
+
 type CommuteDetail = { label: string; mode: string; minutes: number; passed: boolean; is_estimated?: boolean };
 
 const ROLE_LABELS: Record<string, { label: string; cls: string }> = {
@@ -43,6 +51,8 @@ function portalHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } : {};
 }
 
+type CommutePoint = { label: string; mode?: string | null };
+
 export default function PortalBrokerPicks() {
   const [recs, setRecs] = useState<Rec[]>([]);
   const [loading, setLoading] = useState(true);
@@ -50,8 +60,18 @@ export default function PortalBrokerPicks() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [sendingFb, setSendingFb] = useState<number | null>(null);
 
-  useEffect(() => {
-    fetch(`${API_BASE}/portal/recommendations`, { headers: portalHeaders() })
+  // Commute mode state
+  const [commutePoints, setCommutePoints] = useState<CommutePoint[]>([]);
+  const [commuteMode, setCommuteMode] = useState<string>("compromise");
+  const [commutePrimaryIdx, setCommutePrimaryIdx] = useState<number>(0);
+  const [savingCommute, setSavingCommute] = useState(false);
+
+  // Preference items (standards, amenities)
+  const [prefItems, setPrefItems] = useState<PreferenceItem[]>([]);
+  const [savingPref, setSavingPref] = useState<string | null>(null);
+
+  const fetchRecs = useCallback(() => {
+    return fetch(`${API_BASE}/portal/recommendations`, { headers: portalHeaders() })
       .then((r) => {
         if (r.status === 401) throw new Error("Neplatná session");
         if (!r.ok) throw new Error("Chyba načítání");
@@ -67,10 +87,71 @@ export default function PortalBrokerPicks() {
             return (b.score ?? 0) - (a.score ?? 0);
           });
         setRecs(pinned);
-      })
+      });
+  }, []);
+
+  useEffect(() => {
+    // Fetch preferences (for commute points + current mode) and recs in parallel
+    Promise.all([
+      fetch(`${API_BASE}/portal/my-preferences`, { headers: portalHeaders() })
+        .then((r) => r.ok ? r.json() : null)
+        .then((data) => {
+          if (data?.commute_points) setCommutePoints(data.commute_points);
+          if (data?.commute_mode) setCommuteMode(data.commute_mode);
+          if (data?.commute_primary_index != null) setCommutePrimaryIdx(data.commute_primary_index);
+          if (data?.items) setPrefItems(data.items);
+        })
+        .catch(() => {}),
+      fetchRecs(),
+    ])
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [fetchRecs]);
+
+  const updateCommuteMode = async (mode: string, primaryIndex?: number) => {
+    setSavingCommute(true);
+    const body: Record<string, unknown> = { commute_mode: mode };
+    if (primaryIndex !== undefined) body.commute_primary_index = primaryIndex;
+    try {
+      const res = await fetch(`${API_BASE}/portal/profile/overrides`, {
+        method: "PATCH",
+        headers: portalHeaders(),
+        body: JSON.stringify(body),
+      });
+      if (res.ok) {
+        setCommuteMode(mode);
+        if (primaryIndex !== undefined) setCommutePrimaryIdx(primaryIndex);
+        await fetchRecs();
+      }
+    } finally {
+      setSavingCommute(false);
+    }
+  };
+
+  const updatePrefMode = async (item: PreferenceItem, newMode: "must" | "prefer") => {
+    setSavingPref(item.key);
+    const section = item.filter_type === "amenity" ? "amenities" : "standards";
+    try {
+      const res = await fetch(`${API_BASE}/portal/profile/overrides`, {
+        method: "PATCH",
+        headers: portalHeaders(),
+        body: JSON.stringify({ [section]: { [item.key]: { mode: newMode } } }),
+      });
+      if (res.ok) {
+        // Update local state to reflect the change
+        setPrefItems((prev) =>
+          prev.map((p) =>
+            p.key === item.key
+              ? { ...p, value: newMode === "must" ? "vyžadováno" : "preference" }
+              : p,
+          ),
+        );
+        await fetchRecs();
+      }
+    } finally {
+      setSavingPref(null);
+    }
+  };
 
   const sendFeedback = async (recId: number, feedbackType: string) => {
     setSendingFb(recId);
@@ -108,9 +189,152 @@ export default function PortalBrokerPicks() {
     );
   }
 
+  const showCommutePicker = commutePoints.length >= 2;
+
+  // Group toggleable preference items (feature = standards, noise_distance = standards, amenity = amenities)
+  const standardItems = prefItems.filter(
+    (p) => p.filter_type === "feature" || p.filter_type === "noise_distance",
+  );
+  const amenityItems = prefItems.filter((p) => p.filter_type === "amenity");
+  const showPrefToggles = standardItems.length > 0 || amenityItems.length > 0;
+
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">{recs.length} jednotek vybraných vaším makléřem</p>
+
+      {showCommutePicker && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400 mr-1">Dojíždění</span>
+          {(["compromise", "primary", "sum"] as const).map((m) => {
+            const labels: Record<string, string> = {
+              compromise: "Kompromis",
+              primary: "Hlavní bod",
+              sum: "Celkový čas",
+            };
+            const active = commuteMode === m;
+            return (
+              <button
+                key={m}
+                disabled={savingCommute}
+                onClick={() => updateCommuteMode(m, m === "primary" ? commutePrimaryIdx : undefined)}
+                className={clsx(
+                  "rounded-full px-2.5 py-1 text-[11px] font-medium transition",
+                  active
+                    ? "bg-slate-800 text-white shadow-sm"
+                    : "text-slate-500 hover:bg-slate-100",
+                  savingCommute && "opacity-50",
+                )}
+              >
+                {labels[m]}
+              </button>
+            );
+          })}
+          {commuteMode === "primary" && (
+            <select
+              value={commutePrimaryIdx}
+              onChange={(e) => updateCommuteMode("primary", Number(e.target.value))}
+              disabled={savingCommute}
+              className="ml-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-700 focus:outline-none focus:ring-1 focus:ring-slate-300"
+            >
+              {commutePoints.map((pt, i) => (
+                <option key={i} value={i}>{pt.label}</option>
+              ))}
+            </select>
+          )}
+          {savingCommute && <span className="text-[11px] text-slate-400 ml-1">...</span>}
+        </div>
+      )}
+
+      {showPrefToggles && (
+        <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 space-y-3">
+          {standardItems.length > 0 && (
+            <div>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Standardy</span>
+              <div className="mt-1.5 space-y-1">
+                {standardItems.map((item) => {
+                  const isMust = item.value === "vyžadováno";
+                  const isPrefer = item.value === "preference";
+                  const saving = savingPref === item.key;
+                  return (
+                    <div key={item.key} className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-700">{item.label}</span>
+                      <div className={clsx("flex gap-1", saving && "opacity-50")}>
+                        <button
+                          disabled={saving}
+                          onClick={() => updatePrefMode(item, "must")}
+                          className={clsx(
+                            "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition",
+                            isMust
+                              ? "bg-rose-600 text-white shadow-sm"
+                              : "text-slate-400 hover:bg-slate-100",
+                          )}
+                        >
+                          Musí být
+                        </button>
+                        <button
+                          disabled={saving}
+                          onClick={() => updatePrefMode(item, "prefer")}
+                          className={clsx(
+                            "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition",
+                            isPrefer
+                              ? "bg-violet-600 text-white shadow-sm"
+                              : "text-slate-400 hover:bg-slate-100",
+                          )}
+                        >
+                          Preferuji
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {amenityItems.length > 0 && (
+            <div>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Vybavení</span>
+              <div className="mt-1.5 space-y-1">
+                {amenityItems.map((item) => {
+                  const isMust = item.value === "vyžadováno";
+                  const isPrefer = item.value === "preference";
+                  const saving = savingPref === item.key;
+                  return (
+                    <div key={item.key} className="flex items-center justify-between gap-3">
+                      <span className="text-sm text-slate-700">{item.label}</span>
+                      <div className={clsx("flex gap-1", saving && "opacity-50")}>
+                        <button
+                          disabled={saving}
+                          onClick={() => updatePrefMode(item, "must")}
+                          className={clsx(
+                            "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition",
+                            isMust
+                              ? "bg-rose-600 text-white shadow-sm"
+                              : "text-slate-400 hover:bg-slate-100",
+                          )}
+                        >
+                          Musí být
+                        </button>
+                        <button
+                          disabled={saving}
+                          onClick={() => updatePrefMode(item, "prefer")}
+                          className={clsx(
+                            "rounded-full px-2.5 py-0.5 text-[11px] font-medium transition",
+                            isPrefer
+                              ? "bg-violet-600 text-white shadow-sm"
+                              : "text-slate-400 hover:bg-slate-100",
+                          )}
+                        >
+                          Preferuji
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
         <div className="overflow-x-auto">

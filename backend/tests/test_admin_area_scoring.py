@@ -156,7 +156,7 @@ class TestAdminAreaSignal:
     def test_inside_on_administrative_district_iga_match(self):
         sig = _admin_area_signal(_Project(admin="Praha 6"), _mk_hf(["Praha 6"]))
         assert sig["status"] == "inside"
-        assert sig["adj"] == 6.0
+        assert sig["adj"] == 4.0
         assert sig["matched_area"] == "Praha 6"
 
     def test_inside_on_district_fallback(self):
@@ -166,7 +166,7 @@ class TestAdminAreaSignal:
             _mk_hf(["Praha 4"]),
         )
         assert sig["status"] == "inside"
-        assert sig["adj"] == 6.0
+        assert sig["adj"] == 4.0
         assert sig["matched_area"] == "Praha 4"
 
     def test_inside_case_insensitive(self):
@@ -182,7 +182,7 @@ class TestAdminAreaSignal:
     def test_outside_when_no_match(self):
         sig = _admin_area_signal(_Project(admin="Praha 6"), _mk_hf(["Praha 10"]))
         assert sig["status"] == "outside"
-        assert sig["adj"] == -3.0
+        assert sig["adj"] == -2.0
         assert sig["matched_area"] is None
 
     def test_na_when_project_has_no_admin_data(self):
@@ -226,11 +226,11 @@ class TestAdminAreaSoftAdjustment:
     def test_off_returns_zero(self):
         assert _admin_area_soft_adjustment(_Project(admin="Praha 6"), _mk_hf([])) == 0.0
 
-    def test_inside_returns_plus_six(self):
-        assert _admin_area_soft_adjustment(_Project(admin="Praha 6"), _mk_hf(["Praha 6"])) == 6.0
+    def test_inside_returns_plus_four(self):
+        assert _admin_area_soft_adjustment(_Project(admin="Praha 6"), _mk_hf(["Praha 6"])) == 4.0
 
-    def test_outside_returns_minus_three(self):
-        assert _admin_area_soft_adjustment(_Project(admin="Praha 6"), _mk_hf(["Praha 10"])) == -3.0
+    def test_outside_returns_minus_two(self):
+        assert _admin_area_soft_adjustment(_Project(admin="Praha 6"), _mk_hf(["Praha 10"])) == -2.0
 
     def test_hard_opt_in_suppresses_boost(self):
         """method_admin=True means hard filter is on; soft boost must be zero."""

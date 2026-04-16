@@ -423,6 +423,8 @@ class ClientProfile(Base):
         TIMESTAMP(timezone=True),
         nullable=True,
     )
+    # Portal overrides — client-side toggles (must↔prefer, commute mode, etc.)
+    portal_overrides_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

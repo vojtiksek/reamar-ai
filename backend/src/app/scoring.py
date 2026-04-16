@@ -97,6 +97,157 @@ FLAT_WEIGHT_CATEGORIES: dict[str, list[str]] = {
     'surroundings': ['walkability', 'noise'],  # backward compat: old wizard data
 }
 
+# ---------------------------------------------------------------------------
+# Scoring v2 — configurable constants
+# ---------------------------------------------------------------------------
+
+SCORING_V2_CONFIG: dict[str, Any] = {
+    # Core aspect base weights (sum ≈ 64, redistributed when inactive)
+    "core_weights": {
+        "price_savings": 8.0,
+        "price_per_m2": 6.0,
+        "unit_area": 8.0,
+        "outdoor_area": 4.0,
+        "payment_schedule": 4.0,
+        "commute_time": 12.0,
+        "walkability_poi": 10.0,
+        "center_distance": 4.0,
+        "completion_preference": 5.0,
+        "renovation_preference": 3.0,
+    },
+    # Preference pools (split evenly among active preferences)
+    "pref_standard_pool": 22.0,
+    "pref_amenity_pool": 14.0,
+    # Price bell-curve
+    "price_bell_sweet_low": 30,      # % savings where max score starts
+    "price_bell_sweet_high": 55,     # % savings where max score ends
+    "price_bell_penalty": 1.5,       # penalty steepness for too-cheap
+    # Price per m²
+    "price_m2_neutral": 70,          # fit at 0% deviation
+    "price_m2_cheap_bonus": 1.5,     # bonus steepness
+    "price_m2_expensive_penalty": 2.5,  # penalty steepness
+    # Area
+    "area_ratio_cap": 1.5,           # above this, no more fit increase
+    # Commute modes
+    "commute_primary_weight": 0.80,
+    "commute_secondary_weight": 0.20,
+    "commute_sum_penalty_rate": 2.0,
+    # Center distance (Prague center)
+    "center_lat": 50.087431,
+    "center_lng": 14.420073,
+    "center_near_full_km": 3,
+    "center_near_mid_km": 8,
+    "center_far_cutoff_km": 20,
+    # POI gradual categories (count matters, not just presence)
+    "poi_gradual_categories": ["restaurant", "cafe"],
+    "poi_gradual_scores": [0, 40, 60, 75, 90, 100],
+    # Standard/amenity fit values
+    "pref_match": 95,
+    "pref_miss": 15,
+    "pref_neutral": 50,
+    # Noise adjustment (outside weighted system)
+    "noise_quiet_bonus": 2,
+    "noise_medium_penalty": -1,
+    "noise_high_penalty": -3,
+    "noise_very_high_penalty": -5,
+    "noise_road_close_m": 200,
+    "noise_road_penalty": -2,
+    "noise_tram_close_m": 150,
+    "noise_tram_penalty": -1,
+    "noise_rail_close_m": 400,
+    "noise_rail_penalty": -2,
+    "noise_airport_close_m": 3000,
+    "noise_airport_penalty": -2,
+    "noise_adj_min": -8,
+    "noise_adj_max": 2,
+    # Admin area adjustment
+    "admin_inside_bonus": 4.0,
+    "admin_outside_penalty": -2.0,
+    # Hard filter tolerances (defaults)
+    "tolerance_budget_pct": 5,
+    "tolerance_area_pct": 5,
+    "tolerance_outdoor_pct": 0,
+}
+
+# V2 Czech labels for UI
+SCORING_V2_LABELS: dict[str, str] = {
+    # Core
+    'price_savings': 'Cena (úspora vs. budget)',
+    'price_per_m2': 'Cena/m² vs. okolí',
+    'unit_area': 'Velikost bytu',
+    'outdoor_area': 'Venkovní prostor',
+    'payment_schedule': 'Platební podmínky',
+    'commute_time': 'Dojezdové vzdálenosti',
+    'walkability_poi': 'Občanská vybavenost',
+    'center_distance': 'Vzdálenost od centra',
+    'completion_preference': 'Termín nastěhování',
+    'renovation_preference': 'Novostavba / rekonstrukce',
+    # Standards (prefixed std_)
+    'std_heating': 'Vytápění',
+    'std_heating_source': 'Zdroj vytápění',
+    'std_recuperation': 'Rekuperace',
+    'std_exterior_blinds': 'Venkovní žaluzie',
+    'std_air_conditioning': 'Klimatizace',
+    'std_flooring': 'Podlahová krytina',
+    'std_ceiling_height': 'Výška stropu',
+    'std_windows': 'Okna',
+    # Amenities (prefixed amen_)
+    'amen_reception': 'Recepce',
+    'amen_fitness': 'Fitness',
+    'amen_ev_charger': 'Elektro nabíječka',
+    'amen_courtyard_garden': 'Vnitroblok / zahrada',
+    'amen_bike_room': 'Kolárna',
+    'amen_stroller_room': 'Kočárkárna',
+    'amen_concierge': 'Concierge',
+}
+
+# Mapping: standard key → (DB field on unit, DB field on project)
+V2_STANDARD_DB_FIELDS: dict[str, tuple[str | None, str | None]] = {
+    "heating": ("heating", "heating"),
+    "heating_source": (None, "heating_source"),
+    "recuperation": (None, "recuperation"),
+    "air_conditioning": ("air_conditioning", None),
+    "exterior_blinds": ("exterior_blinds", None),
+    "flooring": (None, "floors"),
+    "ceiling_height": (None, "ceiling_height"),
+    "windows": (None, "windows"),
+}
+
+# Wizard enum field keys → standard key mapping
+V2_ENUM_STANDARD_MAP: dict[str, str] = {
+    "heating_type": "heating",
+    "heating_source": "heating_source",
+    "flooring": "flooring",
+    "window_type": "windows",
+    "ceiling_height": "ceiling_height",
+}
+
+# Amenity fields on Project model
+V2_AMENITY_DB_FIELDS: list[str] = [
+    "reception", "fitness", "ev_charger", "courtyard_garden",
+    "bike_room", "stroller_room", "concierge",
+]
+
+# POI category → DB count field mapping (500m radius)
+V2_POI_COUNT_FIELDS: dict[str, str] = {
+    "supermarket": "count_supermarket_500m",
+    "park": "count_park_500m",
+    "cafe": "count_cafe_500m",
+    "restaurant": "count_restaurant_500m",
+    "fitness": "count_fitness_500m",
+    "playground": "count_playground_500m",
+    "kindergarten": "count_kindergarten_500m",
+    "primary_school": "count_primary_school_500m",
+}
+
+# POI category → DB distance field mapping (MHD)
+V2_POI_DISTANCE_FIELDS: dict[str, tuple[str, int]] = {
+    "metro": ("distance_to_metro_station_m", 600),
+    "tram": ("distance_to_tram_stop_m", 300),
+    "bus": ("distance_to_bus_stop_m", 200),
+    "train": ("distance_to_train_station_m", 1000),
+}
+
 # Czech labels for UI
 FLAT_WEIGHT_LABELS: dict[str, str] = {
     'price_distance': 'Cena (vzdálenost od ideálu)',
@@ -259,7 +410,7 @@ def normalize_wizard(wizard: dict) -> dict:
 
     # ── 1. latest_move_in → completion_date ───────────────────────────────────
     # New wizard stores the hard deadline as wizard.latest_move_in ("YYYY-MM-DD").
-    # compute_eligibility() and _flat_completion_fit() read wizard.completion_date.
+    # compute_eligibility() reads wizard.completion_date.
     if w.get("latest_move_in") and not w.get("completion_date"):
         w["completion_date"] = w["latest_move_in"]
 
@@ -409,6 +560,24 @@ class PreferenceTags:
     skip_amenities: bool = False
     skip_noise: bool = False
     skip_walkability: bool = False
+    # ── V2 unified dicts ────────────────────────────────────────────────
+    # Standard modes: {"heating": "must", "recuperation": "prefer", ...}
+    standard_modes: dict[str, str] = field(default_factory=dict)
+    # Standard values (multi-select): {"heating": ["underfloor"], "flooring": ["wood", "vinyl"]}
+    standard_values: dict[str, list[str]] = field(default_factory=dict)
+    # Amenity modes: {"reception": "prefer", "fitness": "must", ...}
+    amenity_modes: dict[str, str] = field(default_factory=dict)
+    # POI modes: {"supermarket": "nice", "park": "must", "metro": "nice", ...}
+    poi_modes: dict[str, str] = field(default_factory=dict)
+    # POI max distances in meters: {"supermarket": 500, "metro": 800, ...}
+    poi_max_distances: dict[str, int] = field(default_factory=dict)
+    # Center preference: "closer" | "farther" | None
+    center_preference: str | None = None
+    # Completion preference: "sooner" | "later" | None (separate from hard filter deadline)
+    completion_preference: str | None = None
+    # Commute scoring mode: "primary" | "compromise" | "sum" | None
+    commute_mode: str | None = None
+    commute_primary_index: int | None = None
 
 
 @dataclass
@@ -537,13 +706,13 @@ def _admin_area_signal(
     if matched_area:
         return {
             "status": "inside",
-            "adj": 6.0,
+            "adj": float(SCORING_V2_CONFIG.get("admin_inside_bonus", 4.0)),
             "matched_area": matched_area,
             "preferred_areas": preferred,
         }
     return {
         "status": "outside",
-        "adj": -3.0,
+        "adj": float(SCORING_V2_CONFIG.get("admin_outside_penalty", -2.0)),
         "matched_area": None,
         "preferred_areas": preferred,
     }
@@ -758,6 +927,32 @@ def _hydrate_from_structured(sw_payload: dict, profile: ClientProfile) -> Struct
     meta.completion_standard = meta_d.get("completion_standard")
     meta.property_type = profile.property_type
 
+    # ── V2 unified dicts from structured payload ────────────────────────
+    # Read directly from structured_wizard if provided
+    v2_prefs = pref_d
+    pref.standard_modes = dict(v2_prefs.get("standard_modes") or {})
+    pref.standard_values = dict(v2_prefs.get("standard_values") or {})
+    pref.amenity_modes = dict(v2_prefs.get("amenity_modes") or {})
+    pref.poi_modes = dict(v2_prefs.get("poi_modes") or {})
+    pref.poi_max_distances = dict(v2_prefs.get("poi_max_distances") or {})
+    pref.center_preference = v2_prefs.get("center_preference")
+    pref.completion_preference = v2_prefs.get("completion_preference")
+    pref.commute_mode = v2_prefs.get("commute_mode")
+    ci = v2_prefs.get("commute_primary_index")
+    pref.commute_primary_index = int(ci) if ci is not None else None
+
+    # If V2 dicts are empty, populate from legacy bool fields
+    if not pref.standard_modes:
+        # Reconstruct from wizard raw as fallback
+        wiz = (profile.filter_json or {}).get("wizard") or {}
+        standards = (wiz.get("standards") or {})
+        house_amenities = (wiz.get("house_amenities") or {})
+        project_amenities_d = (wiz.get("project_amenities") or {})
+        _populate_v2_dicts(hf, pref, standards, house_amenities, project_amenities_d, profile)
+
+    # ── Portal overrides ────────────────────────────────────────────────
+    _apply_portal_overrides(hf, pref, profile)
+
     return result
 
 
@@ -951,7 +1146,157 @@ def build_structured_wizard(profile: ClientProfile | None) -> StructuredWizard:
     meta.completion_standard = wizard.get("completion_standard")
     meta.property_type = profile.property_type
 
+    # ── V2 unified dicts ────────────────────────────────────────────────────
+    _populate_v2_dicts(hf, pref, standards, amenities, project_amenities, profile)
+
+    # ── Portal overrides (client can flip must↔prefer in portal) ────────
+    _apply_portal_overrides(hf, pref, profile)
+
     return result
+
+
+def _populate_v2_dicts(
+    hf: HardFilters,
+    pref: PreferenceTags,
+    standards: dict,
+    amenities: dict,
+    project_amenities: dict,
+    profile: 'ClientProfile',
+) -> None:
+    """Populate V2 unified dicts (standard_modes/values, amenity_modes, poi_modes)
+    from wizard data.  Called at the end of build_structured_wizard."""
+
+    # ── Standards ────────────────────────────────────────────────────────
+    # Boolean standards: recuperation, air_conditioning, exterior_blinds
+    for key in ("recuperation", "air_conditioning", "exterior_blinds"):
+        mode = standards.get(key)
+        if mode in ("must", "prefer"):
+            pref.standard_modes[key] = mode
+
+    # Enum standards: heating_type→heating, heating_source, flooring, etc.
+    for enum_key, std_key in V2_ENUM_STANDARD_MAP.items():
+        vals = standards.get(enum_key)
+        priority = standards.get(f"{enum_key}_priority")
+
+        # Determine mode: _priority field > legacy floor_heating field > default
+        if priority in ("must", "prefer"):
+            mode = priority
+        elif std_key == "heating" and standards.get("floor_heating") in ("must", "prefer"):
+            mode = standards.get("floor_heating")
+        elif vals:
+            mode = "prefer"  # default if values selected but no explicit priority
+        else:
+            mode = None
+
+        if mode:
+            pref.standard_modes[std_key] = mode
+            if isinstance(vals, list) and vals:
+                pref.standard_values[std_key] = [str(v) for v in vals]
+            elif vals:
+                pref.standard_values[std_key] = [str(vals)]
+
+    # ── Amenities ───────────────────────────────────────────────────────
+    for key in V2_AMENITY_DB_FIELDS:
+        if getattr(hf, f"must_{key}", False):
+            pref.amenity_modes[key] = "must"
+        else:
+            val = project_amenities.get(key) or amenities.get(key)
+            if val == "must":
+                pref.amenity_modes[key] = "must"
+            elif val in ("prefer", "dont_want"):
+                pref.amenity_modes[key] = val
+
+    # ── POI modes (from walkability_preferences_json) ───────────────────
+    wprefs = (profile.walkability_preferences_json or {}) if profile else {}
+    for key, val in wprefs.items():
+        if val == "required":
+            pref.poi_modes[key] = "must"
+        elif val in ("important", "preferred"):
+            pref.poi_modes[key] = "nice"
+        # "normal", "not_important" → not included (= ignore)
+
+    # ── POI max distances from wizard extras ──────────────────────────
+    wizard_full = (profile.filter_json or {}).get("wizard") or {}
+    raw_poi_dists = wizard_full.get("poi_max_distances") or {}
+    for key, val in raw_poi_dists.items():
+        if val is not None:
+            try:
+                pref.poi_max_distances[key] = int(val)
+            except (ValueError, TypeError):
+                pass
+
+    # ── New preference fields from wizard ───────────────────────────────
+    context = wizard_full.get("context") or {}
+    location = wizard_full.get("location") or {}
+
+    pref.center_preference = context.get("center_preference")  # "closer" | "farther" | None
+    pref.completion_preference = context.get("completion_preference")  # "sooner" | "later" | None
+    pref.commute_mode = location.get("commute_mode")  # "primary" | "compromise" | "sum"
+    ci = location.get("commute_primary_index")
+    pref.commute_primary_index = int(ci) if ci is not None else None
+
+
+def _apply_portal_overrides(
+    hf: HardFilters,
+    pref: PreferenceTags,
+    profile: 'ClientProfile',
+) -> None:
+    """Apply client portal overrides on top of wizard-derived modes.
+
+    portal_overrides_json on profile stores client-side toggles that flip
+    must↔prefer for standards/amenities, change commute mode, etc.
+    """
+    overrides = getattr(profile, "portal_overrides_json", None) or {}
+    if not overrides:
+        return
+
+    # Standard mode overrides
+    for field_key, ov in (overrides.get("standards") or {}).items():
+        new_mode = ov.get("mode") if isinstance(ov, dict) else ov
+        if new_mode not in ("must", "prefer", "ignore"):
+            continue
+        # Only allow flipping if the wizard originally set something (not "ignore")
+        if field_key in pref.standard_modes or new_mode != "ignore":
+            if new_mode == "ignore":
+                pref.standard_modes.pop(field_key, None)
+            else:
+                pref.standard_modes[field_key] = new_mode
+        # Sync legacy bool fields for eligibility
+        must_attr = f"must_{field_key}"
+        prefer_attr = f"prefer_{field_key}"
+        if hasattr(hf, must_attr):
+            setattr(hf, must_attr, new_mode == "must")
+        if hasattr(pref, prefer_attr):
+            setattr(pref, prefer_attr, new_mode == "prefer")
+
+    # Amenity mode overrides
+    for field_key, ov in (overrides.get("amenities") or {}).items():
+        new_mode = ov.get("mode") if isinstance(ov, dict) else ov
+        if new_mode in ("must", "prefer", "dont_want", "ignore"):
+            if new_mode == "ignore":
+                pref.amenity_modes.pop(field_key, None)
+            else:
+                pref.amenity_modes[field_key] = new_mode
+            must_attr = f"must_{field_key}"
+            if hasattr(hf, must_attr):
+                setattr(hf, must_attr, new_mode == "must")
+
+    # POI mode overrides
+    for field_key, ov in (overrides.get("poi") or {}).items():
+        new_mode = ov.get("mode") if isinstance(ov, dict) else ov
+        if new_mode in ("must", "nice", "ignore"):
+            if new_mode == "ignore":
+                pref.poi_modes.pop(field_key, None)
+            else:
+                pref.poi_modes[field_key] = new_mode
+
+    # Commute mode override
+    cm = overrides.get("commute_mode")
+    if cm in ("primary", "compromise", "sum"):
+        pref.commute_mode = cm
+    cpi = overrides.get("commute_primary_index")
+    if cpi is not None:
+        pref.commute_primary_index = int(cpi)
 
 
 # ---------------------------------------------------------------------------
@@ -1252,353 +1597,8 @@ def compute_eligibility(
 
 
 # ---------------------------------------------------------------------------
-# Soft scoring (match)
+# Soft scoring helpers
 # ---------------------------------------------------------------------------
-
-def _legacy_compute_match(
-    unit: Unit,
-    project: Project,
-    profile: ClientProfile | None,
-    weights: dict[str, float],
-    db: Session | None = None,
-) -> tuple[float, dict[str, Any]]:
-    """Compute the weighted match score.
-
-    Returns (score, fits_dict) where fits_dict contains all component fits.
-    """
-    _ensure_geo_helpers()
-
-    price = unit.price_czk
-    area = float(unit.floor_area_m2) if unit.floor_area_m2 is not None else None
-
-    # -- Budget fit --
-    budget_fit = 0.0
-    if profile and price is not None:
-        if profile.budget_min is None and profile.budget_max is None:
-            budget_fit = 100.0
-        else:
-            lo = profile.budget_min or 0
-            hi = profile.budget_max or price
-            if lo <= price <= hi:
-                budget_fit = 100.0
-            else:
-                center = (lo + hi) / 2 if hi > lo else hi or lo or 1
-                diff_ratio = abs(price - center) / max(center, 1)
-                budget_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-
-    # -- Walkability fit --
-    walk_fit = 0.0
-    try:
-        prefs = (profile.walkability_preferences_json if profile else None) or {}
-        if prefs and any(v != "normal" for v in prefs.values()):
-            raw = project_to_raw_metrics(project)
-            result = compute_personalized_walkability_score(raw, prefs)
-            if result.get("score") is not None:
-                walk_fit = float(result["score"])
-        elif project.walkability_score is not None:
-            walk_fit = float(project.walkability_score)
-        else:
-            walk_fit = 50.0
-    except Exception:
-        walk_fit = 50.0
-
-    # -- Location fit --
-    loc_fit = 0.0
-    if project.gps_latitude is not None and project.gps_longitude is not None and profile:
-        poly = _parse_polygon_geojson(profile.polygon_geojson)
-        if poly:
-            inside = _point_in_polygon(
-                float(project.gps_latitude),
-                float(project.gps_longitude),
-                poly,
-            )
-            loc_fit = 100.0 if inside else 0.0
-        else:
-            loc_fit = 70.0
-
-    # -- Layout fit --
-    layout_fit = 0.0
-    if profile and profile.layouts and "values" in profile.layouts and unit.layout:
-        pref_values = [str(v).strip().lower() for v in (profile.layouts.get("values") or [])]
-        unit_bucket = _layout_group(str(unit.layout)) or str(unit.layout).strip().lower()
-        layout_fit = 100.0 if unit_bucket in pref_values else 50.0
-
-    # -- Area fit --
-    area_fit = 50.0
-    if profile and area is not None:
-        has_lo = profile.area_min is not None
-        has_hi = profile.area_max is not None
-        if has_lo or has_hi:
-            lo = profile.area_min or 0.0
-            hi = profile.area_max or area
-            if lo <= area <= hi:
-                area_fit = 100.0
-            else:
-                center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
-                diff_ratio = abs(area - center) / max(center, 1.0)
-                area_fit = max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-        else:
-            pass  # No area range → neutral 50
-
-    # -- Outdoor fit --
-    outdoor_fit = 50.0
-    if profile and profile.filter_json:
-        wizard_outdoor = (
-            ((profile.filter_json or {}).get("wizard") or {}).get("outdoor") or {}
-        )
-        min_outdoor = wizard_outdoor.get("min_outdoor_area_m2")
-        if min_outdoor is not None:
-            try:
-                min_outdoor = float(min_outdoor)
-                if unit.exterior_area_m2 is not None:
-                    unit_outdoor = float(unit.exterior_area_m2)
-                else:
-                    unit_outdoor = (
-                        (unit.balcony_area_m2 or 0.0)
-                        + (unit.terrace_area_m2 or 0.0)
-                        + (unit.garden_area_m2 or 0.0)
-                    )
-                if min_outdoor <= 0:
-                    outdoor_fit = 100.0
-                elif unit_outdoor >= min_outdoor:
-                    outdoor_fit = 100.0
-                else:
-                    outdoor_fit = max(0.0, 100.0 * unit_outdoor / min_outdoor)
-            except (TypeError, ValueError):
-                pass
-
-    # -- Commute fit --
-    commute_fit = 0.0
-    commute_details: list[dict[str, Any]] = []
-    commute_hard_fail = False
-    if (
-        profile
-        and profile.commute_points_json
-        and project.gps_latitude is not None
-        and project.gps_longitude is not None
-        and db is not None
-    ):
-        points = profile.commute_points_json or []
-        if isinstance(points, dict):
-            points = points.get("points") or []
-        per_point_scores: list[float] = []
-        for cp in points:
-            try:
-                label = str(cp.get("label") or "")
-                dest_lat = float(cp.get("lat"))
-                dest_lng = float(cp.get("lng"))
-                mode = str(cp.get("mode") or "drive")
-                max_minutes = float(cp.get("max_minutes"))
-            except Exception:
-                continue
-            priority = str(cp.get("priority") or "ignore")
-            tol = cp.get("tolerance_minutes")
-            tolerance_minutes = float(tol) if tol is not None else 0.0
-            commute_result = get_cached_commute_result(db, project, cp)
-            if commute_result is None:
-                continue
-            travel_min = commute_result.minutes
-            limit = max_minutes + tolerance_minutes
-            if priority == "must_have" and travel_min > limit:
-                commute_details.append({
-                    "label": label, "mode": mode, "minutes": travel_min,
-                    "max_minutes": max_minutes, "priority": priority, "passed": False,
-                    "itinerary": commute_result.itinerary,
-                    "is_estimated": commute_result.is_estimated,
-                })
-                commute_hard_fail = True
-                break
-            if priority in ("must_have", "prefer"):
-                if travel_min <= max_minutes:
-                    score = 100.0
-                elif travel_min > limit and limit > 0:
-                    score = 0.0
-                elif limit > max_minutes:
-                    ratio = (travel_min - max_minutes) / max(1.0, limit - max_minutes)
-                    score = max(0.0, 100.0 * (1.0 - ratio))
-                else:
-                    score = 0.0
-                per_point_scores.append(score)
-                commute_details.append({
-                    "label": label, "mode": mode, "minutes": travel_min,
-                    "max_minutes": max_minutes, "priority": priority,
-                    "passed": travel_min <= limit,
-                    "itinerary": commute_result.itinerary,
-                    "is_estimated": commute_result.is_estimated,
-                })
-        if not commute_hard_fail and per_point_scores:
-            commute_fit = min(per_point_scores)
-
-    fits = {
-        "budget_fit": budget_fit,
-        "walkability_fit": walk_fit,
-        "location_fit": loc_fit,
-        "layout_fit": layout_fit,
-        "area_fit": area_fit,
-        "outdoor_fit": outdoor_fit,
-        "commute_fit": commute_fit,
-        "commute_details": commute_details,
-    }
-
-    if commute_hard_fail:
-        return 0.0, fits
-
-    # Aggregate with weights
-    total = (
-        weights.get('budget', 0.30) * budget_fit
-        + weights.get('walkability', 0.20) * walk_fit
-        + weights.get('location', 0.20) * loc_fit
-        + weights.get('layout', 0.10) * layout_fit
-        + weights.get('area', 0.10) * area_fit
-        + weights.get('outdoor', 0.05) * outdoor_fit
-        + weights.get('commute', 0.05) * commute_fit
-    )
-
-    # Wizard preferences adjustment
-    pref_adj = _wizard_preferences_adjustment(unit, project, profile)
-    pref_adj = max(-20.0, min(15.0, pref_adj))
-    total = max(0.0, min(100.0, total + pref_adj))
-
-    fits["pref_adj"] = pref_adj
-    return total, fits
-
-
-# ---------------------------------------------------------------------------
-# Flat scoring — individual aspect fit computations
-# ---------------------------------------------------------------------------
-
-
-def _intensity(must: bool, prefer: bool) -> str | None:
-    """Derive intensity from split must/prefer bools → "must" | "prefer" | None."""
-    if must:
-        return "must"
-    if prefer:
-        return "prefer"
-    return None
-
-def _flat_price_distance_fit(unit, profile) -> float:
-    """Score: how close is the price to the client's ideal/max."""
-    price = getattr(unit, 'price_czk', None)
-    if price is None or not profile:
-        return 50.0
-    lo = getattr(profile, 'budget_min', None) or 0
-    hi = getattr(profile, 'budget_max', None) or price
-    if lo <= price <= hi:
-        return 100.0
-    center = (lo + hi) / 2 if hi > lo else hi or lo or 1
-    diff_ratio = abs(price - center) / max(center, 1)
-    return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-
-
-def _flat_price_per_m2_fit(unit) -> float:
-    """Score: price/m² deviation from local market (1km, 2km)."""
-    diff_1k = getattr(unit, 'local_price_diff_1000m', None)
-    diff_2k = getattr(unit, 'local_price_diff_2000m', None)
-    diff = None
-    if diff_1k is not None:
-        diff = float(diff_1k)
-    elif diff_2k is not None:
-        diff = float(diff_2k)
-    if diff is None:
-        return 50.0
-    # diff is percentage points: negative = cheaper than area (good), positive = expensive
-    # Map -20% → 100, 0% → 70, +20% → 0
-    score = 70.0 - diff * 3.5
-    return max(0.0, min(100.0, score))
-
-
-def _flat_payment_schedule_fit(unit) -> float:
-    """Score: lower upfront payment = better (prefer payment on completion)."""
-    contract_pct = getattr(unit, 'payment_contract', None)
-    construction_pct = getattr(unit, 'payment_construction', None)
-    completion_pct = getattr(unit, 'payment_occupancy', None)
-    if contract_pct is None and construction_pct is None:
-        return 50.0
-    cp = float(contract_pct or 0)
-    bp = float(construction_pct or 0)
-    op = float(completion_pct or 0)
-    # Normalize: if values are 0-1 range, convert to percentages
-    if cp <= 1:
-        cp *= 100
-    if bp <= 1:
-        bp *= 100
-    if op <= 1:
-        op *= 100
-    # Best: low contract+construction, high occupancy
-    # Score: 100 - (contract_weight * contract% + construction_weight * construction%)
-    upfront_cost = cp * 2.0 + bp * 1.0  # weight contract payment more
-    score = 100.0 - upfront_cost * 0.8
-    return max(0.0, min(100.0, score))
-
-
-def _flat_noise_fit(unit, project, hf: HardFilters, pref: PreferenceTags) -> float:
-    """Score: noise exposure. Lower noise = better score.
-
-    Uses must_no_*/prefer_no_* from StructuredWizard to derive sensitivity.
-    "must" = sensitive (hard filter already excludes worst cases, but scoring still penalizes).
-    "prefer" = sensitive (milder signal).
-    """
-    # Build noise checks from structured fields
-    noise_checks = [
-        (_intensity(hf.must_no_main_road, pref.prefer_no_main_road), 'distance_to_primary_road_m', 200, 500),
-        (_intensity(hf.must_no_tram, pref.prefer_no_tram), 'distance_to_tram_tracks_m', 100, 300),
-        (_intensity(hf.must_no_railway, pref.prefer_no_railway), 'distance_to_railway_m', 300, 1000),
-        (_intensity(hf.must_no_airport, pref.prefer_no_airport), 'distance_to_airport_m', 2000, 10000),
-    ]
-
-    has_any = any(intensity is not None for intensity, *_ in noise_checks)
-    has_quiet = _intensity(hf.must_quiet_area, pref.prefer_quiet_area) is not None
-    if not has_any and not has_quiet:
-        return 50.0
-
-    penalty = 0.0
-    for intensity, attr, close_m, far_m in noise_checks:
-        if intensity is None:
-            continue
-        dist = getattr(project, attr, None)
-        if dist is None:
-            continue
-        dist = float(dist)
-        # Both "must" and "prefer" count as sensitive for scoring (eligibility already handles must)
-        if dist >= far_m:
-            pass
-        elif dist <= close_m:
-            penalty += 25.0
-        else:
-            ratio = (far_m - dist) / (far_m - close_m)
-            penalty += 25.0 * ratio
-
-    # Also check noise_day_db if available
-    noise_db = getattr(project, 'noise_day_db', None)
-    if noise_db is not None:
-        noise_db = float(noise_db)
-        if noise_db > 65:
-            penalty += min(20.0, (noise_db - 65) * 2.0)
-        elif noise_db < 50:
-            penalty -= 10.0  # bonus for quiet
-
-    return max(0.0, min(100.0, 80.0 - penalty))
-
-
-def _flat_unit_area_fit(unit, profile) -> float:
-    """Score: how well does unit area match preferences. Bigger = better with cap."""
-    area = float(unit.floor_area_m2) if getattr(unit, 'floor_area_m2', None) is not None else None
-    if area is None or not profile:
-        return 50.0
-    lo = getattr(profile, 'area_min', None)
-    hi = getattr(profile, 'area_max', None)
-    if lo is not None or hi is not None:
-        lo = float(lo or 0)
-        hi = float(hi or area)
-        if lo <= area <= hi:
-            # Within range, bonus for larger
-            range_size = hi - lo if hi > lo else 1.0
-            return 80.0 + 20.0 * ((area - lo) / range_size)
-        center = (lo + hi) / 2 if hi > lo else hi or lo or 1.0
-        diff_ratio = abs(area - center) / max(center, 1.0)
-        return max(0.0, 100.0 * (1.0 - min(diff_ratio, 0.5) / 0.5))
-    return 50.0
-
 
 def _flat_outdoor_fit(unit, outdoor_area_min: float | None = None) -> float:
     """Score: outdoor space size. Bigger = better up to 50m².
@@ -1629,86 +1629,6 @@ def _flat_outdoor_fit(unit, outdoor_area_min: float | None = None) -> float:
     return min(100.0, 20.0 + cap * 1.6)
 
 
-def _flat_floor_preference_fit(
-    unit, project,
-    preferred_floor: str | None = None,
-    exclude_ground: bool = False,
-    penthouse_only: bool = False,
-) -> float:
-    """Score: floor preference (no ground floor, want top floor, etc.).
-
-    Reads preferred_floor from PreferenceTags, exclude_ground/penthouse_only from HardFilters.
-    """
-    floor = getattr(unit, 'floor', None)
-    if floor is None:
-        return 50.0
-
-    total_floors = getattr(project, 'floors_above_ground', None)
-    floor = int(floor)
-
-    pref = preferred_floor
-    if pref == 'no_ground' and floor == 0:
-        return 15.0
-    if pref == 'top_3' and total_floors:
-        if floor >= int(total_floors) - 2:
-            return 100.0
-        return 40.0
-    if pref == 'top_floor' and total_floors:
-        if floor >= int(total_floors):
-            return 100.0
-        return 30.0
-    # Penthouse preference from hard filter (eligibility already excludes non-top)
-    if penthouse_only and total_floors:
-        if floor >= int(total_floors):
-            return 100.0
-        return 30.0
-    # Ground floor exclusion as scoring signal (eligibility already excludes)
-    if exclude_ground and floor == 0:
-        return 15.0
-    # Default: slight preference for higher floors (not ground)
-    if floor == 0:
-        return 50.0
-    return min(100.0, 60.0 + floor * 3)
-
-
-def _flat_heating_source_fit(project, pref_value: str | None) -> float:
-    """Categorical match for heating_source: wizard stores preferred source label.
-
-    Reads project.heating_source (Czech label string).
-    Returns neutral when project has no value or wizard has no preference.
-    """
-    if not pref_value:
-        return 50.0
-    val = getattr(project, 'heating_source', None)
-    if not val:
-        return 50.0  # project not yet populated → neutral
-    return 85.0 if val.strip().lower() == pref_value.strip().lower() else 30.0
-
-
-def _flat_standard_fit(unit, project, pref_value: str | None, field: str) -> float:
-    """Generic standard scoring: prefer/bonus/ignore/must → score.
-
-    'must' is handled as hard filter, here we only score prefer/bonus.
-    """
-    if not pref_value or pref_value == 'ignore':
-        return 50.0  # neutral
-
-    # Get the actual value from unit or project
-    val = getattr(unit, field, None) or getattr(project, field, None)
-
-    if val is None:
-        return 50.0  # no data, neutral
-
-    has_feature = _check_standard_match(val, field)
-
-    if pref_value in ('prefer', 'must'):
-        # "must" is already hard-filtered by eligibility; for scoring, same weight as "prefer"
-        return 90.0 if has_feature else 20.0
-    if pref_value == 'bonus':
-        return 75.0 if has_feature else 45.0
-    return 50.0
-
-
 def _check_standard_match(val, field: str) -> bool:
     """Check if a standard value matches what the client wants."""
     if isinstance(val, bool):
@@ -1727,36 +1647,315 @@ def _check_standard_match(val, field: str) -> bool:
     return s not in ('false', '0', 'no', 'ne', 'none', '')
 
 
-def _flat_amenity_fit(project, pref_value: str | None, field: str) -> float:
-    """Score: amenity preference (prefer/dont_want/ignore)."""
-    if not pref_value or pref_value == 'ignore':
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in km between two GPS points."""
+    from math import radians, sin, cos, asin, sqrt
+    lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = sin(dlat / 2) ** 2 + cos(lat1) * cos(lat2) * sin(dlon / 2) ** 2
+    return 2 * 6371 * asin(sqrt(a))
+
+
+# ---------------------------------------------------------------------------
+# V2 fit functions
+# ---------------------------------------------------------------------------
+
+def _v2_price_savings_fit(unit, profile, cfg: dict) -> float:
+    """Bell-curve: sweet spot at 30-55% savings vs budget."""
+    price = getattr(unit, 'price_czk', None)
+    if price is None or not profile:
+        return 50.0
+    budget = getattr(profile, 'budget_max', None)
+    if not budget or budget <= 0:
+        return 50.0
+    savings_pct = (budget - price) / budget * 100
+    if savings_pct < 0:
+        return 0.0
+    sweet_lo = cfg.get("price_bell_sweet_low", 30)
+    sweet_hi = cfg.get("price_bell_sweet_high", 55)
+    penalty_rate = cfg.get("price_bell_penalty", 1.5)
+    if savings_pct <= 5:
+        return 55.0 + savings_pct * 2.0
+    if savings_pct <= sweet_lo:
+        return 65.0 + (savings_pct - 5) * (35.0 / max(sweet_lo - 5, 1))
+    if savings_pct <= sweet_hi:
+        return 100.0
+    return max(0.0, 100.0 - (savings_pct - sweet_hi) * penalty_rate)
+
+
+def _v2_price_per_m2_fit(unit, cfg: dict) -> float:
+    """Cheaper than neighbourhood = better."""
+    diff_1k = getattr(unit, 'local_price_diff_1000m', None)
+    diff_2k = getattr(unit, 'local_price_diff_2000m', None)
+    diff = float(diff_1k) if diff_1k is not None else (float(diff_2k) if diff_2k is not None else None)
+    if diff is None:
+        return 50.0
+    neutral = cfg.get("price_m2_neutral", 70)
+    if diff <= 0:
+        bonus = cfg.get("price_m2_cheap_bonus", 1.5)
+        return min(100.0, neutral + abs(diff) * bonus)
+    pen = cfg.get("price_m2_expensive_penalty", 2.5)
+    return max(0.0, neutral - diff * pen)
+
+
+def _v2_area_fit(unit, profile, cfg: dict) -> float:
+    """Bigger = better, cap at area_ratio_cap × area_min."""
+    area = float(unit.floor_area_m2) if getattr(unit, 'floor_area_m2', None) is not None else None
+    if area is None or not profile:
+        return 50.0
+    area_min = getattr(profile, 'area_min', None)
+    if area_min is None or float(area_min) <= 0:
+        return 50.0
+    area_min = float(area_min)
+    ratio = area / area_min
+    cap = cfg.get("area_ratio_cap", 1.5)
+    if ratio < 0.8:
+        return max(0.0, ratio * 50.0)
+    if ratio < 1.0:
+        return 40.0 + (ratio - 0.8) * 200.0
+    if ratio < cap:
+        return 80.0 + (ratio - 1.0) * (20.0 / max(cap - 1.0, 0.01))
+    return 100.0
+
+
+def _v2_payment_fit(unit) -> float:
+    """More payment at completion = better."""
+    contract_pct = getattr(unit, 'payment_contract', None)
+    construction_pct = getattr(unit, 'payment_construction', None)
+    completion_pct = getattr(unit, 'payment_occupancy', None)
+    if contract_pct is None and construction_pct is None:
+        return 50.0
+    cp = float(contract_pct or 0)
+    bp = float(construction_pct or 0)
+    op = float(completion_pct or 0)
+    if cp <= 1:
+        cp *= 100
+    if bp <= 1:
+        bp *= 100
+    if op <= 1:
+        op *= 100
+    return max(0.0, min(100.0, op * 1.2 + 10.0))
+
+
+def _v2_commute_fit(
+    project, profile, db, pref: 'PreferenceTags', cfg: dict,
+) -> tuple[float, list[dict[str, Any]], bool]:
+    """Commute scoring with 3 modes: primary, compromise, sum.
+
+    Returns (fit, commute_details, hard_fail).
+    """
+    commute_details: list[dict[str, Any]] = []
+
+    if (
+        not profile
+        or not getattr(profile, 'commute_points_json', None)
+        or getattr(project, 'gps_latitude', None) is None
+        or getattr(project, 'gps_longitude', None) is None
+        or db is None
+    ):
+        return 0.0, [], False
+
+    points = profile.commute_points_json or []
+    if isinstance(points, dict):
+        points = points.get('points') or []
+    if not points:
+        return 50.0, [], False
+
+    per_point_fits: list[dict[str, Any]] = []
+    hard_fail = False
+
+    for i, cp in enumerate(points):
+        try:
+            label = str(cp.get('label') or '')
+            float(cp.get('lat'))
+            float(cp.get('lng'))
+            mode = str(cp.get('mode') or 'drive')
+            max_minutes = float(cp.get('max_minutes'))
+        except Exception:
+            continue
+        priority = str(cp.get('priority') or 'ignore')
+        tol = cp.get('tolerance_minutes')
+        tolerance_minutes = float(tol) if tol is not None else 0.0
+        commute_result = get_cached_commute_result(db, project, cp)
+        if commute_result is None:
+            continue
+        travel_min = commute_result.minutes
+        limit = max_minutes + tolerance_minutes
+
+        # Hard fail check (always, regardless of mode)
+        if priority == 'must_have' and travel_min > limit:
+            commute_details.append({
+                'label': label, 'mode': mode, 'minutes': travel_min,
+                'max_minutes': max_minutes, 'priority': priority, 'passed': False,
+                'itinerary': commute_result.itinerary,
+                'is_estimated': commute_result.is_estimated,
+            })
+            hard_fail = True
+            break
+
+        # Per-point fit
+        if priority in ('must_have', 'prefer'):
+            if travel_min <= max_minutes:
+                pt_fit = 100.0
+            elif travel_min > limit and limit > 0:
+                pt_fit = 0.0
+            elif limit > max_minutes:
+                ratio = (travel_min - max_minutes) / max(1.0, limit - max_minutes)
+                pt_fit = max(0.0, 100.0 * (1.0 - ratio))
+            else:
+                pt_fit = 0.0
+        else:
+            pt_fit = 50.0  # "ignore" priority
+
+        per_point_fits.append({
+            'index': i, 'fit': pt_fit, 'label': label, 'mode': mode,
+            'minutes': travel_min, 'max_minutes': max_minutes,
+            'priority': priority, 'passed': travel_min <= limit,
+            'itinerary': commute_result.itinerary,
+            'is_estimated': commute_result.is_estimated,
+        })
+
+    if hard_fail:
+        return 0.0, commute_details or [d for d in per_point_fits], True
+
+    commute_details = per_point_fits
+    if not per_point_fits:
+        return 50.0, [], False
+
+    # Aggregate by mode
+    scoring_fits = [d for d in per_point_fits if d['priority'] in ('must_have', 'prefer')]
+    if not scoring_fits:
+        return 50.0, commute_details, False
+
+    commute_mode = pref.commute_mode or 'compromise'
+    primary_idx = pref.commute_primary_index or 0
+
+    if commute_mode == 'primary' and len(scoring_fits) >= 2:
+        pw = cfg.get('commute_primary_weight', 0.80)
+        sw = cfg.get('commute_secondary_weight', 0.20)
+        # Find primary among scoring fits
+        primary_fit = scoring_fits[0]['fit']
+        for sf in scoring_fits:
+            if sf['index'] == primary_idx:
+                primary_fit = sf['fit']
+                break
+        secondary_fits = [sf['fit'] for sf in scoring_fits if sf['index'] != primary_idx]
+        sec_avg = sum(secondary_fits) / len(secondary_fits) if secondary_fits else 50.0
+        fit = primary_fit * pw + sec_avg * sw
+
+    elif commute_mode == 'sum':
+        total_min = sum(sf['minutes'] for sf in scoring_fits)
+        total_max = sum(sf['max_minutes'] for sf in scoring_fits)
+        if total_min <= total_max:
+            fit = 100.0
+        else:
+            over_ratio = (total_min - total_max) / max(total_max, 1.0)
+            penalty_rate = cfg.get('commute_sum_penalty_rate', 2.0)
+            fit = max(0.0, 100.0 * (1.0 - over_ratio * penalty_rate))
+
+    else:  # compromise (default)
+        fit = min(sf['fit'] for sf in scoring_fits)
+
+    return fit, commute_details, False
+
+
+def _v2_walkability_poi_fit(project, pref: 'PreferenceTags', cfg: dict) -> float:
+    """Per-category POI scoring. "nice" POIs contribute to fit, "must" always pass (hard filter)."""
+    active_pois = {k: v for k, v in pref.poi_modes.items() if v in ("nice", "must")}
+    if not active_pois:
+        return 50.0  # no POI preferences → neutral
+
+    gradual_cats = set(cfg.get("poi_gradual_categories", ["restaurant", "cafe"]))
+    gradual_scores = cfg.get("poi_gradual_scores", [0, 40, 60, 75, 90, 100])
+
+    poi_fits: list[float] = []
+    for key, mode in active_pois.items():
+        # If client set a max distance for this POI, use distance-based scoring
+        client_max = pref.poi_max_distances.get(key)
+        if client_max and hasattr(project, f"distance_to_{key}_m"):
+            d = getattr(project, f"distance_to_{key}_m", None)
+            if d is None:
+                poi_fits.append(50.0)
+            elif float(d) <= client_max:
+                poi_fits.append(100.0)
+            else:
+                over_ratio = (float(d) - client_max) / (client_max * 2)
+                poi_fits.append(max(0.0, 100.0 * (1.0 - min(over_ratio, 1.0))))
+            continue
+        # Count-based POI
+        count_field = V2_POI_COUNT_FIELDS.get(key)
+        if count_field:
+            cnt = getattr(project, count_field, None)
+            cnt = int(cnt) if cnt is not None else 0
+            if key in gradual_cats:
+                idx = min(cnt, len(gradual_scores) - 1)
+                poi_fits.append(float(gradual_scores[idx]))
+            else:
+                poi_fits.append(100.0 if cnt >= 1 else 0.0)
+            continue
+        # Distance-based POI (metro, tram, bus, train)
+        dist_info = V2_POI_DISTANCE_FIELDS.get(key)
+        if dist_info:
+            attr, default_threshold = dist_info
+            # Client-specific threshold overrides default
+            threshold = pref.poi_max_distances.get(key, default_threshold)
+            d = getattr(project, attr, None)
+            if d is None:
+                poi_fits.append(50.0)
+            elif float(d) <= threshold:
+                poi_fits.append(100.0)
+            else:
+                # Linear decay up to 3× threshold
+                over_ratio = (float(d) - threshold) / (threshold * 2)
+                poi_fits.append(max(0.0, 100.0 * (1.0 - min(over_ratio, 1.0))))
+            continue
+
+    return sum(poi_fits) / len(poi_fits) if poi_fits else 50.0
+
+
+def _v2_center_distance_fit(project, pref: 'PreferenceTags', cfg: dict) -> float:
+    """Closer/farther to city center."""
+    lat = getattr(project, 'gps_latitude', None)
+    lon = getattr(project, 'gps_longitude', None)
+    if lat is None or lon is None:
         return 50.0
 
-    val = getattr(project, field, None)
-    has_it = bool(val) if val is not None else False
+    center_lat = cfg.get("center_lat", 50.087431)
+    center_lng = cfg.get("center_lng", 14.420073)
+    dist_km = _haversine_km(float(lat), float(lon), center_lat, center_lng)
 
-    if pref_value == 'prefer':
-        return 90.0 if has_it else 20.0
-    if pref_value == 'dont_want':
-        return 90.0 if not has_it else 20.0
-    return 50.0
+    near_full = cfg.get("center_near_full_km", 3)
+    near_mid = cfg.get("center_near_mid_km", 8)
+    far_cutoff = cfg.get("center_far_cutoff_km", 20)
+
+    direction = pref.center_preference
+    if direction == "closer":
+        if dist_km <= near_full:
+            return 100.0
+        if dist_km <= near_mid:
+            return 100.0 - (dist_km - near_full) / (near_mid - near_full) * 40.0
+        if dist_km <= far_cutoff:
+            return 60.0 - (dist_km - near_mid) / (far_cutoff - near_mid) * 36.0
+        return 20.0
+    elif direction == "farther":
+        if dist_km >= far_cutoff:
+            return 100.0
+        if dist_km >= near_mid:
+            return 60.0 + (dist_km - near_mid) / (far_cutoff - near_mid) * 40.0
+        if dist_km >= near_full:
+            return 30.0 + (dist_km - near_full) / (near_mid - near_full) * 30.0
+        return 30.0
+    return 50.0  # should not reach here if aspect is active
 
 
-def _flat_completion_fit(
-    project,
-    latest_move_in: str | None = None,
-    earliest_move_in: str | None = None,
-) -> float:
-    """Score: how well does project completion align with client's preferred dates.
-
-    latest_move_in from HardFilters, earliest_move_in from PreferenceTags.
-    """
+def _v2_completion_preference_fit(project, pref: 'PreferenceTags') -> float:
+    """Sooner/later preference for move-in date."""
     from datetime import date as _date
 
     proj_date = getattr(project, 'completion_date', None)
     if proj_date is None:
         return 50.0
-
     try:
         if isinstance(proj_date, str):
             proj_date = _date.fromisoformat(proj_date)
@@ -1765,25 +1964,122 @@ def _flat_completion_fit(
     except (ValueError, TypeError):
         return 50.0
 
-    if latest_move_in:
-        try:
-            latest_d = _date.fromisoformat(str(latest_move_in))
-            if proj_date > latest_d:
-                days_over = (proj_date - latest_d).days
-                return max(0.0, 70.0 - days_over * 0.3)
-        except (ValueError, TypeError):
-            pass
+    months = (proj_date - _date.today()).days / 30.0
 
-    if earliest_move_in:
-        try:
-            earliest_d = _date.fromisoformat(str(earliest_move_in))
-            if proj_date < earliest_d:
-                days_early = (earliest_d - proj_date).days
-                return max(40.0, 80.0 - days_early * 0.1)
-        except (ValueError, TypeError):
-            pass
+    direction = pref.completion_preference
+    if direction == "sooner":
+        if months <= 3:
+            return 100.0
+        if months <= 12:
+            return 100.0 - (months - 3) * 5.0
+        if months <= 36:
+            return 55.0 - (months - 12) * 1.5
+        return 15.0
+    elif direction == "later":
+        if months >= 36:
+            return 100.0
+        if months >= 12:
+            return 55.0 + (months - 12) * (45.0 / 24.0)
+        if months >= 3:
+            return 30.0 + (months - 3) * (25.0 / 9.0)
+        return 30.0
+    return 50.0
 
-    return 85.0  # within range or no constraints
+
+def _v2_renovation_preference_fit(unit, pref: 'PreferenceTags') -> float:
+    """Preference (not hard filter) for new build vs renovation."""
+    is_reno = getattr(unit, 'renovation', None)
+    if is_reno is None:
+        return 50.0
+    if pref.prefer_new:
+        return 30.0 if is_reno else 85.0
+    if pref.prefer_renovation:
+        return 85.0 if is_reno else 30.0
+    return 50.0
+
+
+def _v2_standard_preference_fit(
+    unit, project, std_key: str, selected_values: list[str] | None, cfg: dict,
+) -> float:
+    """Multi-select standard preference: any-match → high fit."""
+    match_val = cfg.get("pref_match", 95)
+    miss_val = cfg.get("pref_miss", 15)
+    neutral_val = cfg.get("pref_neutral", 50)
+
+    db_fields = V2_STANDARD_DB_FIELDS.get(std_key)
+    if not db_fields:
+        return float(neutral_val)
+
+    unit_field, project_field = db_fields
+    val = None
+    if unit_field:
+        val = getattr(unit, unit_field, None)
+    if val is None and project_field:
+        val = getattr(project, project_field, None)
+    if val is None:
+        return float(neutral_val)
+
+    # Boolean standards (recuperation, air_conditioning, exterior_blinds)
+    if not selected_values:
+        # Bool check: does project/unit have the feature?
+        has_it = _check_standard_match(val, unit_field or project_field or std_key)
+        return float(match_val) if has_it else float(miss_val)
+
+    # Multi-select: any of the selected values match?
+    val_lower = str(val).strip().lower()
+    for sv in selected_values:
+        if sv.strip().lower() in val_lower:
+            return float(match_val)
+    return float(miss_val)
+
+
+def _v2_amenity_preference_fit(project, field_key: str, mode: str, cfg: dict) -> float:
+    """Amenity preference: prefer/dont_want."""
+    match_val = cfg.get("pref_match", 95)
+    miss_val = cfg.get("pref_miss", 15)
+    neutral_val = cfg.get("pref_neutral", 50)
+
+    val = getattr(project, field_key, None)
+    has_it = bool(val) if val is not None else False
+
+    if mode in ("prefer", "must"):
+        # "must" already hard-filtered; for scoring treat same as "prefer"
+        return float(match_val) if has_it else float(miss_val)
+    if mode == "dont_want":
+        return float(match_val) if not has_it else float(miss_val)
+    return float(neutral_val)
+
+
+def _v2_noise_adj(project, cfg: dict) -> float:
+    """Noise adjustment (outside weighted system). Higher noise = penalty."""
+    adj = 0.0
+    noise_db = getattr(project, 'noise_day_db', None)
+    if noise_db is not None:
+        noise_db = float(noise_db)
+        if noise_db < 50:
+            adj += cfg.get("noise_quiet_bonus", 2)
+        elif 60 <= noise_db < 65:
+            adj += cfg.get("noise_medium_penalty", -1)
+        elif 65 <= noise_db < 70:
+            adj += cfg.get("noise_high_penalty", -3)
+        elif noise_db >= 70:
+            adj += cfg.get("noise_very_high_penalty", -5)
+
+    # Proximity penalties
+    road_dist = getattr(project, 'distance_to_primary_road_m', None)
+    if road_dist is not None and float(road_dist) < cfg.get("noise_road_close_m", 200):
+        adj += cfg.get("noise_road_penalty", -2)
+    tram_dist = getattr(project, 'distance_to_tram_tracks_m', None)
+    if tram_dist is not None and float(tram_dist) < cfg.get("noise_tram_close_m", 150):
+        adj += cfg.get("noise_tram_penalty", -1)
+    rail_dist = getattr(project, 'distance_to_railway_m', None)
+    if rail_dist is not None and float(rail_dist) < cfg.get("noise_rail_close_m", 400):
+        adj += cfg.get("noise_rail_penalty", -2)
+    airport_dist = getattr(project, 'distance_to_airport_m', None)
+    if airport_dist is not None and float(airport_dist) < cfg.get("noise_airport_close_m", 3000):
+        adj += cfg.get("noise_airport_penalty", -2)
+
+    return max(cfg.get("noise_adj_min", -8), min(cfg.get("noise_adj_max", 2), adj))
 
 
 def compute_flat_match(
@@ -1793,172 +2089,177 @@ def compute_flat_match(
     flat_weights: dict[str, float],
     db: Session | None = None,
 ) -> tuple[float, dict[str, Any]]:
-    """Compute match score using the flat weight model.
+    """Compute match score using V2 core+preference pool model.
 
-    Each aspect gets a 0-100 fit score, weighted by flat_weights (sum=100),
-    producing a 0-100 final score.
+    Core aspects (always active, ~64 pts) + preference aspects (standards/amenities,
+    ~36 pts) are redistributed based on what's active.  Noise and admin area are
+    applied as adjustments outside the weighted system.
+
+    The flat_weights parameter is accepted for backward compatibility — if broker
+    weight overrides exist, they are applied on top of the computed weights.
     """
     _ensure_geo_helpers()
+    cfg = SCORING_V2_CONFIG
 
     sw = build_structured_wizard(profile)
     hf = sw.hard_filters
     pref = sw.preferences
 
-    # Compute all aspect fits
+    # ── Determine active core aspects ───────────────────────────────────
+    core_base: dict[str, float] = dict(cfg["core_weights"])
+
+    # Center distance: only active if preference set
+    if not pref.center_preference:
+        core_base.pop("center_distance", None)
+
+    # Completion preference: only active if sooner/later preference
+    if not pref.completion_preference:
+        core_base.pop("completion_preference", None)
+
+    # Renovation preference: only active if preference set
+    if not pref.prefer_new and not pref.prefer_renovation:
+        core_base.pop("renovation_preference", None)
+
+    # ── Determine active preference aspects ─────────────────────────────
+    # Standards in "prefer" mode score; "must" is hard-filtered, "ignore" is off
+    active_std_prefer = [
+        (k, pref.standard_values.get(k))
+        for k, mode in pref.standard_modes.items()
+        if mode == "prefer"
+    ]
+    # Also score "must" standards (already hard-filtered, but still rank)
+    active_std_must = [
+        (k, pref.standard_values.get(k))
+        for k, mode in pref.standard_modes.items()
+        if mode == "must"
+    ]
+    active_std_scoring = active_std_prefer + active_std_must
+
+    active_amen_prefer = [
+        (k, mode)
+        for k, mode in pref.amenity_modes.items()
+        if mode in ("prefer", "dont_want")
+    ]
+    active_amen_must = [
+        (k, mode)
+        for k, mode in pref.amenity_modes.items()
+        if mode == "must"
+    ]
+    active_amen_scoring = active_amen_prefer + active_amen_must
+
+    # ── Compute weights with redistribution ─────────────────────────────
+    core_total = sum(core_base.values())
+
+    std_pool = cfg.get("pref_standard_pool", 22.0) if active_std_scoring else 0.0
+    amen_pool = cfg.get("pref_amenity_pool", 14.0) if active_amen_scoring else 0.0
+    active_total = core_total + std_pool + amen_pool
+
+    if active_total > 0:
+        scale = 100.0 / active_total
+    else:
+        scale = 1.0
+
+    core_weights = {k: v * scale for k, v in core_base.items()}
+    std_count = len(active_std_scoring)
+    amen_count = len(active_amen_scoring)
+    std_weight_each = (std_pool * scale / std_count) if std_count > 0 else 0.0
+    amen_weight_each = (amen_pool * scale / amen_count) if amen_count > 0 else 0.0
+
+    # ── Compute aspect fits ─────────────────────────────────────────────
     aspect_fits: dict[str, float] = {}
+    aspect_weights: dict[str, float] = {}
 
-    # --- Cena a financování ---
-    aspect_fits['price_distance'] = _flat_price_distance_fit(unit, profile)
-    aspect_fits['price_per_m2_area'] = _flat_price_per_m2_fit(unit)
-    aspect_fits['payment_schedule'] = _flat_payment_schedule_fit(unit)
+    # --- Core: Cena ---
+    aspect_fits['price_savings'] = _v2_price_savings_fit(unit, profile, cfg)
+    aspect_weights['price_savings'] = core_weights.get('price_savings', 0.0)
 
-    # --- Lokalita ---
-    # Commute: reuse existing logic
-    commute_fit = 0.0
-    commute_details: list[dict[str, Any]] = []
-    commute_hard_fail = False
-    if (
-        profile
-        and getattr(profile, 'commute_points_json', None)
-        and getattr(project, 'gps_latitude', None) is not None
-        and getattr(project, 'gps_longitude', None) is not None
-        and db is not None
-    ):
-        points = profile.commute_points_json or []
-        if isinstance(points, dict):
-            points = points.get('points') or []
-        per_point_scores: list[float] = []
-        for cp in points:
-            try:
-                label = str(cp.get('label') or '')
-                float(cp.get('lat'))
-                float(cp.get('lng'))
-                mode = str(cp.get('mode') or 'drive')
-                max_minutes = float(cp.get('max_minutes'))
-            except Exception:
-                continue
-            priority = str(cp.get('priority') or 'ignore')
-            tol = cp.get('tolerance_minutes')
-            tolerance_minutes = float(tol) if tol is not None else 0.0
-            commute_result = get_cached_commute_result(db, project, cp)
-            if commute_result is None:
-                continue
-            travel_min = commute_result.minutes
-            limit = max_minutes + tolerance_minutes
-            if priority == 'must_have' and travel_min > limit:
-                commute_hard_fail = True
-                break
-            if priority in ('must_have', 'prefer'):
-                if travel_min <= max_minutes:
-                    s = 100.0
-                elif travel_min > limit and limit > 0:
-                    s = 0.0
-                elif limit > max_minutes:
-                    ratio = (travel_min - max_minutes) / max(1.0, limit - max_minutes)
-                    s = max(0.0, 100.0 * (1.0 - ratio))
-                else:
-                    s = 0.0
-                per_point_scores.append(s)
-                commute_details.append({
-                    'label': label, 'mode': mode, 'minutes': travel_min,
-                    'max_minutes': max_minutes, 'priority': priority,
-                    'passed': travel_min <= limit,
-                    'itinerary': commute_result.itinerary,
-                    'is_estimated': commute_result.is_estimated,
-                })
-        if not commute_hard_fail and per_point_scores:
-            commute_fit = min(per_point_scores)
-    aspect_fits['commute_time'] = commute_fit
+    aspect_fits['price_per_m2'] = _v2_price_per_m2_fit(unit, cfg)
+    aspect_weights['price_per_m2'] = core_weights.get('price_per_m2', 0.0)
 
-    # Walkability
-    try:
-        from .walkability import compute_personalized_walkability_score, project_to_raw_metrics
-        prefs = (getattr(profile, 'walkability_preferences_json', None) if profile else None) or {}
-        if prefs and any(v != 'normal' for v in prefs.values()):
-            raw = project_to_raw_metrics(project)
-            result = compute_personalized_walkability_score(raw, prefs)
-            aspect_fits['walkability'] = float(result.get('score', 50.0))
-        elif getattr(project, 'walkability_score', None) is not None:
-            aspect_fits['walkability'] = float(project.walkability_score)
-        else:
-            aspect_fits['walkability'] = 50.0
-    except Exception:
-        aspect_fits['walkability'] = 50.0
+    # --- Core: Plocha ---
+    aspect_fits['unit_area'] = _v2_area_fit(unit, profile, cfg)
+    aspect_weights['unit_area'] = core_weights.get('unit_area', 0.0)
 
-    # Noise
-    aspect_fits['noise'] = _flat_noise_fit(unit, project, hf, pref)
-
-    # --- Dispozice a prostor ---
-    aspect_fits['unit_area'] = _flat_unit_area_fit(unit, profile)
     aspect_fits['outdoor_area'] = _flat_outdoor_fit(unit, outdoor_area_min=hf.outdoor_area_min)
-    aspect_fits['floor_preference'] = _flat_floor_preference_fit(
-        unit, project,
-        preferred_floor=pref.preferred_floor,
-        exclude_ground=hf.exclude_ground_floor,
-        penthouse_only=hf.penthouse_only,
-    )
+    aspect_weights['outdoor_area'] = core_weights.get('outdoor_area', 0.0)
 
-    # --- Standardy ---
-    # Derive priority from must/prefer split: "must"→already hard-filtered but still
-    # scores as "prefer"; "prefer"→scoring only; None→neutral 50.
-    aspect_fits['heating'] = _flat_standard_fit(
-        unit, project, _intensity(hf.must_floor_heating, pref.prefer_floor_heating) or None, 'heating')
-    aspect_fits['heating_source'] = _flat_heating_source_fit(project, pref.heating_source)
-    aspect_fits['recuperation'] = _flat_standard_fit(
-        unit, project, _intensity(hf.must_recuperation, pref.prefer_recuperation) or None, 'recuperation')
-    aspect_fits['exterior_blinds'] = _flat_standard_fit(
-        unit, project, _intensity(hf.must_exterior_blinds, pref.prefer_exterior_blinds) or None, 'exterior_blinds')
-    aspect_fits['air_conditioning'] = _flat_standard_fit(
-        unit, project, _intensity(hf.must_air_conditioning, pref.prefer_air_conditioning) or None, 'air_conditioning')
-    # flooring/ceiling_height: no wizard fields map here (pre-existing no-ops → neutral 50)
-    aspect_fits['flooring'] = _flat_standard_fit(unit, project, None, 'floors')
-    aspect_fits['ceiling_height'] = _flat_standard_fit(unit, project, None, 'ceiling_height')
-    aspect_fits['windows'] = _flat_standard_fit(unit, project, pref.window_type, 'windows')
+    # --- Core: Platební podmínky ---
+    aspect_fits['payment_schedule'] = _v2_payment_fit(unit)
+    aspect_weights['payment_schedule'] = core_weights.get('payment_schedule', 0.0)
 
-    # --- Vybavení projektu ---
-    # "must" amenities are hard-filtered by eligibility; for scoring, treat must as "prefer"
-    aspect_fits['reception'] = _flat_amenity_fit(
-        project, 'prefer' if hf.must_reception else pref.prefer_reception, 'reception')
-    aspect_fits['fitness_project'] = _flat_amenity_fit(
-        project, 'prefer' if hf.must_fitness else pref.prefer_fitness, 'fitness')
-    aspect_fits['ev_charger'] = _flat_amenity_fit(project, pref.prefer_ev_charger, 'ev_charger')
-    aspect_fits['courtyard_garden'] = _flat_amenity_fit(
-        project, 'prefer' if hf.must_courtyard_garden else pref.prefer_courtyard_garden, 'courtyard_garden')
+    # --- Core: Dojezdy ---
+    commute_fit, commute_details, commute_hard_fail = _v2_commute_fit(
+        project, profile, db, pref, cfg)
+    aspect_fits['commute_time'] = commute_fit
+    aspect_weights['commute_time'] = core_weights.get('commute_time', 0.0)
 
-    # --- Dokončení ---
-    aspect_fits['completion_fit'] = _flat_completion_fit(
-        project, latest_move_in=hf.latest_move_in, earliest_move_in=pref.earliest_move_in)
+    # --- Core: Walkability/POI ---
+    aspect_fits['walkability_poi'] = _v2_walkability_poi_fit(project, pref, cfg)
+    aspect_weights['walkability_poi'] = core_weights.get('walkability_poi', 0.0)
 
-    # --- Weighted total ---
+    # --- Core: Vzdálenost od centra ---
+    if 'center_distance' in core_weights:
+        aspect_fits['center_distance'] = _v2_center_distance_fit(project, pref, cfg)
+        aspect_weights['center_distance'] = core_weights['center_distance']
+
+    # --- Core: Nastěhování preference ---
+    if 'completion_preference' in core_weights:
+        aspect_fits['completion_preference'] = _v2_completion_preference_fit(project, pref)
+        aspect_weights['completion_preference'] = core_weights['completion_preference']
+
+    # --- Core: Renovace preference ---
+    if 'renovation_preference' in core_weights:
+        aspect_fits['renovation_preference'] = _v2_renovation_preference_fit(unit, pref)
+        aspect_weights['renovation_preference'] = core_weights['renovation_preference']
+
+    # --- Preference: Standardy ---
+    for std_key, std_vals in active_std_scoring:
+        aspect_key = f"std_{std_key}"
+        aspect_fits[aspect_key] = _v2_standard_preference_fit(
+            unit, project, std_key, std_vals, cfg)
+        aspect_weights[aspect_key] = std_weight_each
+
+    # --- Preference: Vybavení ---
+    for amen_key, amen_mode in active_amen_scoring:
+        aspect_key = f"amen_{amen_key}"
+        aspect_fits[aspect_key] = _v2_amenity_preference_fit(
+            project, amen_key, amen_mode, cfg)
+        aspect_weights[aspect_key] = amen_weight_each
+
+    # ── Weighted total ──────────────────────────────────────────────────
     if commute_hard_fail:
-        fits = {**aspect_fits, 'commute_details': commute_details, 'commute_hard_fail': True}
+        fits = {
+            **aspect_fits, 'commute_details': commute_details,
+            'commute_hard_fail': True, 'aspect_weights': aspect_weights,
+        }
         return 0.0, fits
 
     total = 0.0
-    for aspect_key, fit_val in aspect_fits.items():
-        w = flat_weights.get(aspect_key, 0.0)
-        total += w * fit_val / 100.0  # weights sum to 100, fit is 0-100 → score is 0-100
+    for key, fit_val in aspect_fits.items():
+        w = aspect_weights.get(key, 0.0)
+        total += w * fit_val / 100.0
 
-    # Soft admin_area location boost — only active when method_admin==False
-    # (opt-in hard filter already excluded non-matching projects).  Capped
-    # to [-3, +6] so it nudges ranking without overpowering aspect weights.
+    # Adjustments (outside weighted system)
+    noise_adj = _v2_noise_adj(project, cfg)
     admin_signal = _admin_area_signal(project, hf)
     admin_adj = float(admin_signal.get("adj") or 0.0)
-    total = max(0.0, min(100.0, total + admin_adj))
+    total = max(0.0, min(100.0, total + noise_adj + admin_adj))
 
     fits = {
         **aspect_fits,
+        'aspect_weights': aspect_weights,
         'commute_details': commute_details,
+        'noise_adj': noise_adj,
         'admin_area_adj': admin_adj,
         'admin_area_signal': admin_signal,
         # Backward-compatible fit fields
-        'budget_fit': aspect_fits['price_distance'],
-        'walkability_fit': aspect_fits['walkability'],
+        'budget_fit': aspect_fits.get('price_savings', 50.0),
+        'walkability_fit': aspect_fits.get('walkability_poi', 50.0),
         'location_fit': aspect_fits.get('commute_time', 0.0),
-        'layout_fit': 50.0,  # layout is a hard filter in flat model
-        'area_fit': aspect_fits['unit_area'],
-        'outdoor_fit': aspect_fits['outdoor_area'],
-        'commute_fit': aspect_fits['commute_time'],
+        'layout_fit': 50.0,  # layout is a hard filter only
+        'area_fit': aspect_fits.get('unit_area', 50.0),
+        'outdoor_fit': aspect_fits.get('outdoor_area', 50.0),
+        'commute_fit': aspect_fits.get('commute_time', 0.0),
     }
 
     return total, fits
@@ -2016,37 +2317,6 @@ def compute_confidence(
 
 
 # ---------------------------------------------------------------------------
-# Strengths / compromises
-# ---------------------------------------------------------------------------
-
-def _top_strengths_and_compromises(
-    fits: dict[str, Any],
-    profile: ClientProfile | None,
-) -> tuple[list[str], list[str]]:
-    """Derive top strengths and top compromises from fit scores."""
-    labels = {
-        "budget_fit": "Rozpočet",
-        "walkability_fit": "Walkability",
-        "location_fit": "Poloha",
-        "layout_fit": "Dispozice",
-        "area_fit": "Plocha",
-        "outdoor_fit": "Venkovní prostor",
-        "commute_fit": "Dojezd",
-    }
-    strengths: list[str] = []
-    compromises: list[str] = []
-    for key, label in labels.items():
-        val = fits.get(key)
-        if val is None:
-            continue
-        if val >= 85:
-            strengths.append(label)
-        elif val <= 30:
-            compromises.append(label)
-    return strengths[:5], compromises[:5]
-
-
-# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -2054,27 +2324,37 @@ def _flat_strengths_compromises(
     aspect_fits: dict[str, float],
     flat_weights: dict[str, float],
 ) -> tuple[list[str], list[str]]:
-    """Derive top strengths and compromises from flat aspect fits.
+    """Derive top strengths and compromises from flat/V2 aspect fits.
 
     Only considers aspects with non-zero weight (active aspects).
-    Sorted by weighted contribution.
+    Uses V2 labels when available, falls back to legacy labels.
     """
+    # Non-scoring keys to skip
+    _SKIP_KEYS = {
+        'commute_details', 'commute_hard_fail', 'budget_fit',
+        'walkability_fit', 'location_fit', 'layout_fit',
+        'area_fit', 'outdoor_fit', 'commute_fit', 'pref_adj', 'hard_filter',
+        'aspect_weights', 'noise_adj', 'admin_area_adj', 'admin_area_signal',
+    }
+    # V2 uses aspect_weights inside fits dict; fall back to flat_weights
+    v2_weights = aspect_fits.get('aspect_weights') or flat_weights
+    all_labels = {**FLAT_WEIGHT_LABELS, **SCORING_V2_LABELS}
+
     scored_aspects: list[tuple[str, float, float]] = []
     for key, fit in aspect_fits.items():
-        if key in ('commute_details', 'commute_hard_fail', 'budget_fit',
-                    'walkability_fit', 'location_fit', 'layout_fit',
-                    'area_fit', 'outdoor_fit', 'commute_fit', 'pref_adj', 'hard_filter'):
-            continue  # skip backward-compat fields
-        w = flat_weights.get(key, 0.0)
+        if key in _SKIP_KEYS:
+            continue
+        if not isinstance(fit, (int, float)):
+            continue
+        w = v2_weights.get(key, flat_weights.get(key, 0.0))
         if w <= 0:
             continue
-        scored_aspects.append((key, fit, w))
+        scored_aspects.append((key, float(fit), float(w)))
 
-    # Sort by fit score for strengths (high = strength) and compromises (low = compromise)
     scored_aspects.sort(key=lambda t: t[1], reverse=True)
 
-    strengths = [FLAT_WEIGHT_LABELS.get(k, k) for k, f, _ in scored_aspects if f >= 80][:5]
-    compromises = [FLAT_WEIGHT_LABELS.get(k, k) for k, f, _ in scored_aspects if f <= 30][:5]
+    strengths = [all_labels.get(k, k) for k, f, _ in scored_aspects if f >= 80][:5]
+    compromises = [all_labels.get(k, k) for k, f, _ in scored_aspects if f <= 30][:5]
     return strengths, compromises
 
 

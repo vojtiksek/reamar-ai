@@ -120,6 +120,14 @@ export type PreferenceTags = {
   skip_amenities: boolean;
   skip_noise: boolean;
   skip_walkability: boolean;
+  // V2 unified dicts
+  standard_modes: Record<string, string>;
+  standard_values: Record<string, string[]>;
+  amenity_modes: Record<string, string>;
+  center_preference: string | null;
+  completion_preference: string | null;
+  commute_mode: string | null;
+  commute_primary_index: number | null;
 };
 
 export type WizardMetadata = {
@@ -283,6 +291,58 @@ export function buildStructuredWizard(
     }
   }
 
+  // ── V2 unified dicts ──────────────────────────────────────────────
+  // Standard modes: derive from feature priorities
+  const standard_modes: Record<string, string> = {};
+  const standard_values: Record<string, string[]> = {};
+
+  // Bool standards
+  for (const key of ["recuperation", "air_conditioning", "exterior_blinds"] as const) {
+    const p = standards?.[key];
+    if (p === "must" || p === "prefer") standard_modes[key] = p;
+  }
+
+  // Enum standards: heating_type→heating, heating_source, flooring, window_type→windows, ceiling_height
+  const enumStdMap: Record<string, string> = {
+    heating_type: "heating",
+    heating_source: "heating_source",
+    flooring: "flooring",
+    window_type: "windows",
+  };
+  for (const [enumKey, stdKey] of Object.entries(enumStdMap)) {
+    const vals = standards?.[enumKey];
+    const priority = standards?.[`${enumKey}_priority`] as string | undefined;
+    const mode = priority === "must" || priority === "prefer" ? priority : (vals ? "prefer" : undefined);
+    if (mode) {
+      standard_modes[stdKey] = mode;
+      if (Array.isArray(vals) && vals.length > 0) {
+        standard_values[stdKey] = vals.map(String);
+      } else if (vals && typeof vals === "string") {
+        standard_values[stdKey] = [vals];
+      }
+    }
+  }
+
+  // Amenity modes
+  const amenity_modes: Record<string, string> = {};
+  const amenityFields = ["reception", "fitness", "ev_charger", "courtyard_garden", "bike_room", "stroller_room", "concierge"] as const;
+  for (const key of amenityFields) {
+    // Check house_amenities first, then project_amenities
+    const ha = (wiz.house_amenities as Record<string, string> | undefined)?.[key];
+    const pa = (wiz.project_amenities as Record<string, string> | undefined)?.[key];
+    const mode = ha === "must" || ha === "prefer" ? ha : (pa === "prefer" || pa === "reject" ? pa : undefined);
+    if (mode) amenity_modes[key] = mode === "reject" ? "dont_want" : mode;
+  }
+
+  // POI modes (from walkability_preferences_json — passed separately, not in wiz)
+  // These are handled by the backend from walkability_preferences_json directly
+
+  // New preference fields
+  const center_preference = (wiz.character as Record<string, unknown> | undefined)?.center_preference as string | null ?? null;
+  const completion_preference = wiz.completion_preference as string | null ?? null;
+  const commute_mode = (wiz.location as Record<string, unknown> | undefined)?.commute_mode as string | null ?? null;
+  const commute_primary_index = (wiz.location as Record<string, unknown> | undefined)?.commute_primary_index as number | null ?? null;
+
   const preferences: PreferenceTags = {
     purchase_purpose: prof.purchase_purpose ?? null,
 
@@ -347,6 +407,15 @@ export function buildStructuredWizard(
     skip_amenities: !!skip.amenities,
     skip_noise: !!skip.noise || !!skip.surroundings,
     skip_walkability: !!skip.walkability || !!skip.surroundings,
+
+    // V2 unified dicts
+    standard_modes,
+    standard_values,
+    amenity_modes,
+    center_preference,
+    completion_preference,
+    commute_mode,
+    commute_primary_index,
   };
 
   // ── Metadata ─────────────────────────────────────────────────────────

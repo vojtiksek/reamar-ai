@@ -88,7 +88,7 @@ from .walkability import (
     project_to_raw_metrics,
 )
 from .routing_provider import get_cached_travel_time_minutes, get_cached_commute_result, clear_request_commute_cache
-from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard, _admin_area_soft_adjustment
+from .scoring import compute_full_score, compute_eligibility, resolve_weights, resolve_thresholds, DEFAULT_WEIGHTS, DEFAULT_THRESHOLDS, resolve_groups, resolve_field_rules, resolve_eligibility_rules, resolve_flat_weights, FLAT_WEIGHT_DEFAULTS, FLAT_WEIGHT_LABELS, FLAT_WEIGHT_CATEGORIES, derive_flat_weights_from_wizard, merge_broker_weight_overrides, normalize_wizard, build_structured_wizard, _admin_area_soft_adjustment, SCORING_V2_CONFIG, SCORING_V2_LABELS
 from .client_mode import (
     base_profile_to_working_filters,
     build_client_mode_state,
@@ -404,6 +404,7 @@ class ClientRecommendationItem(BaseModel):
     distance_to_tram_stop_m: float | None = None
     distance_to_metro_station_m: float | None = None
     distance_to_bus_stop_m: float | None = None
+    distance_to_train_station_m: float | None = None
     reason: dict[str, Any] | None = None
     broker_note: str | None = None
     shortlist_role: str | None = None
@@ -420,6 +421,7 @@ class ClientRecommendationItem(BaseModel):
     distance_to_railway_m: float | None = None
     price_diff_pct: float | None = None
     poi_counts: dict[str, int] = {}
+    poi_distances: dict[str, float] = {}
 
 
 ALLOWED_FEEDBACK_TYPES = {"liked", "saved", "disliked"}
@@ -585,6 +587,11 @@ def _build_market_filter(not_seen_max_days: int = 180, hide_stale: bool = True):
     Includes:
     - available / reserved  (minus stale reservations when hide_stale=True)
     - not_seen units whose last_seen is within not_seen_max_days (0 = exclude all)
+
+    Excludes:
+    - sold units (not in the in_ list)
+    - not_seen units that have a sold_date (already sold)
+    - not_seen units on projects with 0 available_units (dead projects)
     """
     # Base: available or reserved
     base = func.lower(Unit.availability_status).in_(["available", "reserved"])
@@ -596,10 +603,19 @@ def _build_market_filter(not_seen_max_days: int = 180, hide_stale: bool = True):
 
     if not_seen_max_days > 0:
         cutoff = date.today() - timedelta(days=not_seen_max_days)
+        # not_seen qualifies only if: recent last_seen, no sold_date,
+        # and parent project still has available units (or no aggregates yet).
+        dead_project = (
+            select(ProjectAggregates.project_id)
+            .where(ProjectAggregates.available_units == 0)
+            .correlate_except(ProjectAggregates)
+        )
         not_seen_cond = and_(
             func.lower(Unit.availability_status) == "not_seen",
             Unit.last_seen.isnot(None),
             Unit.last_seen >= cutoff,
+            Unit.sold_date.is_(None),
+            ~Unit.project_id.in_(dead_project),
         )
         return or_(base, not_seen_cond)
 
@@ -2965,6 +2981,7 @@ def list_client_recommendations(
                 distance_to_tram_stop_m=project.distance_to_tram_stop_m,
                 distance_to_metro_station_m=project.distance_to_metro_station_m,
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
+                distance_to_train_station_m=project.distance_to_train_station_m,
                 reason=reason,
                 broker_note=rec.broker_note,
                 shortlist_role=rec.shortlist_role,
@@ -2989,6 +3006,14 @@ def list_client_recommendations(
                     k: int(v)
                     for k in ("supermarket", "park", "cafe", "restaurant", "fitness", "playground", "kindergarten", "primary_school")
                     if (v := getattr(project, f"count_{k}_500m", None)) is not None
+                },
+                poi_distances={
+                    k: round(float(v))
+                    for k in ("supermarket", "drugstore", "pharmacy", "atm", "post_office",
+                              "tram_stop", "bus_stop", "metro_station", "train_station",
+                              "restaurant", "cafe", "park", "fitness", "playground",
+                              "kindergarten", "primary_school", "pediatrician")
+                    if (v := getattr(project, f"distance_to_{k}_m", None)) is not None
                 },
             )
         )
@@ -3114,6 +3139,7 @@ def manual_add_recommendation(
         distance_to_tram_stop_m=project.distance_to_tram_stop_m,
         distance_to_metro_station_m=project.distance_to_metro_station_m,
         distance_to_bus_stop_m=project.distance_to_bus_stop_m,
+        distance_to_train_station_m=project.distance_to_train_station_m,
     )
 
 
@@ -7057,7 +7083,160 @@ def run_builtmind_import() -> dict[str, Any]:
         except OSError:
             pass
 
-    return {"ok": True, **stats}
+    # Auto-recompute recommendations for all active clients after import
+    recompute_stats = _recompute_all_client_recommendations()
+    return {"ok": True, **stats, "recompute": recompute_stats}
+
+
+def _recompute_all_client_recommendations() -> dict[str, Any]:
+    """Recompute recommendations for all clients that have a profile with recommendations.
+
+    Runs in a fresh DB session per client to avoid long-lived transactions.
+    Called automatically after import and available via admin endpoint.
+    """
+    import time as _time
+    from .db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        # Find all clients that have at least one recommendation
+        client_ids = [
+            row[0] for row in db.execute(
+                select(ClientRecommendation.client_id)
+                .distinct()
+            ).all()
+        ]
+    finally:
+        db.close()
+
+    if not client_ids:
+        return {"clients": 0, "ok": True}
+
+    t0 = _time.perf_counter()
+    succeeded = 0
+    failed = 0
+    for cid in client_ids:
+        db2 = SessionLocal()
+        try:
+            client = db2.execute(select(Client).where(Client.id == cid)).scalars().first()
+            if not client:
+                continue
+            profile = db2.execute(
+                select(ClientProfile).where(ClientProfile.client_id == cid)
+            ).scalars().first()
+            if not profile:
+                continue
+
+            # Resolve scoring config
+            global_cfg = db2.execute(
+                select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+            ).scalars().first()
+            _thresholds = resolve_thresholds(global_cfg.thresholds_json if global_cfg else None)
+
+            # Build market filter and SQL conditions
+            _all_sql = [_market_filter_from_config(_thresholds)]
+
+            # Budget + area SQL filters (same as recompute endpoint)
+            wiz_budget = ((profile.filter_json or {}).get("wizard", {}).get("budget", {}))
+            price_tol_pct = wiz_budget.get("max_price_tolerance_pct", 0) or 0
+            area_tol_pct = wiz_budget.get("max_area_tolerance_pct", 0) or 0
+
+            if profile.budget_max is not None:
+                eff_max = int(profile.budget_max * (1 + price_tol_pct / 100))
+                _all_sql.append(Unit.price_czk <= eff_max)
+            if profile.area_min is not None:
+                eff_min = profile.area_min * (1 - area_tol_pct / 100)
+                _all_sql.append(Unit.floor_area_m2 >= eff_min)
+
+            # Fetch candidate units
+            q = (
+                select(Unit, Project)
+                .join(Project, Unit.project_id == Project.id)
+                .where(and_(*_all_sql))
+            )
+            rows = db2.execute(q).all()
+
+            # Resolve weights
+            global_w = global_cfg.config_json if global_cfg else None
+            client_w = profile.scoring_weights_json if profile else None
+            weights = resolve_weights(global_w, client_w)
+            flat_weights = resolve_flat_weights(profile)
+
+            # Score each unit — use savepoints so commute-cache conflicts
+            # don't abort the whole client session.
+            scored: list[tuple] = []
+            for unit, project in rows:
+                nested = db2.begin_nested()
+                try:
+                    result = compute_full_score(
+                        unit, project, profile, weights,
+                        db=db2,
+                        flat_weights=flat_weights,
+                    )
+                    nested.commit()
+                except Exception:
+                    nested.rollback()
+                    # Retry without db (no commute caching)
+                    result = compute_full_score(
+                        unit, project, profile, weights,
+                        flat_weights=flat_weights,
+                    )
+                if result["score"] > 0:
+                    scored.append((unit, project, result))
+
+            scored.sort(key=lambda x: x[2]["score"], reverse=True)
+
+            # Persist — delete old, insert new
+            db2.execute(
+                ClientRecommendation.__table__.delete().where(
+                    and_(
+                        ClientRecommendation.client_id == cid,
+                        ClientRecommendation.pinned_by_broker.is_(False),
+                        ClientRecommendation.hidden_by_broker.is_(False),
+                    )
+                )
+            )
+
+            for unit, project, result in scored:
+                # Check if pinned rec exists
+                existing = db2.execute(
+                    select(ClientRecommendation).where(
+                        ClientRecommendation.client_id == cid,
+                        ClientRecommendation.unit_id == unit.id,
+                    )
+                ).scalars().first()
+                if existing:
+                    existing.score = round(result["score"], 2)
+                    existing.reason_json = result
+                else:
+                    db2.add(ClientRecommendation(
+                        client_id=cid,
+                        unit_id=unit.id,
+                        project_id=project.id,
+                        score=round(result["score"], 2),
+                        reason_json=result,
+                    ))
+
+            db2.commit()
+            succeeded += 1
+        except Exception as exc:
+            db2.rollback()
+            failed += 1
+            print(f"[BULK-RECOMPUTE] Client {cid} failed: {exc}")
+        finally:
+            db2.close()
+
+    elapsed = _time.perf_counter() - t0
+    print(f"[BULK-RECOMPUTE] {succeeded}/{len(client_ids)} clients in {elapsed:.1f}s ({failed} failed)")
+    return {"clients": succeeded, "failed": failed, "elapsed_seconds": round(elapsed, 1)}
+
+
+@app.post("/admin/recompute-all-recommendations")
+def admin_recompute_all_recommendations(
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Recompute recommendations for all clients. Admin action."""
+    return _recompute_all_client_recommendations()
 
 
 # ---------------------------------------------------------------------------
@@ -8213,9 +8392,16 @@ class PortalPreferenceItem(BaseModel):
     raw_value: float | None = None  # numeric value for filtering
 
 
+class PortalCommutePoint(BaseModel):
+    label: str
+    mode: str | None = None
+
 class PortalPreferencesResponse(BaseModel):
     items: list[PortalPreferenceItem]
     active_poi_prefs: list[str] = []
+    commute_points: list[PortalCommutePoint] = []
+    commute_mode: str | None = None
+    commute_primary_index: int | None = None
 
 
 @app.get("/portal/my-preferences", response_model=PortalPreferencesResponse)
@@ -8401,7 +8587,28 @@ def portal_my_preferences(
     wprefs = profile.walkability_preferences_json or {}
     active_poi_prefs = [k for k, v in wprefs.items() if v in ("normal", "high", "required")]
 
-    return PortalPreferencesResponse(items=items, active_poi_prefs=active_poi_prefs)
+    # ── Commute points & mode ──
+    commute_points: list[PortalCommutePoint] = []
+    cp_raw = profile.commute_points_json or {}
+    cp_arr = cp_raw.get("points", []) if isinstance(cp_raw, dict) else cp_raw
+    for pt in cp_arr:
+        if isinstance(pt, dict) and pt.get("label"):
+            commute_points.append(PortalCommutePoint(
+                label=pt["label"],
+                mode=pt.get("mode"),
+            ))
+
+    overrides = profile.portal_overrides_json or {}
+    commute_mode = overrides.get("commute_mode")
+    commute_primary_index = overrides.get("commute_primary_index")
+
+    return PortalPreferencesResponse(
+        items=items,
+        active_poi_prefs=active_poi_prefs,
+        commute_points=commute_points,
+        commute_mode=commute_mode,
+        commute_primary_index=commute_primary_index,
+    )
 
 
 # --- Portal: Future Projects ---
@@ -8554,6 +8761,7 @@ class PortalRecommendationItem(BaseModel):
     distance_to_tram_stop_m: float | None = None
     distance_to_metro_station_m: float | None = None
     distance_to_bus_stop_m: float | None = None
+    distance_to_train_station_m: float | None = None
     feedback: RecommendationFeedbackOut | None = None
     # Broker curation metadata
     pinned_by_broker: bool = False
@@ -8566,6 +8774,7 @@ class PortalRecommendationItem(BaseModel):
     noise_label: str | None = None
     price_diff_pct: float | None = None
     poi_counts: dict[str, int] = {}
+    poi_distances: dict[str, float] = {}
 
 
 def _check_recuperation(project: Project) -> bool:
@@ -8659,6 +8868,7 @@ def portal_list_recommendations(
                 distance_to_tram_stop_m=project.distance_to_tram_stop_m,
                 distance_to_metro_station_m=project.distance_to_metro_station_m,
                 distance_to_bus_stop_m=project.distance_to_bus_stop_m,
+                distance_to_train_station_m=project.distance_to_train_station_m,
                 feedback=RecommendationFeedbackOut(
                     feedback_type=rec.feedback.feedback_type,
                     dislike_reason=rec.feedback.dislike_reason,
@@ -8677,6 +8887,14 @@ def portal_list_recommendations(
                     k: int(v)
                     for k in ("supermarket", "park", "cafe", "restaurant", "fitness", "playground", "kindergarten", "primary_school")
                     if (v := getattr(project, f"count_{k}_500m", None)) is not None
+                },
+                poi_distances={
+                    k: round(float(v))
+                    for k in ("supermarket", "drugstore", "pharmacy", "atm", "post_office",
+                              "tram_stop", "bus_stop", "metro_station", "train_station",
+                              "restaurant", "cafe", "park", "fitness", "playground",
+                              "kindergarten", "primary_school", "pediatrician")
+                    if (v := getattr(project, f"distance_to_{k}_m", None)) is not None
                 },
             )
         )
@@ -8722,3 +8940,71 @@ def portal_upsert_recommendation_feedback(
         note=fb.note,
         updated_at=fb.updated_at,
     )
+
+
+# ---------------------------------------------------------------------------
+# Portal — profile overrides (client toggles must↔prefer, commute mode, etc.)
+# ---------------------------------------------------------------------------
+
+@app.patch("/portal/profile/overrides")
+def portal_update_overrides(
+    body: dict,
+    db: DbSession,
+    client: Client = Depends(get_current_portal_client),
+):
+    """Update client portal overrides (standards/amenities mode toggles, commute mode, etc.).
+
+    Body is a partial update — only provided keys are updated, others remain.
+    Example:
+        {"standards": {"recuperation": {"mode": "prefer"}}, "commute_mode": "sum"}
+    """
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client.id)
+    ).scalar_one_or_none()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    existing = dict(profile.portal_overrides_json or {})
+
+    # Merge sections
+    for section in ("standards", "amenities", "poi"):
+        if section in body:
+            existing.setdefault(section, {})
+            for key, val in body[section].items():
+                existing[section][key] = val
+
+    # Top-level scalar keys
+    for key in ("commute_mode", "commute_primary_index"):
+        if key in body:
+            existing[key] = body[key]
+
+    profile.portal_overrides_json = existing
+    db.add(profile)
+    db.commit()
+    db.refresh(profile)
+
+    return {"status": "ok", "portal_overrides": profile.portal_overrides_json}
+
+
+# ---------------------------------------------------------------------------
+# Scoring V2 Config — runtime admin API
+# ---------------------------------------------------------------------------
+
+@app.get("/admin/scoring-v2-config")
+def get_scoring_v2_config() -> dict[str, Any]:
+    """Return current SCORING_V2_CONFIG with labels."""
+    return {"config": SCORING_V2_CONFIG, "labels": SCORING_V2_LABELS}
+
+
+@app.patch("/admin/scoring-v2-config")
+def update_scoring_v2_config(body: dict[str, Any]) -> dict[str, Any]:
+    """Update SCORING_V2_CONFIG values at runtime (resets on restart)."""
+    for key, value in body.items():
+        if key in SCORING_V2_CONFIG:
+            if isinstance(SCORING_V2_CONFIG[key], dict):
+                SCORING_V2_CONFIG[key].update(value)
+            elif isinstance(SCORING_V2_CONFIG[key], list):
+                SCORING_V2_CONFIG[key] = value
+            else:
+                SCORING_V2_CONFIG[key] = type(SCORING_V2_CONFIG[key])(value)
+    return {"config": SCORING_V2_CONFIG}
