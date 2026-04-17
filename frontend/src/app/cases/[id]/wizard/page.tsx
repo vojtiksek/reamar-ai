@@ -30,6 +30,8 @@ import {
   useWizardMetadata,
   getFieldOptions,
 } from "@/hooks/useWizardMetadata";
+import { useUiVersion } from "@/components/v2/useUiVersion";
+import { WizardV2Chrome } from "./WizardV2Chrome";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -400,6 +402,7 @@ export default function ClientWizardPage() {
   } = useCaseData();
 
   const { fields: wizardMeta } = useWizardMetadata();
+  const uiVersion = useUiVersion();
   const [step, setStep] = useState(1);
   const [finishing, setFinishing] = useState(false);
   const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
@@ -1504,7 +1507,44 @@ export default function ClientWizardPage() {
     9: renderStep9,
   };
 
-  /* ─── Render ─── */
+  /* ─── V2 shell branch ─── */
+
+  if (uiVersion === "v2") {
+    return (
+      <WizardV2Chrome
+        clientName={client.name}
+        step={step}
+        totalSteps={TOTAL_STEPS}
+        stepLabels={STEP_LABELS}
+        onStepChange={setStep}
+        onPrev={goPrev}
+        onNext={goNext}
+        onFinish={handleFinish}
+        onClose={handleClose}
+        profileDirty={profileDirty}
+        profileSaving={profileSaving}
+        onSave={handleExplicitSave}
+        finishing={finishing}
+        recomputeStatus={recomputeStatus}
+        preview={{
+          profile: (profile as {
+            budget_max?: number | null;
+            area_min?: number | null;
+            purchase_purpose?: string | null;
+          } | null) ?? null,
+          wizardExtras,
+          selectedLayouts,
+          walkPrefs,
+          locationProjectsCount: locationProjects?.length ?? 0,
+          recomputeMatchCount: matchCount,
+        }}
+      >
+        {stepRenderers[step]?.()}
+      </WizardV2Chrome>
+    );
+  }
+
+  /* ─── Render (V1) ─── */
 
   return (
     <div className="flex min-h-screen flex-col bg-slate-50">
