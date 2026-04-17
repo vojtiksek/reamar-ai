@@ -7059,8 +7059,11 @@ def run_builtmind_import() -> dict[str, Any]:
     import json as _json
     from .fetch_builtmind import fetch_from_api
     from .import_units import import_units as _import_units
+    from .settings import settings
 
-    api_key = os.environ.get("BUILTMIND_API_KEY", "").strip()
+    # Prefer settings (loaded from .env via pydantic-settings). Fall back to
+    # raw os.environ for contexts where shell exports the var directly.
+    api_key = (settings.builtmind_api_key or os.environ.get("BUILTMIND_API_KEY", "")).strip()
     if not api_key:
         raise HTTPException(status_code=500, detail="BUILTMIND_API_KEY not set in environment")
 
