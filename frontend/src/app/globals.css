@@ -1337,6 +1337,69 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
 }
 .rv2-analytics-toggle:hover { border-color: var(--r-border-strong); }
 
+/* ---------- V2 overrides pro legacy komponenty (glass-*, data grid) ----------
+ * Scoped pouze uvnitř V2 main area, aby V1 režim zůstal beze změny.
+ */
+
+/* KPI "glass-card" bez pastelových gradientů — clean bílá karta V2 */
+.rv2-main-inner .glass-card {
+  background: var(--r-surface-1) !important;
+  border: 1px solid var(--r-border-default) !important;
+  border-radius: var(--r-radius-md) !important;
+  box-shadow: var(--r-shadow-sm) !important;
+  color: var(--r-text-primary);
+}
+/* Přebitá gradientová pozadí z tailwind utility tříd (bg-gradient-to-br) */
+.rv2-main-inner .glass-card[class*="from-"] {
+  background: var(--r-surface-1) !important;
+}
+
+/* Filter bar ("glass-header") → V2 karta */
+.rv2-main-inner .glass-header {
+  background: var(--r-surface-1) !important;
+  border: 1px solid var(--r-border-default) !important;
+  border-radius: var(--r-radius-md) !important;
+  box-shadow: var(--r-shadow-sm) !important;
+}
+
+/* Glass-pills uvnitř filter baru → čistý V2 sekundární button */
+.rv2-main-inner .glass-header .glass-pill {
+  background: var(--r-surface-0) !important;
+  border: 1px solid var(--r-border-default) !important;
+  box-shadow: none !important;
+}
+
+/* Data grid kontejner */
+.rv2-main-inner .data-grid-wrapper {
+  border-color: var(--r-border-default);
+  box-shadow: var(--r-shadow-sm);
+  border-radius: var(--r-radius-md);
+}
+
+/* Zjemnit agresivní row highlighty (beige/amber/peach → jemná varianta) */
+.rv2-main-inner .data-grid-table tbody tr.bg-amber-50,
+.rv2-main-inner .data-grid-table tbody tr[class*="bg-amber-50"] {
+  background: #FEFCF7 !important;
+}
+.rv2-main-inner .data-grid-table tbody tr.bg-orange-50,
+.rv2-main-inner .data-grid-table tbody tr[class*="bg-orange-50"] {
+  background: #FDF7F2 !important;
+}
+.rv2-main-inner .data-grid-table tbody tr.bg-rose-50,
+.rv2-main-inner .data-grid-table tbody tr[class*="bg-rose-50"] {
+  background: #FDF5F5 !important;
+}
+
+/* Table header */
+.rv2-main-inner .data-grid-table thead th {
+  background: var(--r-surface-0);
+  color: var(--r-text-tertiary);
+  font-size: var(--r-font-11);
+  text-transform: uppercase;
+  letter-spacing: var(--r-tracking-wide);
+  border-bottom: 1px solid var(--r-border-default);
+}
+
 /* Floating UI-version toggle */
 .rv2-version-toggle {
   position: fixed;
