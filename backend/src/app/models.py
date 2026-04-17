@@ -450,6 +450,9 @@ class ScoringConfig(Base):
     groups_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     field_rules_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     eligibility_rules_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # V2 scoring engine parameters (persistent override on top of SCORING_V2_CONFIG defaults).
+    # Loaded at startup, updated via PATCH /admin/scoring-v2-config.
+    scoring_v2_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,

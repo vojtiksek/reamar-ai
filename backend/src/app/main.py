@@ -8990,8 +8990,53 @@ def portal_update_overrides(
 
 
 # ---------------------------------------------------------------------------
-# Scoring V2 Config — runtime admin API
+# Scoring V2 Config — persistent admin API
+#
+# Storage: ScoringConfig.scoring_v2_json (JSONB column).
+# Loaded at process startup via _load_scoring_v2_config_from_db() (below),
+# updated in-place on PATCH. Keeps SCORING_V2_CONFIG as the single runtime
+# source of truth for compute_flat_match(), while DB provides persistence.
 # ---------------------------------------------------------------------------
+
+
+def _apply_v2_overrides(overrides: dict[str, Any]) -> None:
+    """Apply overrides dict onto SCORING_V2_CONFIG in-place, preserving types."""
+    for key, value in overrides.items():
+        if key not in SCORING_V2_CONFIG:
+            continue
+        current = SCORING_V2_CONFIG[key]
+        if isinstance(current, dict) and isinstance(value, dict):
+            current.update(value)
+        elif isinstance(current, list):
+            SCORING_V2_CONFIG[key] = value
+        else:
+            try:
+                SCORING_V2_CONFIG[key] = type(current)(value)
+            except (TypeError, ValueError):
+                SCORING_V2_CONFIG[key] = value
+
+
+def _load_scoring_v2_config_from_db() -> None:
+    """On startup: overlay DB-persisted V2 config onto in-memory defaults."""
+    import logging
+    from .db import SessionLocal
+    try:
+        with SessionLocal() as db:
+            row = db.execute(
+                select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+            ).scalars().first()
+            if row and row.scoring_v2_json:
+                _apply_v2_overrides(row.scoring_v2_json)
+    except Exception as exc:
+        # Don't crash startup — log and continue with defaults.
+        logging.getLogger(__name__).warning(
+            "Failed to load scoring_v2_json from DB: %s", exc
+        )
+
+
+# Load persisted config at import time (uvicorn worker startup).
+_load_scoring_v2_config_from_db()
+
 
 @app.get("/admin/scoring-v2-config")
 def get_scoring_v2_config() -> dict[str, Any]:
@@ -9000,14 +9045,28 @@ def get_scoring_v2_config() -> dict[str, Any]:
 
 
 @app.patch("/admin/scoring-v2-config")
-def update_scoring_v2_config(body: dict[str, Any]) -> dict[str, Any]:
-    """Update SCORING_V2_CONFIG values at runtime (resets on restart)."""
+def update_scoring_v2_config(body: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Update SCORING_V2_CONFIG in memory and persist to DB.
+
+    Writes the merged overrides to ScoringConfig.scoring_v2_json so values
+    survive backend restarts. If no ScoringConfig row exists, one is created
+    with the defaults from SCORING_V2_CONFIG keys.
+    """
+    _apply_v2_overrides(body)
+
+    # Persist: load latest row (create if missing) and update scoring_v2_json.
+    row = db.execute(
+        select(ScoringConfig).order_by(ScoringConfig.id.desc()).limit(1)
+    ).scalars().first()
+    if not row:
+        row = ScoringConfig(config_json=DEFAULT_WEIGHTS)
+        db.add(row)
+        db.flush()
+    existing = dict(row.scoring_v2_json or {})
     for key, value in body.items():
         if key in SCORING_V2_CONFIG:
-            if isinstance(SCORING_V2_CONFIG[key], dict):
-                SCORING_V2_CONFIG[key].update(value)
-            elif isinstance(SCORING_V2_CONFIG[key], list):
-                SCORING_V2_CONFIG[key] = value
-            else:
-                SCORING_V2_CONFIG[key] = type(SCORING_V2_CONFIG[key])(value)
+            existing[key] = SCORING_V2_CONFIG[key]
+    row.scoring_v2_json = existing
+    db.commit()
+
     return {"config": SCORING_V2_CONFIG}

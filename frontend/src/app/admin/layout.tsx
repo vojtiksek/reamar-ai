@@ -4,8 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const TABS = [
-  { href: "/admin/studio", label: "Scoring Studio" },
-  { href: "/admin/scoring-v2", label: "Scoring V2" },
+  { href: "/admin/scoring", label: "Scoring" },
   { href: "/admin/nabidka", label: "Nabídka" },
   { href: "/admin/operace", label: "Operace" },
   { href: "/admin/future-projects", label: "Budoucí projekty" },

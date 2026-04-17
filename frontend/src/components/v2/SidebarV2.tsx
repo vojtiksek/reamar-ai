@@ -104,17 +104,23 @@ const EXPLORER_NAV: NavEntry[] = [
 
 const ADMIN_NAV: NavEntry[] = [
   {
-    href: "/admin/studio",
-    label: "Scoring Studio",
+    href: "/admin/scoring",
+    label: "Scoring",
     icon: ICONS.sliders,
-    match: (p) => p.startsWith("/admin/studio"),
+    match: (p) =>
+      p.startsWith("/admin/scoring") ||
+      p.startsWith("/admin/studio") ||
+      p.startsWith("/admin/scoring-v2"),
   },
   {
     href: "/admin",
     label: "Admin",
     icon: ICONS.shield,
     match: (p) =>
-      (p.startsWith("/admin") && !p.startsWith("/admin/studio")) ||
+      (p.startsWith("/admin") &&
+        !p.startsWith("/admin/scoring") &&
+        !p.startsWith("/admin/studio") &&
+        !p.startsWith("/admin/scoring-v2")) ||
       p.startsWith("/matches") ||
       p.startsWith("/analytics"),
   },
