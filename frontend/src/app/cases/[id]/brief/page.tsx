@@ -15,6 +15,8 @@ import {
   StatCard,
 } from "@/components/ui/reamar-ui";
 import { getDefaultPreferences } from "@/lib/walkabilityPreferences";
+import { useUiVersion } from "@/components/v2/useUiVersion";
+import { BriefV2Chrome } from "./BriefV2Chrome";
 
 /* ─── Main page ─── */
 
@@ -59,6 +61,7 @@ export default function BriefPage() {
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
   const [nextCommuteLabel, setNextCommuteLabel] = useState<string>("");
+  const uiVersion = useUiVersion();
 
   // Legacy: clear any previously persisted view-mode so old "wizard" sessions
   // don't force users back into the removed inline wizard.
@@ -225,6 +228,197 @@ export default function BriefPage() {
   );
 
   /* ── Render ── */
+
+  const recomputingBanner = recomputing ? (
+    <div
+      className="rv2-card"
+      style={{
+        padding: "var(--r-space-3) var(--r-space-4)",
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--r-space-2)",
+        background: "var(--r-state-info-soft)",
+        color: "var(--r-state-info)",
+        borderColor: "transparent",
+        fontSize: "var(--r-font-13)",
+      }}
+    >
+      <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+        <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+        <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" fill="none" />
+      </svg>
+      <span>
+        {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
+          ? `Počítám dojezdy… (${recomputeProgress.done}/${recomputeProgress.total} projektů)`
+          : recomputeProgress && recomputeProgress.total > 0
+            ? `Skóruji projekty… (${recomputeProgress.total} projektů)`
+            : "Počítám doporučení…"}
+      </span>
+    </div>
+  ) : null;
+
+  const analyticsContent = (
+    <div className="rv2-analytics-grid">
+      <div className="rv2-analytics-card">
+        <div style={{ fontSize: "var(--r-font-11)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "var(--r-tracking-wider)", color: "var(--r-text-tertiary)" }}>
+          Trh v hledané oblasti
+        </div>
+        {locationPolygons.length === 0 || locationPolygons[0].length < 3 ? (
+          <p style={{ fontSize: "var(--r-font-12)", color: "var(--r-text-secondary)" }}>
+            Pro zobrazení trhu vyberte oblast v kroku &quot;Lokalita&quot;.
+          </p>
+        ) : !areaMarket ? (
+          <p style={{ fontSize: "var(--r-font-12)", color: "var(--r-text-secondary)" }}>Načítám…</p>
+        ) : areaMarket.projects_count === 0 ? (
+          <p style={{ fontSize: "var(--r-font-12)", color: "var(--r-text-secondary)" }}>Žádné aktivní projekty.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "var(--r-font-13)" }}>
+            <div>
+              <strong style={{ fontSize: "var(--r-font-20)" }}>{areaMarket.projects_count}</strong>
+              <span style={{ color: "var(--r-text-tertiary)", marginLeft: 6 }}>projektů v oblasti</span>
+            </div>
+            <div style={{ color: "var(--r-text-secondary)" }}>
+              {areaMarket.active_units_count} aktivních · <strong>{areaMarket.matching_units_count}</strong> odpovídá
+            </div>
+            {areaMarket.avg_price_per_m2_czk != null && (
+              <div style={{ color: "var(--r-text-secondary)" }}>
+                Ø {areaMarket.avg_price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="rv2-analytics-card">
+        <div style={{ fontSize: "var(--r-font-11)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "var(--r-tracking-wider)", color: "var(--r-text-tertiary)" }}>
+          Analýza nabídky
+        </div>
+        {!marketFit ? (
+          <p style={{ fontSize: "var(--r-font-12)", color: "var(--r-text-secondary)" }}>Zatím není k dispozici.</p>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 8, fontSize: "var(--r-font-13)" }}>
+            <div>
+              <strong>{marketFit.matching_units_count}</strong>
+              <span style={{ color: "var(--r-text-tertiary)" }}> z {marketFit.available_units_count} dostupných</span>
+            </div>
+            {marketFit.top_blockers.length > 0 && (
+              <div>
+                <div style={{ fontSize: "var(--r-font-11)", fontWeight: 600, color: "var(--r-text-tertiary)", textTransform: "uppercase", marginBottom: 4 }}>
+                  Blokující faktory
+                </div>
+                <ul style={{ margin: 0, padding: 0, listStyle: "none", display: "flex", flexDirection: "column", gap: 2 }}>
+                  {marketFit.top_blockers.slice(0, 3).map((b) => (
+                    <li key={b.key} style={{ fontSize: "var(--r-font-12)" }}>
+                      <strong>{b.label}:</strong>{" "}
+                      <span style={{ color: "var(--r-text-secondary)" }}>
+                        {Math.round(b.blocked_percentage * 100)} % vypadá
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="rv2-analytics-card">
+        <div style={{ fontSize: "var(--r-font-11)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "var(--r-tracking-wider)", color: "var(--r-text-tertiary)" }}>
+          Doporučené jednotky
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 6, fontSize: "var(--r-font-13)" }}>
+          <div>
+            <strong style={{ fontSize: "var(--r-font-20)" }}>{recs.length}</strong>
+            <span style={{ color: "var(--r-text-tertiary)", marginLeft: 6 }}>jednotek</span>
+          </div>
+          {recs.length > 0 && (
+            <Link
+              href={`/cases/${clientId}/recommendations`}
+              style={{ color: "var(--r-brand)", fontSize: "var(--r-font-12)" }}
+            >
+              Přejít na doporučení →
+            </Link>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  if (uiVersion === "v2") {
+    return (
+      <>
+        <BriefV2Chrome
+          clientName={client.name}
+          clientId={clientId}
+          isActiveClient={activeClient?.clientId === client.id}
+          profileDirty={profileDirty}
+          profileSaving={profileSaving}
+          profileSavedMessage={profileSavedMessage}
+          hasProfile={!!profile}
+          onActivate={handleActivate}
+          onSave={handleExplicitSave}
+          onOpenWizard={openFullscreenWizard}
+          onOpenWalkPrefs={() => setWalkPrefsOpen(true)}
+          onRecompute={handleRecompute}
+          recomputing={recomputing}
+          rail={{
+            profileBudgetMax: profile?.budget_max ?? null,
+            profileAreaMin: profile?.area_min ?? null,
+            wizardExtras,
+            selectedLayouts,
+            mustHaveSummary,
+            preferSummary,
+            projectsInsidePolygon,
+            locationPolygonDrawn: locationPolygons.some((p) => p.length >= 3),
+            areaMarket: areaMarket
+              ? {
+                  projects_count: areaMarket.projects_count,
+                  matching_units_count: areaMarket.matching_units_count,
+                }
+              : null,
+          }}
+          recomputeBanner={recomputingBanner}
+          showAnalytics={showAnalytics}
+          setShowAnalytics={setShowAnalytics}
+          analyticsContent={analyticsContent}
+        >
+          <QuickEdit
+            profile={profile}
+            setProfile={setProfile}
+            wizardExtras={wizardExtras}
+            setWizardExtras={setWizardExtras}
+            selectedLayouts={selectedLayouts}
+            setSelectedLayouts={setSelectedLayouts}
+            LAYOUT_OPTIONS={LAYOUT_OPTIONS}
+            locationPolygons={locationPolygons}
+            projectsInsidePolygon={projectsInsidePolygon}
+            recs={recs}
+            profileDirty={profileDirty}
+            recomputing={recomputing}
+            handleRecompute={handleRecompute}
+            mustHaveSummary={mustHaveSummary}
+            preferSummary={preferSummary}
+            onSwitchToWizard={openFullscreenWizard}
+            walkPrefs={walkPrefs}
+            setWalkPrefs={setWalkPrefs}
+          />
+          {recsFunnel && (
+            <div style={{ marginTop: "var(--r-space-4)" }}>
+              <FunnelCard funnel={recsFunnel} />
+            </div>
+          )}
+        </BriefV2Chrome>
+        <WalkabilityPreferencesDrawer
+          open={walkPrefsOpen}
+          value={walkPrefs}
+          onChange={setWalkPrefs}
+          onClose={() => setWalkPrefsOpen(false)}
+          onApply={() => { saveWalkPrefs(walkPrefs); setWalkPrefsOpen(false); }}
+          onReset={() => { const def = getDefaultPreferences(); setWalkPrefs(def); saveWalkPrefs(def); }}
+        />
+      </>
+    );
+  }
 
   return (
     <div className="space-y-5">

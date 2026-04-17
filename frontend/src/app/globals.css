@@ -542,7 +542,7 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
 /* KPI cards */
 .rv2-kpi-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: var(--r-space-3);
 }
 
@@ -1096,6 +1096,167 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   color: var(--r-text-tertiary);
   font-style: italic;
 }
+
+/* ---------- Brief V2 ---------- */
+
+.rv2-brief {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--r-space-4);
+  align-items: start;
+}
+@media (max-width: 1200px) {
+  .rv2-brief { grid-template-columns: minmax(0, 1fr); }
+  .rv2-brief-rail { order: -1; }
+}
+
+.rv2-brief-main {
+  background: var(--r-surface-1);
+  border: 1px solid var(--r-border-default);
+  border-radius: var(--r-radius-md);
+  box-shadow: var(--r-shadow-sm);
+  overflow: hidden;
+}
+
+.rv2-brief-main-header {
+  padding: var(--r-space-4) var(--r-space-5);
+  border-bottom: 1px solid var(--r-border-subtle);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--r-space-3);
+  flex-wrap: wrap;
+}
+
+.rv2-brief-main-body {
+  padding: var(--r-space-5);
+}
+
+.rv2-brief-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--r-space-2);
+  flex-wrap: wrap;
+}
+
+.rv2-brief-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--r-space-3);
+  border-radius: var(--r-radius-pill);
+  font-size: var(--r-font-12);
+  font-weight: 500;
+  border: 1px solid transparent;
+}
+.rv2-brief-status-pill[data-tone="success"] {
+  background: var(--r-state-success-soft);
+  color: var(--r-state-success);
+}
+.rv2-brief-status-pill[data-tone="warning"] {
+  background: var(--r-state-warning-soft);
+  color: var(--r-state-warning);
+}
+
+.rv2-brief-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+/* Right context rail */
+.rv2-brief-rail {
+  background: var(--r-surface-1);
+  border: 1px solid var(--r-border-default);
+  border-radius: var(--r-radius-md);
+  box-shadow: var(--r-shadow-sm);
+  padding: var(--r-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-space-4);
+  position: sticky;
+  top: calc(var(--r-topbar-h) + var(--r-space-4));
+  max-height: calc(100vh - var(--r-topbar-h) - var(--r-space-6));
+  overflow-y: auto;
+}
+
+.rv2-brief-rail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-space-2);
+}
+
+.rv2-brief-rail-header {
+  font-size: var(--r-font-11);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--r-tracking-wider);
+  color: var(--r-text-tertiary);
+}
+
+.rv2-brief-rail-row {
+  font-size: var(--r-font-13);
+  color: var(--r-text-primary);
+}
+.rv2-brief-rail-row-label {
+  display: block;
+  font-size: var(--r-font-11);
+  color: var(--r-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--r-tracking-wide);
+  margin-bottom: 2px;
+}
+
+.rv2-brief-rail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--r-font-13);
+}
+.rv2-brief-rail-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* Analytics grid */
+.rv2-analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--r-space-3);
+}
+
+.rv2-analytics-card {
+  background: var(--r-surface-1);
+  border: 1px solid var(--r-border-default);
+  border-radius: var(--r-radius-md);
+  box-shadow: var(--r-shadow-sm);
+  padding: var(--r-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-space-2);
+}
+
+.rv2-analytics-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: var(--r-space-3) var(--r-space-4);
+  background: var(--r-surface-1);
+  border: 1px solid var(--r-border-default);
+  border-radius: var(--r-radius-md);
+  cursor: pointer;
+  font-size: var(--r-font-14);
+  font-weight: 500;
+  color: var(--r-text-primary);
+  box-shadow: var(--r-shadow-sm);
+}
+.rv2-analytics-toggle:hover { border-color: var(--r-border-strong); }
 
 /* Floating UI-version toggle */
 .rv2-version-toggle {
