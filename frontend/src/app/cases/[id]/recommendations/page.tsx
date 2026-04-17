@@ -24,6 +24,7 @@ import type { WorkingFilters } from "@/lib/clientMode";
 import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/walkabilityPreferences";
 import { DEFAULT_PREFERENCES as WALK_DEFAULTS, getNonDefaultChips, savePreferences as saveWalkPrefs } from "@/lib/walkabilityPreferences";
 import { QuickEdit } from "../brief/QuickEdit";
+import { useUiVersion } from "@/components/v2/useUiVersion";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -1757,6 +1758,7 @@ export default function RecommendationsPage() {
     locationPolygons,
     projectsInsidePolygon,
   } = useCaseData();
+  const uiVersion = useUiVersion();
   const thresholds = useThresholds(token);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "projects";
@@ -1886,6 +1888,150 @@ export default function RecommendationsPage() {
     onClearFeedback: (r: RecommendationItem) => clearRecommendationFeedback(r.rec_id),
     feedbackSavingId,
   };
+
+  /* ─── V2 shell branch ─── */
+  if (uiVersion === "v2") {
+    const strongCount = recs.filter(
+      (r) => r.eligibility !== "review" && r.score >= thresholds.strong_pick_min_score,
+    ).length;
+    const reviewCount = recs.filter((r) => r.eligibility === "review").length;
+    const projectCount = new Set(
+      filteredRecs.map((r) => r.project_id).filter((id) => id != null),
+    ).size;
+
+    return (
+      <div className="rv2-page">
+        {/* Progress banner */}
+        {recomputing && (
+          <div
+            className="rv2-card"
+            style={{
+              padding: "var(--r-space-3) var(--r-space-4)",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--r-space-2)",
+              background: "var(--r-state-info-soft)",
+              color: "var(--r-state-info)",
+              borderColor: "transparent",
+              fontSize: "var(--r-font-13)",
+            }}
+          >
+            <svg className="animate-spin" width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" opacity="0.3" />
+              <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" fill="none" />
+            </svg>
+            <span>
+              {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
+                ? `Počítám dojezdy… (${recomputeProgress.done}/${recomputeProgress.total} projektů)`
+                : recomputeProgress && recomputeProgress.total > 0
+                  ? `Skóruji projekty… (${recomputeProgress.total} projektů)`
+                  : "Počítám doporučení…"}
+            </span>
+          </div>
+        )}
+
+        <header className="rv2-page-header">
+          <div>
+            <h1 className="rv2-page-title">Doporučení</h1>
+            <p className="rv2-page-subtitle">
+              {client.name} · {filteredRecs.length} jednotek ve {projectCount}{" "}
+              {projectCount === 1 ? "projektu" : projectCount < 5 ? "projektech" : "projektech"}
+            </p>
+          </div>
+          <div style={{ display: "flex", gap: "var(--r-space-2)" }}>
+            <button
+              type="button"
+              className="rv2-button rv2-button-secondary"
+              onClick={() => setSettingsOpen((v) => !v)}
+            >
+              Filtry
+            </button>
+            <button
+              type="button"
+              className="rv2-button rv2-button-primary"
+              onClick={handleRecompute}
+              disabled={recomputing}
+            >
+              {recomputing ? "Počítám…" : "⟳ Přepočítat"}
+            </button>
+          </div>
+        </header>
+
+        <div className="rv2-kpi-grid">
+          <div className="rv2-kpi">
+            <span className="rv2-kpi-label">Všech doporučení</span>
+            <span className="rv2-kpi-value">{recs.length}</span>
+            <span className="rv2-kpi-hint">Ve všech projektech</span>
+          </div>
+          <div className="rv2-kpi">
+            <span className="rv2-kpi-label">Silné shody</span>
+            <span className="rv2-kpi-value" data-tone={strongCount > 0 ? undefined : "warning"}>
+              {strongCount}
+            </span>
+            <span className="rv2-kpi-hint">
+              Skóre ≥ {thresholds.strong_pick_min_score}
+            </span>
+          </div>
+          <div className="rv2-kpi">
+            <span className="rv2-kpi-label">Ve výběru</span>
+            <span className="rv2-kpi-value">{pinnedCount}</span>
+            <span className="rv2-kpi-hint">
+              {likedCount > 0 ? `♥ ${likedCount} oblíbených` : "Zatím žádné"}
+            </span>
+          </div>
+          <div className="rv2-kpi">
+            <span className="rv2-kpi-label">K přezkoumání</span>
+            <span className="rv2-kpi-value" data-tone={reviewCount > 0 ? "warning" : undefined}>
+              {reviewCount}
+            </span>
+            <span className="rv2-kpi-hint">
+              {dislikedCount > 0 ? `✕ ${dislikedCount} vyřazeno` : "Chybí kontext"}
+            </span>
+          </div>
+        </div>
+
+        <div className="rv2-filter-row">
+          {QUICK_FILTERS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              className="rv2-filter-pill"
+              data-active={quickFilter === key}
+              onClick={() => {
+                setQuickFilter(key);
+                try {
+                  localStorage.setItem("reamar_recs_filter", key);
+                } catch {
+                  /* ignore */
+                }
+              }}
+            >
+              {label}
+              {filterCounts[key] != null ? ` · ${filterCounts[key]}` : ""}
+            </button>
+          ))}
+        </div>
+
+        {filteredRecs.length === 0 ? (
+          <div className="rv2-card">
+            <div className="rv2-empty">
+              {recs.length === 0
+                ? "Zatím žádná doporučení. Spusťte Přepočítat."
+                : "V aktuálním filtru nejsou žádné jednotky."}
+            </div>
+          </div>
+        ) : (
+          <ProjectsGroupedView
+            recs={filteredRecs}
+            {...sharedProps}
+            onBulkPin={handleBulkPin}
+            onBulkDislike={handleBulkDislike}
+            onBulkClearFeedback={handleBulkClearFeedback}
+          />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-3">
