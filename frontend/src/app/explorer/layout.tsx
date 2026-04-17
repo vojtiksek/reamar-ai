@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useUiVersion } from "@/components/v2/useUiVersion";
 
 const TABS = [
   { href: "/explorer/projects", label: "Projects" },
@@ -11,6 +12,13 @@ const TABS = [
 
 export default function ExplorerLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const uiVersion = useUiVersion();
+
+  // V2: sidebar už poskytuje Projekty/Jednotky/Mapa navigaci —
+  // vnitřní "Market explorer" header + sub-tabs jsou zde redundantní.
+  if (uiVersion === "v2") {
+    return <>{children}</>;
+  }
 
   return (
     <div className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 py-4">
