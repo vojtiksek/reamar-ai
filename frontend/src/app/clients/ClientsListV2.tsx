@@ -8,13 +8,22 @@ import {
   type DashboardClient,
   type Filter,
   isStale,
-  lastTouchLabel,
   nextAction,
   nextRoute,
   priorityLabel,
   sortByPriority,
   stageFromClient,
 } from "./_dashboard";
+
+function compactLastTouch(c: DashboardClient): string {
+  const d = c.last_note_at ?? c.created_at;
+  const dt = new Date(d);
+  const diff = Math.floor((Date.now() - dt.getTime()) / 86400000);
+  if (diff < 1) return "dnes";
+  if (diff < 7) return `${diff} dní`;
+  if (diff < 30) return `${Math.floor(diff / 7)} týdnů`;
+  return dt.toLocaleDateString("cs-CZ", { day: "numeric", month: "numeric", year: "2-digit" });
+}
 import { ClientInspectorV2, stageBadgeClass } from "./ClientInspectorV2";
 
 const FILTERS: [Filter, string][] = [
@@ -159,7 +168,7 @@ export function ClientsListV2() {
             <div className="rv2-empty">V tomto filtru není žádný případ.</div>
           ) : (
             <div className="rv2-card-scroll">
-            <table className="rv2-table" style={{ minWidth: 780 }}>
+            <table className="rv2-table" style={{ minWidth: 640 }}>
               <thead>
                 <tr>
                   <th aria-hidden style={{ width: 4 }} />
@@ -227,8 +236,8 @@ export function ClientsListV2() {
                               {priorityLabel(c)}
                             </span>
                           </td>
-                          <td style={{ color: "var(--r-text-secondary)" }}>
-                            {lastTouchLabel(c)}
+                          <td style={{ color: "var(--r-text-secondary)", whiteSpace: "nowrap" }}>
+                            {compactLastTouch(c)}
                           </td>
                           <td>
                             <div className="rv2-recs-cell">

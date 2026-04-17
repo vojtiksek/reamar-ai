@@ -161,9 +161,13 @@ export function SidebarV2() {
               color: "var(--r-text-on-inverse-muted)",
               letterSpacing: "var(--r-tracking-wide)",
               textTransform: "uppercase",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
             }}
+            title="Žádný aktivní klient"
           >
-            Žádný aktivní klient
+            Bez klienta
           </div>
         )}
       </div>
