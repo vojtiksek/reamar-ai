@@ -25,6 +25,7 @@ import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/w
 import { DEFAULT_PREFERENCES as WALK_DEFAULTS, getNonDefaultChips, savePreferences as saveWalkPrefs } from "@/lib/walkabilityPreferences";
 import { QuickEdit } from "../brief/QuickEdit";
 import { useUiVersion } from "@/components/v2/useUiVersion";
+import { UnitInspectorV2 } from "./UnitInspectorV2";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
 
@@ -1078,10 +1079,11 @@ function ProjectGroupCard({
                   <tr
                     key={r.rec_id}
                     className={cn(
-                      "border-t border-slate-100 text-sm hover:bg-slate-50/80",
+                      "border-t border-slate-100 text-sm hover:bg-slate-50/80 cursor-pointer",
                       fbType === "disliked" && "opacity-50",
                       isTop && "bg-blue-50/30",
                     )}
+                    onClick={() => onOpen(r)}
                   >
                     <td className="px-4 py-2 text-center">
                       <span className={cn("inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold", unitMatch.cls)}>
@@ -1096,7 +1098,7 @@ function ProjectGroupCard({
                     <td className="px-3 py-2">
                       <StatusBadge r={r} />
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center gap-1">
                         <button
                           type="button"
@@ -1759,6 +1761,7 @@ export default function RecommendationsPage() {
     projectsInsidePolygon,
   } = useCaseData();
   const uiVersion = useUiVersion();
+  const [selectedRecId, setSelectedRecId] = useState<number | null>(null);
   const thresholds = useThresholds(token);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     if (typeof window === "undefined") return "projects";
@@ -1899,6 +1902,12 @@ export default function RecommendationsPage() {
       filteredRecs.map((r) => r.project_id).filter((id) => id != null),
     ).size;
 
+    const selectedRec = recs.find((r) => r.rec_id === selectedRecId) ?? null;
+    const v2SharedProps = {
+      ...sharedProps,
+      onOpen: (r: RecommendationItem) => setSelectedRecId(r.rec_id),
+    };
+
     return (
       <div className="rv2-page">
         {/* Progress banner */}
@@ -2021,13 +2030,32 @@ export default function RecommendationsPage() {
             </div>
           </div>
         ) : (
-          <ProjectsGroupedView
-            recs={filteredRecs}
-            {...sharedProps}
-            onBulkPin={handleBulkPin}
-            onBulkDislike={handleBulkDislike}
-            onBulkClearFeedback={handleBulkClearFeedback}
-          />
+          <div
+            className="rv2-with-drawer"
+            data-drawer-open={selectedRec ? "true" : "false"}
+          >
+            <div style={{ minWidth: 0 }}>
+              <ProjectsGroupedView
+                recs={filteredRecs}
+                {...v2SharedProps}
+                onBulkPin={handleBulkPin}
+                onBulkDislike={handleBulkDislike}
+                onBulkClearFeedback={handleBulkClearFeedback}
+              />
+            </div>
+            {selectedRec && (
+              <UnitInspectorV2
+                unit={selectedRec}
+                onClose={() => setSelectedRecId(null)}
+                onPin={() => handlePin(selectedRec.rec_id, selectedRec.pinned_by_broker)}
+                onFeedback={(type, options) =>
+                  handleRecommendationFeedback(selectedRec.rec_id, type, options)
+                }
+                onClearFeedback={() => clearRecommendationFeedback(selectedRec.rec_id)}
+                saving={feedbackSavingId === selectedRec.rec_id}
+              />
+            )}
+          </div>
         )}
       </div>
     );
