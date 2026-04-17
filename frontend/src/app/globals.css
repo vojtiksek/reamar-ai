@@ -260,7 +260,7 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
 .rv2-main-inner {
   flex: 1;
   min-width: 0;
-  padding: var(--r-space-5) var(--r-space-5) var(--r-space-6);
+  padding: var(--r-space-3) var(--r-space-5) var(--r-space-6);
 }
 
 /* Sidebar */
@@ -1398,6 +1398,24 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   text-transform: uppercase;
   letter-spacing: var(--r-tracking-wide);
   border-bottom: 1px solid var(--r-border-default);
+}
+
+/* FilterChips (<div class="flex flex-wrap gap-1.5 px-1">) těsně pod
+ * glass-header: vizuálně přilepíme jako spodní lištu téže karty. */
+.rv2-main-inner .glass-header:has(+ .flex.flex-wrap.gap-1\.5) {
+  border-bottom-left-radius: 0 !important;
+  border-bottom-right-radius: 0 !important;
+  border-bottom: none !important;
+}
+.rv2-main-inner .glass-header + .flex.flex-wrap.gap-1\.5 {
+  margin-top: -20px;
+  background: var(--r-surface-1);
+  border: 1px solid var(--r-border-default);
+  border-top: 1px solid var(--r-border-subtle);
+  border-bottom-left-radius: var(--r-radius-md);
+  border-bottom-right-radius: var(--r-radius-md);
+  padding: 8px var(--r-space-4);
+  box-shadow: var(--r-shadow-sm);
 }
 
 /* Floating UI-version toggle */
