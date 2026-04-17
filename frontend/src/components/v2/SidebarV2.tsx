@@ -11,6 +11,11 @@ type NavEntry = {
   icon: React.ReactNode;
 };
 
+type Props = {
+  collapsed: boolean;
+  onToggle: () => void;
+};
+
 const ICONS = {
   home: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -54,13 +59,16 @@ const ICONS = {
   ),
 };
 
-const MAIN_NAV: NavEntry[] = [
+const WORK_NAV: NavEntry[] = [
   {
     href: "/cases",
     label: "Klienti",
     icon: ICONS.users,
     match: (p) => p === "/" || p.startsWith("/cases") || p.startsWith("/clients"),
   },
+];
+
+const EXPLORER_NAV: NavEntry[] = [
   {
     href: "/explorer/projects",
     label: "Projekty",
@@ -75,7 +83,7 @@ const MAIN_NAV: NavEntry[] = [
   },
   {
     href: "/future-projects",
-    label: "Budoucí projekty",
+    label: "Budoucí jednotky",
     icon: ICONS.clock,
     match: (p) => p.startsWith("/future-projects"),
   },
@@ -99,17 +107,34 @@ const ADMIN_NAV: NavEntry[] = [
   },
 ];
 
-function NavGroup({ label, items, pathname }: { label: string; items: NavEntry[]; pathname: string }) {
+function NavGroup({
+  label,
+  items,
+  pathname,
+  collapsed,
+}: {
+  label: string;
+  items: NavEntry[];
+  pathname: string;
+  collapsed: boolean;
+}) {
   return (
     <>
-      <div className="rv2-sidebar-section-label">{label}</div>
+      {!collapsed && <div className="rv2-sidebar-section-label">{label}</div>}
+      {collapsed && <div className="rv2-sidebar-section-divider" aria-hidden />}
       <div className="rv2-sidebar-nav">
         {items.map((item) => {
           const active = item.match(pathname);
           return (
-            <Link key={item.href} href={item.href} className="rv2-nav-item" data-active={active}>
+            <Link
+              key={item.href}
+              href={item.href}
+              className="rv2-nav-item"
+              data-active={active}
+              title={collapsed ? item.label : undefined}
+            >
               {item.icon}
-              <span>{item.label}</span>
+              <span className="rv2-nav-item-label">{item.label}</span>
             </Link>
           );
         })}
@@ -118,24 +143,47 @@ function NavGroup({ label, items, pathname }: { label: string; items: NavEntry[]
   );
 }
 
-export function SidebarV2() {
+const CHEVRON_LEFT = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="15 18 9 12 15 6" />
+  </svg>
+);
+const CHEVRON_RIGHT = (
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <polyline points="9 18 15 12 9 6" />
+  </svg>
+);
+
+export function SidebarV2({ collapsed, onToggle }: Props) {
   const pathname = usePathname() ?? "/";
   const { activeClient, deactivate } = useActiveClient();
 
   return (
-    <aside className="rv2-sidebar">
+    <aside className="rv2-sidebar" data-collapsed={collapsed}>
       <div className="rv2-sidebar-brand">
         <div className="rv2-sidebar-brand-mark">R</div>
         <div className="rv2-sidebar-brand-text">Reamar AI</div>
+        <button
+          type="button"
+          className="rv2-sidebar-toggle"
+          onClick={onToggle}
+          title={collapsed ? "Rozbalit menu" : "Sbalit menu"}
+          aria-label={collapsed ? "Rozbalit menu" : "Sbalit menu"}
+        >
+          {collapsed ? CHEVRON_RIGHT : CHEVRON_LEFT}
+        </button>
       </div>
 
-      <NavGroup label="Práce" items={MAIN_NAV} pathname={pathname} />
-      <div style={{ height: 8 }} />
-      <NavGroup label="Konfigurace" items={ADMIN_NAV} pathname={pathname} />
+      <NavGroup label="Práce" items={WORK_NAV} pathname={pathname} collapsed={collapsed} />
+      <NavGroup label="Explorer" items={EXPLORER_NAV} pathname={pathname} collapsed={collapsed} />
+      <NavGroup label="Konfigurace" items={ADMIN_NAV} pathname={pathname} collapsed={collapsed} />
 
       <div className="rv2-sidebar-footer">
         {activeClient ? (
-          <div className="rv2-client-chip" title="Aktivní klient">
+          <div
+            className="rv2-client-chip"
+            title={`Aktivní klient: ${activeClient.clientName}`}
+          >
             <span className="rv2-client-chip-dot" aria-hidden />
             <Link
               href={`/cases/${activeClient.clientId}/brief`}
@@ -143,32 +191,36 @@ export function SidebarV2() {
             >
               {activeClient.clientName}
             </Link>
-            <button
-              type="button"
-              onClick={deactivate}
-              className="rv2-client-chip-close"
-              title="Ukončit klientský mód"
-              aria-label="Ukončit klientský mód"
-            >
-              ×
-            </button>
+            {!collapsed && (
+              <button
+                type="button"
+                onClick={deactivate}
+                className="rv2-client-chip-close"
+                title="Ukončit klientský mód"
+                aria-label="Ukončit klientský mód"
+              >
+                ×
+              </button>
+            )}
           </div>
         ) : (
-          <div
-            style={{
-              padding: "8px 12px",
-              fontSize: "var(--r-font-11)",
-              color: "var(--r-text-on-inverse-muted)",
-              letterSpacing: "var(--r-tracking-wide)",
-              textTransform: "uppercase",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-            }}
-            title="Žádný aktivní klient"
-          >
-            Bez klienta
-          </div>
+          !collapsed && (
+            <div
+              style={{
+                padding: "8px 12px",
+                fontSize: "var(--r-font-11)",
+                color: "var(--r-text-on-inverse-muted)",
+                letterSpacing: "var(--r-tracking-wide)",
+                textTransform: "uppercase",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+              }}
+              title="Žádný aktivní klient"
+            >
+              Bez klienta
+            </div>
+          )
         )}
       </div>
     </aside>

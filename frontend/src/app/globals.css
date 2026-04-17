@@ -231,6 +231,10 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   display: grid;
   grid-template-columns: var(--r-sidebar-w) 1fr;
   min-height: 100vh;
+  transition: grid-template-columns 0.18s ease;
+}
+.rv2-layout[data-sidebar="collapsed"] {
+  grid-template-columns: var(--r-sidebar-w-collapsed) 1fr;
 }
 
 /* Wizard fullscreen: collapse sidebar + topbar, like v1 */
@@ -277,6 +281,81 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   gap: var(--r-space-2);
   padding: var(--r-space-4) var(--r-space-4);
   border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  position: relative;
+}
+
+.rv2-sidebar-toggle {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--r-text-on-inverse-muted);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--r-radius-sm);
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: background 0.12s, color 0.12s;
+}
+.rv2-sidebar-toggle:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--r-text-on-inverse);
+}
+.rv2-sidebar-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-toggle {
+  margin-left: 0;
+}
+
+/* Collapsed state overrides */
+.rv2-sidebar[data-collapsed="true"] {
+  width: var(--r-sidebar-w-collapsed);
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-brand {
+  padding: var(--r-space-3) 0;
+  flex-direction: column;
+  gap: var(--r-space-2);
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-brand-text {
+  display: none;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-section-label {
+  display: none;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-nav {
+  padding: 0 6px;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-nav-item {
+  justify-content: center;
+  padding: 8px 0;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-nav-item-label {
+  display: none;
+}
+.rv2-sidebar-section-divider {
+  display: none;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.06);
+  margin: 6px 12px;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-section-divider {
+  display: block;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-sidebar-footer {
+  padding: 8px 6px;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-client-chip {
+  padding: 8px;
+  justify-content: center;
+  gap: 0;
+}
+.rv2-sidebar[data-collapsed="true"] .rv2-client-chip-name {
+  display: none;
 }
 
 .rv2-sidebar-brand-mark {
