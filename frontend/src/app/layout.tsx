@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { GlobalNav } from "@/components/GlobalNav";
 import { ActiveClientProvider } from "@/contexts/ActiveClientContext";
+import { LayoutSwitcher } from "@/components/v2/LayoutSwitcher";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,10 +30,7 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} app-root`}
       >
         <ActiveClientProvider>
-          <div className="app-shell">
-            <GlobalNav />
-            {children}
-          </div>
+          <LayoutSwitcher>{children}</LayoutSwitcher>
         </ActiveClientProvider>
       </body>
     </html>
