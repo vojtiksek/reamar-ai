@@ -4,6 +4,8 @@ import Link from "next/link";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { ReamarButton, ReamarCard } from "@/components/ui/reamar-ui";
+import { useUiVersion } from "@/components/v2/useUiVersion";
+import { ClientsListV2 } from "./ClientsListV2";
 
 type DashboardClient = {
   id: number;
@@ -82,6 +84,12 @@ function isStale(c: DashboardClient): boolean {
 }
 
 export default function ClientsPage() {
+  const uiVersion = useUiVersion();
+  if (uiVersion === "v2") return <ClientsListV2 />;
+  return <ClientsPageV1 />;
+}
+
+function ClientsPageV1() {
   const [clients, setClients] = useState<DashboardClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
