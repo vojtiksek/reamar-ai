@@ -13,7 +13,6 @@ import {
   formatCurrencyCzk,
   formatMinutes,
   formatPercent,
-  formatValue as formatValueLib,
 } from "@/lib/format";
 import {
   type WalkabilityPreferences,
@@ -21,9 +20,12 @@ import {
   savePreferences as saveWalkPrefs,
   resetPreferences as resetWalkPrefs,
   isPersonalizedActive,
-  getNonDefaultChips,
+
 } from "@/lib/walkabilityPreferences";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
+import { StandardsChips, type ChipEntry } from "@/components/v2/StandardsChips";
+import { WalkabilityCard } from "@/components/v2/WalkabilityCard";
+import { HeroMap } from "@/components/v2/HeroMap";
 
 const ProjectDetailMap = dynamic(
   () => import("@/app/units/[external_id]/UnitDetailMap"),
@@ -153,22 +155,6 @@ type UnitsSortKey =
   | "price_per_m2_czk"
   | "availability_status";
 
-function scoreBarColor(score: number): string {
-  if (score >= 80) return "bg-emerald-500";
-  if (score >= 60) return "bg-sky-500";
-  if (score >= 40) return "bg-amber-400";
-  return "bg-rose-500";
-}
-
-function ScoreBar({ score }: { score: number | null | undefined }) {
-  if (score == null) return null;
-  const pct = Math.max(0, Math.min(100, score));
-  return (
-    <div className="mt-1 h-1 w-full overflow-hidden rounded-full bg-slate-100">
-      <div className={`h-full rounded-full ${scoreBarColor(pct)}`} style={{ width: `${pct}%` }} />
-    </div>
-  );
-}
 
 function availabilityStatusLabel(status: string | null | undefined, available: boolean): string {
   if (status != null && status !== "") {
@@ -226,6 +212,7 @@ export default function ProjectDetailPage() {
   const [unitsSortBy, setUnitsSortBy] = useState<UnitsSortKey>("unit_name");
   const [unitsSortDir, setUnitsSortDir] = useState<"asc" | "desc">("asc");
 
+  const [mapModalOpen, setMapModalOpen] = useState(false);
   const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
   const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => loadWalkPrefs());
   const [personalizedModeEnabled, setPersonalizedModeEnabled] = useState<boolean>(() =>
@@ -907,6 +894,18 @@ export default function ProjectDetailPage() {
   const filledStandards = STANDARDS_FIELDS.filter((f) => hasValue(f.key) && !isFalseValue(project[f.key]));
   const falseStandards = STANDARDS_FIELDS.filter((f) => isFalseValue(project[f.key]));
 
+  // Normalized ChipEntry arrays for StandardsChips component
+  const standardChips: ChipEntry[] = filledStandards.map((f) => {
+    if (f.type === "bool") return { key: f.key, label: f.label, variant: "yes" };
+    if (f.key === "exterior_blinds") {
+      const s = String(project[f.key] ?? "").toLowerCase();
+      const lbl = s === "true" || s === "1" || s === "ano" ? "Ano" : s === "preparation" || s === "příprava" ? "Příprava" : String(project[f.key]);
+      return { key: f.key, label: f.label, variant: "val", value: lbl };
+    }
+    return { key: f.key, label: f.label, variant: "val", value: standardLabelToCzech(f.key, String(project[f.key] ?? "")) };
+  });
+  const standardFalseChips: ChipEntry[] = falseStandards.map((f) => ({ key: f.key, label: f.label, variant: "no" }));
+
   const AMENITY_FIELDS = [
     { key: "concierge", label: "Concierge" },
     { key: "reception", label: "Recepce" },
@@ -918,6 +917,10 @@ export default function ProjectDetailPage() {
 
   const filledAmenities = AMENITY_FIELDS.filter((f) => hasValue(f.key) && !isFalseValue(project[f.key]));
   const falseAmenities = AMENITY_FIELDS.filter((f) => isFalseValue(project[f.key]));
+
+  // Normalized ChipEntry arrays for amenities
+  const amenityChips: ChipEntry[] = filledAmenities.map((f) => ({ key: f.key, label: f.label, variant: "yes" }));
+  const amenityFalseChips: ChipEntry[] = falseAmenities.map((f) => ({ key: f.key, label: f.label, variant: "no" }));
 
   // Financing has data?
   const hasFinancingData = editMode || ["payment_contract","payment_construction","payment_occupancy","min_parking_indoor_price_czk","min_parking_outdoor_price_czk"]
@@ -953,590 +956,537 @@ export default function ProjectDetailPage() {
 
   // -- RENDER --
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+    <div className="space-y-4">
 
-        {/* HERO BLOCK */}
-        <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+      {/* HERO — flex row: left content + right full-height map */}
+      <div className="rv2-card flex overflow-hidden">
+
+        {/* Left: content column */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          <div className="rv2-section-head">
             <button type="button" onClick={() => router.back()}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+              className="text-sm font-medium transition-opacity hover:opacity-70"
+              style={{ color: "var(--r-text-secondary)" }}>
               ← Zpět
             </button>
             <div className="flex items-center gap-2">
               {!editMode ? (
                 <button type="button" onClick={handleStartEdit} disabled={saving}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 transition-colors">
+                  className="rounded-full border px-4 py-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
+                  style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)", background: "var(--r-surface-1)" }}>
                   Editovat
                 </button>
               ) : (
                 <>
                   <button type="button" onClick={handleSave} disabled={saving}
-                    className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 transition-colors">
+                    className="rounded-full px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                    style={{ background: "var(--r-text-primary)" }}>
                     {saving ? "Ukládám…" : "Uložit"}
                   </button>
                   <button type="button" onClick={handleCancel} disabled={saving}
-                    className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 transition-colors">
+                    className="rounded-full border px-4 py-1.5 text-xs font-medium disabled:opacity-50"
+                    style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-secondary)" }}>
                     Zrušit
                   </button>
                 </>
               )}
             </div>
           </div>
-          <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-            <div>
-              <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500 mb-1">
-                {developer !== "—" ? developer : "Developer neuveden"}
-                {address !== "—" && <span className="text-slate-400"> · {address}</span>}
-              </p>
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{name || "Projekt"}</h1>
-            </div>
-            {availRatio != null && (
-              <div className="flex items-center gap-2">
-                <div className={`h-2.5 w-2.5 rounded-full ${availRatio > 50 ? "bg-emerald-500" : availRatio > 20 ? "bg-amber-500" : "bg-rose-500"}`} />
-                <span className="text-xs font-medium text-slate-600">
-                  {String(project["available_units"])} / {String(project["total_units"])} dostupných ({availRatio}%)
+
+          <div className="rv2-section-body">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] mb-1" style={{ color: "var(--r-text-tertiary)" }}>
+              {developer !== "—" ? developer : "Developer neuveden"}
+              {address !== "—" && <span> · {address}</span>}
+              {hasValue("construction_completion") && <span> · Dokončení {project["construction_completion"] as string}</span>}
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight mb-4" style={{ color: "var(--r-text-primary)" }}>{name || "Projekt"}</h1>
+
+            <div className="rv2-kpi-grid mb-4">
+              <div className="rv2-kpi">
+                <span className="rv2-kpi-label">Min. cena</span>
+                <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-20)" }}>{formatCurrencyCzk((project["min_price_czk"] as number | null) ?? null)}</span>
+              </div>
+              <div className="rv2-kpi">
+                <span className="rv2-kpi-label">Max. cena</span>
+                <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-20)" }}>{formatCurrencyCzk((project["max_price_czk"] as number | null) ?? null)}</span>
+              </div>
+              <div className="rv2-kpi">
+                <span className="rv2-kpi-label">Ø cena / m²</span>
+                <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-20)" }}>{formatCurrencyCzk((project["avg_price_per_m2_czk"] as number | null) ?? null)}</span>
+              </div>
+              <div className="rv2-kpi">
+                <span className="rv2-kpi-label">Dostupných</span>
+                <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-20)" }}>
+                  {project["available_units"] != null ? String(project["available_units"]) : "—"}
+                  {project["total_units"] != null && (
+                    <span className="rv2-kpi-hint"> / {String(project["total_units"])}</span>
+                  )}
                 </span>
               </div>
-            )}
-          </div>
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 mb-4">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Min. cena</p>
-              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["min_price_czk"] as number | null) ?? null)}</p>
             </div>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Max. cena</p>
-              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["max_price_czk"] as number | null) ?? null)}</p>
-            </div>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Ø cena/m²</p>
-              <p className="text-xl font-bold text-slate-900">{formatCurrencyCzk((project["avg_price_per_m2_czk"] as number | null) ?? null)}</p>
-            </div>
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Ø plocha</p>
-              <p className="text-xl font-bold text-slate-900">
-                {project["avg_floor_area_m2"] != null ? `${Math.round(Number(project["avg_floor_area_m2"]))} m²` : "—"}
-              </p>
-            </div>
-          </div>
-          {/* Project URL and key dates */}
-          <div className="flex flex-wrap gap-4 pt-2 border-t border-slate-100 items-center">
-            {editMode ? (
-              <div className="flex-1 min-w-[200px]">
-                <p className="text-xs font-medium text-slate-500 mb-1">Odkaz projektu</p>
-                <input type="url"
-                  className="w-full max-w-md rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                  value={(displayOrDraft("project_url", project["project_url"]) as string) ?? ""}
-                  onChange={(e) => handleChangeDraft("project_url", e.target.value)}
-                  placeholder="https://…" />
-              </div>
-            ) : projectUrl ? (
-              <a href={projectUrl} target="_blank" rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 no-underline transition hover:bg-slate-100 hover:border-slate-300">
-                ↗ {projectUrl.replace(/^https?:\/\//i, "").replace(/\/$/, "")}
-              </a>
-            ) : null}
-            {hasValue("max_days_on_market") && (
-              <span className="text-xs text-slate-500">{String(project["max_days_on_market"])} dní na trhu</span>
-            )}
-            {hasValue("project_first_seen") && (
-              <span className="text-xs text-slate-500">Od: {project["project_first_seen"] as string}</span>
-            )}
-            {hasValue("construction_completion") && (
-              <span className="text-xs text-slate-500">Dokončení: {project["construction_completion"] as string}</span>
-            )}
-          </div>
-        </section>
 
-        {/* MAP + WALKABILITY side by side */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {projectGpsLat != null && projectGpsLng != null && (
-            <section className="rounded-2xl border border-slate-200/70 bg-white/80 shadow-[0_14px_30px_rgba(15,23,42,0.06)] overflow-hidden">
-              <div className="px-5 pt-4 pb-2">
-                <h2 className="text-sm font-semibold tracking-wide text-slate-500">
-                  <span className="uppercase">Poloha</span>: <span className="font-medium normal-case text-slate-900">{address || name || "—"}</span>
-                </h2>
-              </div>
-              <ProjectDetailMap lat={projectGpsLat} lng={projectGpsLng} label={name || undefined} poiOverview={overviewPoi ?? undefined} />
-            </section>
-          )}
-
-          {/* Walkability */}
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <div className="mb-4 flex items-center justify-between gap-2">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Walkability</h2>
-              <div className="flex items-center gap-2">
-                <button type="button"
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                  onClick={() => setWalkPrefsOpen(true)}>
-                  Preference lokality
-                </button>
-                {personalizedModeEnabled && (
-                  <div className="flex flex-wrap items-center gap-1">
-                    <span className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-medium text-emerald-700">Dle preferencí</span>
-                    {getNonDefaultChips(walkPrefs).slice(0, 3).map((chip) => (
-                      <span key={chip} className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-700">{chip}</span>
-                    ))}
-                    <button type="button" className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline decoration-dotted"
-                      onClick={() => setPersonalizedModeEnabled(false)}>Vypnout</button>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4 sm:grid-cols-3">
-              <div>
-                <p className="text-xs font-medium text-slate-500">Walkability skóre</p>
-                <p className="mt-0.5 text-2xl font-bold text-slate-900">
-                  {personalizedWalk?.score != null ? (() => {
-                    const main = Math.round(personalizedWalk.score as number);
-                    const baseRaw = project["walkability_score"] as number | string | null | undefined;
-                    const base = typeof baseRaw === "number" ? baseRaw : baseRaw != null ? Number(baseRaw) : null;
-                    const delta = base != null && !Number.isNaN(base) ? main - Math.round(base) : null;
-                    return (
-                      <span className="inline-flex items-baseline gap-1">
-                        <span>{main}</span>
-                        {delta != null && delta !== 0 && <span className={`text-xs ${delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{delta > 0 ? `+${delta}` : delta}</span>}
-                        <span className="text-[11px] text-slate-500">dle preferencí</span>
-                      </span>
-                    );
-                  })() : project["walkability_score"] != null ? String(Math.round(Number(project["walkability_score"]))) : "—"}
-                </p>
-                <ScoreBar score={personalizedWalk?.score != null ? Math.round(personalizedWalk.score as number) : project["walkability_score"] != null ? Math.round(Number(project["walkability_score"])) : null} />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500">Hodnocení</p>
-                <p className="mt-0.5 font-medium text-slate-900">
-                  {personalizedWalk?.label ? `${personalizedWalk.label}` : ((project["walkability_label"] as string | null) ?? "—")}
-                </p>
-              </div>
-              {[
-                { key: "daily_needs", pKey: "walkability_daily_needs_score", label: "Denní potřeby" },
-                { key: "transport", pKey: "walkability_transport_score", label: "Doprava" },
-                { key: "leisure", pKey: "walkability_leisure_score", label: "Volný čas" },
-                { key: "family", pKey: "walkability_family_score", label: "Rodina" },
-              ].map(({ key, pKey, label }) => (
-                <div key={key}>
-                  <p className="text-xs font-medium text-slate-500">{label}</p>
-                  <p className="mt-0.5 font-medium text-slate-900">
-                    {(personalizedWalk as Record<string, unknown> | null)?.[key] != null
-                      ? String(Math.round((personalizedWalk as Record<string, unknown>)[key] as number))
-                      : project[pKey] != null ? String(project[pKey]) : "—"}
-                  </p>
-                  <ScoreBar score={(personalizedWalk as Record<string, unknown> | null)?.[key] != null ? Math.round((personalizedWalk as Record<string, unknown>)[key] as number) : project[pKey] != null ? Number(project[pKey]) : null} />
+            <div className="flex flex-wrap gap-3 pt-3 border-t items-center" style={{ borderColor: "var(--r-border-subtle)" }}>
+              {editMode ? (
+                <div className="flex-1 min-w-[200px]">
+                  <p className="text-xs font-medium mb-1" style={{ color: "var(--r-text-secondary)" }}>URL projektu</p>
+                  <input type="url"
+                    className="w-full max-w-md rounded-lg border px-2 py-1.5 text-sm outline-none"
+                    style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)" }}
+                    value={(displayOrDraft("project_url", project["project_url"]) as string) ?? ""}
+                    onChange={(e) => handleChangeDraft("project_url", e.target.value)}
+                    placeholder="https://…" />
                 </div>
-              ))}
+              ) : projectUrl ? (
+                <a href={projectUrl} target="_blank" rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium no-underline transition hover:opacity-80"
+                  style={{ borderColor: "var(--r-border-default)", background: "var(--r-surface-2)", color: "var(--r-text-secondary)" }}>
+                  ↗ {projectUrl.replace(/^https?:\/\//i, "").replace(/\/$/, "")}
+                </a>
+              ) : null}
+              {hasValue("max_days_on_market") && (
+                <span className="text-xs" style={{ color: "var(--r-text-tertiary)" }}>{String(project["max_days_on_market"])} dní na trhu</span>
+              )}
+              {hasValue("project_first_seen") && (
+                <span className="text-xs" style={{ color: "var(--r-text-tertiary)" }}>Od: {project["project_first_seen"] as string}</span>
+              )}
             </div>
-            {/* POI distances */}
-            <div className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:grid-cols-3">
-              {[
-                { cat: "supermarkets", label: "Supermarket", dist: "distance_to_supermarket_m", count: "count_supermarket_500m" },
-                { cat: "pharmacies", label: "Lékárna", dist: "distance_to_pharmacy_m", count: "count_pharmacy_500m" },
-                { cat: "tram_stops", label: "Tram zastávka", dist: ["walking_distance_to_tram_stop_m","distance_to_tram_stop_m"] },
-                { cat: "bus_stops", label: "Bus zastávka", dist: ["walking_distance_to_bus_stop_m","distance_to_bus_stop_m"] },
-                { cat: "metro_stations", label: "Metro", dist: ["walking_distance_to_metro_station_m","distance_to_metro_station_m"] },
-                { cat: "parks", label: "Park", dist: "distance_to_park_m", count: "count_park_500m" },
-                { cat: "restaurants", label: "Restaurace", dist: "distance_to_restaurant_m", count: "count_restaurant_500m" },
-                { cat: "cafes", label: "Kavárny", dist: "distance_to_cafe_m", count: "count_cafe_500m" },
-                { cat: "fitness", label: "Fitness", dist: "distance_to_fitness_m", count: "count_fitness_500m" },
-                { cat: "playgrounds", label: "Hřiště", dist: "distance_to_playground_m", count: "count_playground_500m" },
-                { cat: "kindergartens", label: "Školka", dist: "distance_to_kindergarten_m", count: "count_kindergarten_500m" },
-                { cat: "primary_schools", label: "Základní škola", dist: "distance_to_primary_school_m", count: "count_primary_school_500m" },
-              ].map(({ cat, label: catLabel, dist, count }) => {
-                const distKey = Array.isArray(dist) ? dist.find((k) => project[k] != null) : dist;
-                const distVal = distKey ? project[distKey as string] : null;
-                const countVal = count ? project[count as string] : null;
-                return (
-                  <div key={cat} role="button" tabIndex={0}
-                    onClick={() => openPoiModal(cat, catLabel)}
-                    onKeyDown={(e) => e.key === "Enter" && openPoiModal(cat, catLabel)}
-                    className="cursor-pointer rounded-lg border border-transparent px-2 py-1.5 transition hover:border-slate-200 hover:bg-slate-50 hover:shadow-sm">
-                    <p className="text-xs font-medium text-slate-500">{catLabel}</p>
-                    <p className="mt-0.5 font-medium text-slate-900">
-                      {distVal != null ? formatDistance(distVal) : "—"}
-                      {countVal != null && Number(countVal) > 0 && (
-                        <span className="ml-1 text-slate-500">({String(countVal)} v 500 m)</span>
-                      )}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
+          </div>
         </div>
 
-        {/* UNITS TABLE */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-              Jednotky v projektu {unitsState.data ? `(${unitsState.data.length})` : ""}
-            </h2>
-            <div className="flex gap-1">
-              {(["all", "available", "reserved", "sold"] as const).map((f) => (
-                <button key={f} type="button" onClick={() => setUnitsFilter(f)}
-                  className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
-                    unitsFilter === f
-                      ? "bg-slate-900 text-white"
-                      : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}>
-                  {f === "all" ? "Vše" : f === "available" ? "Volné" : f === "reserved" ? "Rezervované" : "Prodané"}
-                </button>
-              ))}
-            </div>
-          </div>
-          {unitsState.loading ? (
-            <p className="text-sm text-slate-600">Načítání jednotek…</p>
-          ) : unitsState.error ? (
-            <p className="text-sm text-red-600">{unitsState.error}</p>
-          ) : !unitsState.data || unitsState.data.length === 0 ? (
-            <p className="text-sm text-slate-600">Žádné jednotky.</p>
-          ) : filteredUnits.length === 0 ? (
-            <p className="text-sm text-slate-500 italic">Žádné jednotky v kategorii &quot;{unitsFilter === "available" ? "volné" : unitsFilter === "reserved" ? "rezervované" : "prodané"}&quot;.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-sm">
-                <thead className="bg-slate-50/80">
-                  <tr>
-                    {([
-                      ["unit_name", "Jednotka", "text-left"],
-                      ["layout", "Dispozice", "text-left"],
-                      ["floor_area_m2", "Plocha", "text-right"],
-                      ["exterior_area_m2", "Venek", "text-right"],
-                      ["price_czk", "Cena", "text-right"],
-                      ["price_per_m2_czk", "Cena/m²", "text-right"],
-                      ["availability_status", "Stav", "text-left"],
-                    ] as [UnitsSortKey, string, string][]).map(([key, label, align]) => (
-                      <th key={key} className={`px-4 py-2 ${align}`}>
-                        <button type="button" onClick={() => handleUnitsSort(key)}
-                          className={`flex items-center gap-1 font-semibold text-slate-700 hover:text-slate-900 ${align === "text-right" ? "ml-auto" : ""}`}>
-                          {label}{unitsSortBy === key && (unitsSortDir === "asc" ? " ↑" : " ↓")}
-                        </button>
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 bg-white">
-                  {filteredUnits.map((u) => {
-                    const layoutStr = u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
-                      ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) => b ? `${a},${b} kk` : `${a} kk`)
-                      : u.layout ?? "—";
-                    const isSold = (() => {
-                      const s = String(u.availability_status ?? "").toLowerCase();
-                      return s === "sold" || s === "prodané" || (!u.available && s !== "reserved" && s !== "rezervované");
-                    })();
-                    return (
-                      <tr key={u.external_id} className={`hover:bg-slate-50 transition-colors ${isSold ? "opacity-50" : ""}`}>
-                        <td className="px-4 py-2">
-                          <Link href={`/units/${encodeURIComponent(u.external_id)}`}
-                            className="font-medium text-slate-900 underline decoration-slate-300 underline-offset-2 hover:decoration-slate-600">
-                            {u.unit_name ?? u.external_id}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2 text-slate-900">{layoutStr}</td>
-                        <td className="px-4 py-2 text-right text-slate-900">{u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}</td>
-                        <td className="px-4 py-2 text-right text-slate-900">{u.exterior_area_m2 != null ? `${u.exterior_area_m2.toFixed(1)} m²` : "—"}</td>
-                        <td className="px-4 py-2 text-right text-slate-900">{u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}</td>
-                        <td className="px-4 py-2 text-right text-slate-900">{u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}</td>
-                        <td className="px-4 py-2">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            u.available ? "bg-emerald-100 text-emerald-700" :
-                            String(u.availability_status ?? "").toLowerCase() === "reserved" || String(u.availability_status ?? "").toLowerCase() === "rezervované" ? "bg-amber-100 text-amber-700" :
-                            "bg-rose-100 text-rose-700"
-                          }`}>
-                            {availabilityStatusLabel(u.availability_status, u.available)}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
-
-        {/* FINANCING (only if data) */}
-        {hasFinancingData && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Financování a parkování</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[
-                { key: "payment_contract", label: "Platba po SOSBK (%)" },
-                { key: "payment_construction", label: "Platba při výstavbě (%)" },
-                { key: "payment_occupancy", label: "Platba po dokončení (%)" },
-              ].map(({ key, label }) => {
-                const val = project[key];
-                if (!editMode && isNullish(val)) return null;
-                return (
-                  <div key={key}>
-                    <p className="text-xs font-medium text-slate-500">{label}</p>
-                    {editMode ? (
-                      <input type="number" min={0} max={100} step={1}
-                        className="mt-0.5 w-full max-w-[8rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={draft(key) !== undefined ? String(draft(key)) : (project[key] as number) != null ? ((project[key] as number) > 1 ? (project[key] as number) : (project[key] as number) * 100) : ""}
-                        onChange={(e) => { const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value))); handleChangeDraft(key, v); }} />
-                    ) : (
-                      <p className="mt-0.5 font-medium text-slate-900">{formatPercent((val as number | null) ?? null, undefined, true)}</p>
-                    )}
-                  </div>
-                );
-              })}
-              {[
-                { key: "min_parking_indoor_price_czk", altKey: "max_parking_indoor_price_czk", label: "Cena garáže (Kč)" },
-                { key: "min_parking_outdoor_price_czk", altKey: "max_parking_outdoor_price_czk", label: "Cena stání (Kč)" },
-              ].map(({ key, altKey, label }) => {
-                const val = (project[key] ?? project[altKey]) as number | null;
-                if (!editMode && isNullish(val)) return null;
-                return (
-                  <div key={key}>
-                    <p className="text-xs font-medium text-slate-500">{label}</p>
-                    {editMode ? (
-                      <input type="number" min={0} step={1}
-                        className="mt-0.5 w-full max-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={(displayOrDraft(key, val ?? "") as string) || ""}
-                        onChange={(e) => { const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value))); handleChangeDraft(key, v); }} />
-                    ) : (
-                      <p className="mt-0.5 font-medium text-slate-900">{formatCurrencyCzk(val)}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
-
-        {/* STANDARDS (only filled) */}
-        {(filledStandards.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Standardy</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? STANDARDS_FIELDS : filledStandards).map((f) => {
-                if (f.type === "bool") return renderBoolEditField(f.key, f.label);
-                if (f.type === "enum") return renderEnumEditField(f.key, f.label);
-                if (f.key === "exterior_blinds") {
-                  const val = project[f.key];
-                  if (!editMode && isNullish(val)) return null;
-                  return (
-                    <div key={f.key}>
-                      <p className="text-xs font-medium text-slate-500">{f.label}</p>
-                      {editMode ? (
-                        <select className="mt-0.5 w-full max-w-[10rem] rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                          value={(() => { const v = displayOrDraft(f.key, val); if (v == null || v === "") return ""; const s = String(v).toLowerCase(); if (s === "true" || s === "1" || s === "ano") return "true"; if (s === "false" || s === "0" || s === "ne") return "false"; if (s === "preparation" || s === "priprava" || s === "příprava") return "preparation"; return ""; })()}
-                          onChange={(e) => handleChangeDraft(f.key, e.target.value)}>
-                          <option value="">—</option>
-                          <option value="true">Ano</option>
-                          <option value="false">Ne</option>
-                          <option value="preparation">Příprava</option>
-                        </select>
-                      ) : (
-                        <p className="mt-0.5 font-medium text-slate-900">{(() => { const s = String(val ?? "").toLowerCase(); if (s === "true" || s === "1" || s === "ano") return "Ano"; if (s === "false" || s === "0" || s === "ne") return "Ne"; if (s === "preparation" || s === "priprava" || s === "příprava") return "Příprava"; return "—"; })()}</p>
-                      )}
-                    </div>
-                  );
-                }
-                // text fields (ceiling_height)
-                const val = project[f.key];
-                if (!editMode && isNullish(val)) return null;
-                return (
-                  <div key={f.key}>
-                    <p className="text-xs font-medium text-slate-500">{f.label}</p>
-                    {editMode ? (
-                      <input type="text" className="mt-0.5 w-full max-w-xs rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-                        value={(displayOrDraft(f.key, val) as string) ?? ""} onChange={(e) => handleChangeDraft(f.key, e.target.value)} placeholder="např. 2,9 m" />
-                    ) : (
-                      <p className="mt-0.5 font-medium text-slate-900">{val != null && val !== "" ? String(val) : "—"}</p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            {!editMode && falseStandards.length > 0 && (
-              <details className="mt-3 group">
-                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
-                  <span className="group-open:hidden">Zobrazit vlastnosti s hodnotou Ne ({falseStandards.length})</span>
-                  <span className="hidden group-open:inline">Skrýt</span>
-                </summary>
-                <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                  {falseStandards.map((f) => (
-                    <div key={f.key}>
-                      <p className="text-xs font-medium text-slate-500">{f.label}</p>
-                      <p className="mt-0.5 font-medium text-slate-900">{formatBoolOrDash(project[f.key])}</p>
-                    </div>
-                  ))}
-                </div>
-              </details>
-            )}
-          </section>
-        )}
-
-        {/* AMENITIES (only filled) */}
-        {(filledAmenities.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Amenities</h2>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? AMENITY_FIELDS : filledAmenities).map((f) => renderBoolEditField(f.key, f.label))}
-            </div>
-            {!editMode && falseAmenities.length > 0 && (
-              <details className="mt-3 group">
-                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
-                  <span className="group-open:hidden">Zobrazit s hodnotou Ne ({falseAmenities.length})</span>
-                  <span className="hidden group-open:inline">Skrýt</span>
-                </summary>
-                <div className="mt-2 grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                  {falseAmenities.map((f) => (
-                    <div key={f.key}><p className="text-xs font-medium text-slate-500">{f.label}</p><p className="mt-0.5 font-medium text-slate-900">{formatBoolOrDash(project[f.key])}</p></div>
-                  ))}
-                </div>
-              </details>
-            )}
-          </section>
-        )}
-
-        {/* OSTATNI (amenities text) */}
-        {(editMode || hasValue("amenities")) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Zajímavosti</h2>
-            {editMode ? (
-              <textarea className="w-full max-w-2xl rounded-lg border border-slate-300 px-2 py-1.5 text-sm text-slate-900 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200" rows={4}
-                value={(displayOrDraft("amenities", project["amenities"]) as string) ?? ""} onChange={(e) => handleChangeDraft("amenities", e.target.value)} />
-            ) : (
-              <p className="font-medium text-slate-900 whitespace-pre-wrap">{(project["amenities"] as string) ?? "—"}</p>
-            )}
-          </section>
-        )}
-
-        {/* LOCATION + TECH DATA (collapsible) */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Lokalita a technická data</h2>
-            <button type="button" onClick={() => setShowTechData((v) => !v)}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-              {showTechData ? "Skrýt" : "Zobrazit"}
+        {/* Right: full-height 1:1 map */}
+        {projectGpsLat != null && projectGpsLng != null && (
+          <div className="relative self-stretch shrink-0 overflow-hidden border-l"
+            style={{ aspectRatio: "1 / 1", borderColor: "var(--r-border-default)", minHeight: 260 }}>
+            <HeroMap lat={projectGpsLat} lng={projectGpsLng} zoomControl={true} />
+            <button
+              type="button"
+              onClick={() => setMapModalOpen(true)}
+              className="absolute top-2 right-2 flex items-center justify-center rounded-full shadow-md transition-opacity hover:opacity-90 cursor-pointer"
+              style={{ width: 32, height: 32, zIndex: 1001, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)" }}
+              aria-label="Zvětšit mapu"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+                <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+              </svg>
             </button>
           </div>
-          {/* Always show transport times */}
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 mb-3">
-            {hasValue("ride_to_center_min") && (
-              <div><p className="text-xs font-medium text-slate-500">Autem do centra</p><p className="mt-0.5 font-medium text-slate-900">{formatMinutes((project["ride_to_center_min"] ?? project["ride_to_center"]) as number | null)}</p></div>
-            )}
-            {hasValue("public_transport_to_center_min") && (
-              <div><p className="text-xs font-medium text-slate-500">MHD do centra</p><p className="mt-0.5 font-medium text-slate-900">{formatMinutes((project["public_transport_to_center_min"] ?? project["public_transport_to_center"]) as number | null)}</p></div>
+        )}
+      </div>
+
+      {/* 2-COLUMN BODY */}
+      <div className="rv2-detail-2col">
+
+        {/* === LEFT COLUMN === */}
+        <div className="min-w-0 space-y-4">
+
+          {/* UNITS */}
+          <div className="rv2-card">
+            <div className="rv2-section-head">
+              <h2 className="rv2-section-title">
+                Jednotky{unitsState.data ? ` (${unitsState.data.length})` : ""}
+              </h2>
+              <div className="flex gap-1">
+                {(["all", "available", "reserved", "sold"] as const).map((f) => (
+                  <button key={f} type="button" onClick={() => setUnitsFilter(f)}
+                    className="rounded-full px-2.5 py-1 text-xs font-medium transition-colors"
+                    style={unitsFilter === f
+                      ? { background: "var(--r-text-primary)", color: "#fff" }
+                      : { border: "1px solid var(--r-border-default)", background: "var(--r-surface-1)", color: "var(--r-text-secondary)" }}>
+                    {f === "all" ? "Vše" : f === "available" ? "Volné" : f === "reserved" ? "Rezerv." : "Prodané"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            {unitsState.loading ? (
+              <p className="rv2-empty">Načítání jednotek…</p>
+            ) : unitsState.error ? (
+              <p className="px-4 py-6 text-sm text-rose-600">{unitsState.error}</p>
+            ) : !unitsState.data || unitsState.data.length === 0 ? (
+              <p className="rv2-empty">Žádné jednotky.</p>
+            ) : filteredUnits.length === 0 ? (
+              <p className="rv2-empty italic">Žádné v kategorii „{unitsFilter === "available" ? "volné" : unitsFilter === "reserved" ? "rezervované" : "prodané"}".</p>
+            ) : (
+              <div className="rv2-card-scroll">
+                <table className="rv2-table">
+                  <thead>
+                    <tr>
+                      {([
+                        ["unit_name", "Jednotka", false],
+                        ["layout", "Dispozice", false],
+                        ["floor_area_m2", "Plocha", true],
+                        ["exterior_area_m2", "Ext.", true],
+                        ["price_czk", "Cena", true],
+                        ["price_per_m2_czk", "Cena/m²", true],
+                        ["availability_status", "Stav", false],
+                      ] as [UnitsSortKey, string, boolean][]).map(([key, label, alignRight]) => (
+                        <th key={key} style={alignRight ? { textAlign: "right" } : undefined}>
+                          <button type="button" onClick={() => handleUnitsSort(key)}
+                            className="font-semibold hover:opacity-70 transition-opacity"
+                            style={{ textAlign: "inherit" }}>
+                            {label}{unitsSortBy === key && (unitsSortDir === "asc" ? " ↑" : " ↓")}
+                          </button>
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredUnits.map((u) => {
+                      const layoutStr = u.layout != null && /^layout_(\d+)(?:_(\d+))?$/i.test(String(u.layout))
+                        ? String(u.layout).replace(/^layout_(\d+)(?:_(\d+))?$/i, (_, a, b) => b ? `${a},${b} kk` : `${a} kk`)
+                        : u.layout ?? "—";
+                      const statusStr = String(u.availability_status ?? "").toLowerCase();
+                      const isSold = statusStr === "sold" || statusStr === "prodané" || (!u.available && statusStr !== "reserved" && statusStr !== "rezervované");
+                      const statusCls = u.available ? "bg-emerald-100 text-emerald-700"
+                        : statusStr === "reserved" || statusStr === "rezervované" ? "bg-amber-100 text-amber-700"
+                        : "bg-rose-100 text-rose-700";
+                      return (
+                        <tr key={u.external_id} style={isSold ? { opacity: 0.45 } : undefined}>
+                          <td>
+                            <Link href={`/units/${encodeURIComponent(u.external_id)}`}
+                              className="font-medium underline decoration-slate-300 underline-offset-2 hover:decoration-current"
+                              style={{ color: "var(--r-text-primary)" }}>
+                              {u.unit_name ?? u.external_id}
+                            </Link>
+                          </td>
+                          <td>{layoutStr}</td>
+                          <td style={{ textAlign: "right" }}>{u.floor_area_m2 != null ? `${u.floor_area_m2.toFixed(1)} m²` : "—"}</td>
+                          <td style={{ textAlign: "right" }}>{u.exterior_area_m2 != null ? `${u.exterior_area_m2.toFixed(1)} m²` : "—"}</td>
+                          <td style={{ textAlign: "right" }}>{u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}</td>
+                          <td style={{ textAlign: "right" }}>{u.price_per_m2_czk != null ? formatCurrencyCzk(u.price_per_m2_czk) : "—"}</td>
+                          <td>
+                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusCls}`}>
+                              {availabilityStatusLabel(u.availability_status, u.available)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
-          {showTechData && (
-            <div className="space-y-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {LOCATION_ADMIN.filter((f) => hasValue(f.key)).map((f) => (
-                  <div key={f.key}><p className="text-xs font-medium text-slate-500">{f.label}</p><p className="mt-0.5 font-medium text-slate-900">{(project[f.key] as string) ?? "—"}</p></div>
-                ))}
+
+          {/* STANDARDS */}
+          {(filledStandards.length > 0 || editMode) && (
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Standardy</h2>
               </div>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {LOCATION_TECH.filter((f) => hasValue(f.key)).map((f) => (
-                  <div key={f.key}>
-                    <p className="text-xs font-medium text-slate-500">{f.label}</p>
-                    <p className="mt-0.5 font-medium text-slate-900">
-                      {"distance" in f && f.distance ? formatDistance(project[f.key]) :
-                       "round" in f && f.round ? (project[f.key] != null ? String(Math.round(Number(project[f.key]))) : "—") :
-                       "suffix" in f && f.suffix ? (project[f.key] != null ? `${project[f.key]}${f.suffix}` : "—") :
-                       (project[f.key] as string | null) ?? "—"}
-                    </p>
+              <div className="rv2-section-body">
+                {editMode ? (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {STANDARDS_FIELDS.map((f) => {
+                      if (f.type === "bool") return renderBoolEditField(f.key, f.label);
+                      if (f.type === "enum") return renderEnumEditField(f.key, f.label);
+                      if (f.key === "exterior_blinds") {
+                        const val = project[f.key];
+                        return (
+                          <div key={f.key}>
+                            <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{f.label}</p>
+                            <select className="mt-0.5 w-full max-w-[10rem] rounded-lg border px-2 py-1.5 text-sm outline-none"
+                              style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)" }}
+                              value={(() => { const v = displayOrDraft(f.key, val); if (v == null || v === "") return ""; const s = String(v).toLowerCase(); if (s === "true" || s === "1" || s === "ano") return "true"; if (s === "false" || s === "0" || s === "ne") return "false"; if (s === "preparation" || s === "priprava" || s === "příprava") return "preparation"; return ""; })()}
+                              onChange={(e) => handleChangeDraft(f.key, e.target.value)}>
+                              <option value="">—</option>
+                              <option value="true">Ano</option>
+                              <option value="false">Ne</option>
+                              <option value="preparation">Příprava</option>
+                            </select>
+                          </div>
+                        );
+                      }
+                      const val = project[f.key];
+                      if (isNullish(val)) return null;
+                      return (
+                        <div key={f.key}>
+                          <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{f.label}</p>
+                          <input type="text" className="mt-0.5 w-full max-w-xs rounded-lg border px-2 py-1.5 text-sm outline-none"
+                            style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)" }}
+                            value={(displayOrDraft(f.key, val) as string) ?? ""} onChange={(e) => handleChangeDraft(f.key, e.target.value)} placeholder="např. 2,9 m" />
+                        </div>
+                      );
+                    })}
                   </div>
-                ))}
-              </div>
-              <button type="button" onClick={handleRecomputeLocationMetrics} disabled={recomputingLocation}
-                className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50 transition-colors">
-                {recomputingLocation ? "Přepočítávám…" : "Přepočítat hluk a mikro-lokalitu"}
-              </button>
-            </div>
-          )}
-        </section>
-
-        {/* DEV / ADMIN */}
-        {debugMode && (
-          <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-5">
-            <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-amber-800">Dev / Admin</h2>
-            <div className="flex flex-wrap items-center gap-3">
-              <button type="button" onClick={handleAdminRecomputeAll} disabled={adminJobState.loading}
-                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                {adminJobState.loading ? "…" : "Přepočítat všechny projekty"}
-              </button>
-              <button type="button" onClick={handleAdminRefreshAndRecompute} disabled={adminJobState.loading}
-                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                {adminJobState.loading ? "…" : "Obnovit zdrojová data + přepočítat vše"}
-              </button>
-              <button type="button" onClick={handleAdminDownloadOsmAndRecompute} disabled={adminJobState.loading}
-                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                {adminJobState.loading ? "Stahování OSM… (1–2 min)" : "Stáhnout OSM infrastrukturu + přepočítat projekty"}
-              </button>
-              <button type="button" onClick={handleAdminWalkabilityRefreshAndRecompute} disabled={adminJobState.loading}
-                className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
-                {adminJobState.loading ? "…" : "Obnovit walkability POI + přepočítat"}
-              </button>
-            </div>
-            {adminJobState.message != null && <p className="mt-2 text-sm text-amber-900">{adminJobState.message}</p>}
-          </section>
-        )}
-
-        {/* POI MODAL */}
-        {poiModal.open && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closePoiModal} role="dialog" aria-modal="true" aria-label="Seznam POI">
-            <div className="max-h-[90vh] w-full max-w-5xl rounded-2xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
-              <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel}</h3>
-                  <p className="text-[11px] text-slate-500">do 500 m{!poiModal.loading && poiModal.items.length > 0 ? ` · ${poiModal.items.length} míst` : ""}</p>
-                </div>
-                <button type="button" onClick={closePoiModal} className="rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" aria-label="Zavřít">×</button>
-              </div>
-              <div className="flex border-b border-slate-100">
-                <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "list" }))}
-                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "list" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Seznam</button>
-                <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "map" }))}
-                  className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "map" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Mapa</button>
-              </div>
-              <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
-                {poiModal.loading ? (
-                  <p className="text-sm text-slate-500">Načítám…</p>
-                ) : poiModal.view === "map" ? (
-                  (() => {
-                    const lat = projectState.data?.["gps_latitude"];
-                    const lon = projectState.data?.["gps_longitude"];
-                    if (lat == null || lon == null || typeof lat !== "number" || typeof lon !== "number") return <p className="text-sm text-slate-500">Pro zobrazení mapy jsou potřeba souřadnice projektu.</p>;
-                    if (poiModal.items.length === 0) return <p className="text-sm text-slate-500">Žádné záznamy k zobrazení na mapě.</p>;
-                    return <WalkabilityPoiModalMap projectLat={lat} projectLon={lon} items={poiModal.items} highlightIndices={[0, 1]} />;
-                  })()
-                ) : poiModal.items.length === 0 ? (
-                  <p className="text-sm text-slate-500">Žádné záznamy</p>
                 ) : (
-                  <ul className="space-y-2">
-                    {poiModal.items.map((item, idx) => (
-                      <li key={idx} className={`rounded-xl border px-3 py-2 text-sm ${idx === 0 ? "border-emerald-300 bg-emerald-50/70" : idx === 1 ? "border-sky-300 bg-sky-50/70" : "border-slate-100 bg-slate-50/50"}`}>
-                        <p className="flex items-center justify-between font-medium text-slate-900">
-                          <span>{item.name ?? "—"}</span>
-                          {idx === 0 && <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">1. nejbližší</span>}
-                          {idx === 1 && <span className="ml-2 inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">2. nejbližší</span>}
-                        </p>
-                        <p className="mt-0.5 text-slate-600">{item.distance_m != null ? (item.distance_m >= 1000 ? `${(item.distance_m / 1000).toFixed(1)} km` : `${Math.round(item.distance_m)} m`) : "—"}</p>
-                        {item.lat != null && item.lon != null && (
-                          <a href={`https://mapy.cz/zakladni?source=coor&id=${item.lon}&id=${item.lat}&x=${item.lon}&y=${item.lat}&z=17`} target="_blank" rel="noopener noreferrer"
-                            className="mt-1 inline-block text-xs text-blue-600 hover:underline">Zobrazit na mapě</a>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
+                  <StandardsChips items={standardChips} falseItems={standardFalseChips} />
                 )}
               </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <WalkabilityPreferencesDrawer
-          open={walkPrefsOpen} value={walkPrefs} onChange={setWalkPrefs}
-          onClose={() => setWalkPrefsOpen(false)}
-          onReset={() => { const def = resetWalkPrefs(); setWalkPrefs(def); }}
-          onApply={() => { saveWalkPrefs(walkPrefs); setPersonalizedModeEnabled(true); setWalkPrefsOpen(false); }}
-        />
+          {/* AMENITIES */}
+          {(filledAmenities.length > 0 || editMode) && (
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Vybavenost</h2>
+              </div>
+              <div className="rv2-section-body">
+                {editMode ? (
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {AMENITY_FIELDS.map((f) => renderBoolEditField(f.key, f.label))}
+                  </div>
+                ) : (
+                  <StandardsChips items={amenityChips} falseItems={amenityFalseChips} />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ZAJÍMAVOSTI */}
+          {(editMode || hasValue("amenities")) && (
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Zajímavosti</h2>
+              </div>
+              <div className="rv2-section-body">
+                {editMode ? (
+                  <textarea className="w-full max-w-2xl rounded-lg border px-2 py-1.5 text-sm outline-none" rows={4}
+                    style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)" }}
+                    value={(displayOrDraft("amenities", project["amenities"]) as string) ?? ""} onChange={(e) => handleChangeDraft("amenities", e.target.value)} />
+                ) : (
+                  <p className="text-sm font-medium whitespace-pre-wrap" style={{ color: "var(--r-text-primary)" }}>{(project["amenities"] as string) ?? "—"}</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* FINANCING */}
+          {hasFinancingData && (
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Financování a parkování</h2>
+              </div>
+              <div className="rv2-section-body">
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {[
+                    { key: "payment_contract", label: "Platba po SOSBK (%)" },
+                    { key: "payment_construction", label: "Platba při výstavbě (%)" },
+                    { key: "payment_occupancy", label: "Platba po dokončení (%)" },
+                  ].map(({ key, label }) => {
+                    const val = project[key];
+                    if (!editMode && isNullish(val)) return null;
+                    return (
+                      <div key={key}>
+                        <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{label}</p>
+                        {editMode ? (
+                          <input type="number" min={0} max={100} step={1}
+                            className="mt-0.5 w-full max-w-[8rem] rounded-lg border px-2 py-1.5 text-sm outline-none"
+                            style={{ borderColor: "var(--r-border-default)" }}
+                            value={draft(key) !== undefined ? String(draft(key)) : (project[key] as number) != null ? ((project[key] as number) > 1 ? (project[key] as number) : (project[key] as number) * 100) : ""}
+                            onChange={(e) => { const v = e.target.value === "" ? "" : Math.min(100, Math.max(0, Number(e.target.value))); handleChangeDraft(key, v); }} />
+                        ) : (
+                          <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>{formatPercent((val as number | null) ?? null, undefined, true)}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                  {[
+                    { key: "min_parking_indoor_price_czk", altKey: "max_parking_indoor_price_czk", label: "Cena garáže (Kč)" },
+                    { key: "min_parking_outdoor_price_czk", altKey: "max_parking_outdoor_price_czk", label: "Cena stání (Kč)" },
+                  ].map(({ key, altKey, label }) => {
+                    const val = (project[key] ?? project[altKey]) as number | null;
+                    if (!editMode && isNullish(val)) return null;
+                    return (
+                      <div key={key}>
+                        <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{label}</p>
+                        {editMode ? (
+                          <input type="number" min={0} step={1}
+                            className="mt-0.5 w-full max-w-[10rem] rounded-lg border px-2 py-1.5 text-sm outline-none"
+                            style={{ borderColor: "var(--r-border-default)" }}
+                            value={(displayOrDraft(key, val ?? "") as string) || ""}
+                            onChange={(e) => { const v = e.target.value === "" ? "" : Math.max(0, Math.round(Number(e.target.value))); handleChangeDraft(key, v); }} />
+                        ) : (
+                          <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>{formatCurrencyCzk(val)}</p>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* LOCATION + TECH DATA */}
+          <div className="rv2-card">
+            <div className="rv2-section-head">
+              <h2 className="rv2-section-title">Lokalita a tech. data</h2>
+              <button type="button" onClick={() => setShowTechData((v) => !v)}
+                className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-secondary)", background: "var(--r-surface-1)" }}>
+                {showTechData ? "Skrýt" : "Zobrazit vše"}
+              </button>
+            </div>
+            <div className="rv2-section-body">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                {hasValue("ride_to_center_min") && (
+                  <div>
+                    <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>Autem do centra</p>
+                    <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>{formatMinutes((project["ride_to_center_min"] ?? project["ride_to_center"]) as number | null)}</p>
+                  </div>
+                )}
+                {hasValue("public_transport_to_center_min") && (
+                  <div>
+                    <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>MHD do centra</p>
+                    <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>{formatMinutes((project["public_transport_to_center_min"] ?? project["public_transport_to_center"]) as number | null)}</p>
+                  </div>
+                )}
+              </div>
+              {showTechData && (
+                <div className="mt-4 space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {LOCATION_ADMIN.filter((f) => hasValue(f.key)).map((f) => (
+                      <div key={f.key}>
+                        <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{f.label}</p>
+                        <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>{(project[f.key] as string) ?? "—"}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {LOCATION_TECH.filter((f) => hasValue(f.key)).map((f) => (
+                      <div key={f.key}>
+                        <p className="text-xs font-medium" style={{ color: "var(--r-text-secondary)" }}>{f.label}</p>
+                        <p className="mt-0.5 text-sm font-medium" style={{ color: "var(--r-text-primary)" }}>
+                          {"distance" in f && f.distance ? formatDistance(project[f.key]) :
+                           "round" in f && f.round ? (project[f.key] != null ? String(Math.round(Number(project[f.key]))) : "—") :
+                           "suffix" in f && f.suffix ? (project[f.key] != null ? `${project[f.key]}${f.suffix}` : "—") :
+                           (project[f.key] as string | null) ?? "—"}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <button type="button" onClick={handleRecomputeLocationMetrics} disabled={recomputingLocation}
+                    className="rounded-full border px-3 py-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
+                    style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-secondary)", background: "var(--r-surface-1)" }}>
+                    {recomputingLocation ? "Přepočítávám…" : "Přepočítat hluk a mikro-lokalitu"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* DEV/ADMIN */}
+          {debugMode && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+              <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-amber-800">Dev / Admin</h2>
+              <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={handleAdminRecomputeAll} disabled={adminJobState.loading}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                  {adminJobState.loading ? "…" : "Přepočítat všechny projekty"}
+                </button>
+                <button type="button" onClick={handleAdminRefreshAndRecompute} disabled={adminJobState.loading}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                  {adminJobState.loading ? "…" : "Obnovit zdrojová data + přepočítat"}
+                </button>
+                <button type="button" onClick={handleAdminDownloadOsmAndRecompute} disabled={adminJobState.loading}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                  {adminJobState.loading ? "Stahování OSM…" : "Stáhnout OSM + přepočítat"}
+                </button>
+                <button type="button" onClick={handleAdminWalkabilityRefreshAndRecompute} disabled={adminJobState.loading}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 disabled:opacity-50">
+                  {adminJobState.loading ? "…" : "Obnovit walkability + přepočítat"}
+                </button>
+              </div>
+              {adminJobState.message != null && <p className="mt-2 text-xs text-amber-900">{adminJobState.message}</p>}
+            </section>
+          )}
+        </div>
+
+        {/* === RIGHT SIDEBAR === */}
+        <aside className="rv2-detail-sidebar">
+
+
+          <WalkabilityCard
+            project={project}
+            personalizedWalk={personalizedWalk}
+            personalizedModeEnabled={personalizedModeEnabled}
+            onSetPersonalizedModeEnabled={setPersonalizedModeEnabled}
+            onPreferencesOpen={() => setWalkPrefsOpen(true)}
+            onPoiClick={(cat, label) => openPoiModal(cat, label)}
+          />
+        </aside>
       </div>
+
+      {/* MAP MODAL */}
+      {mapModalOpen && projectGpsLat != null && projectGpsLng != null && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => setMapModalOpen(false)} role="dialog" aria-modal="true" aria-label="Mapa projektu">
+          <div className="relative w-full aspect-square rounded-2xl overflow-hidden shadow-2xl bg-white"
+            style={{ maxWidth: "min(896px, 90vh)" }}
+            onClick={(e) => e.stopPropagation()}>
+            <HeroMap lat={projectGpsLat} lng={projectGpsLng} zoomControl={true} attributionControl={true} />
+            <button type="button" onClick={() => setMapModalOpen(false)}
+              className="absolute top-3 right-3 flex items-center justify-center rounded-full shadow-lg transition-opacity hover:opacity-90 cursor-pointer"
+              style={{ width: 32, height: 32, zIndex: 1001, background: "rgba(255,255,255,0.95)" }}
+              aria-label="Zavřít mapu">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* POI MODAL */}
+      {poiModal.open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={closePoiModal} role="dialog" aria-modal="true" aria-label="Seznam POI">
+          <div className="max-h-[90vh] w-full max-w-5xl rounded-2xl border border-slate-200 bg-white shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-900">{poiModal.categoryLabel}</h3>
+                <p className="text-[11px] text-slate-500">do 500 m{!poiModal.loading && poiModal.items.length > 0 ? ` · ${poiModal.items.length} míst` : ""}</p>
+              </div>
+              <button type="button" onClick={closePoiModal} className="rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700" aria-label="Zavřít">×</button>
+            </div>
+            <div className="flex border-b border-slate-100">
+              <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "list" }))}
+                className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "list" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Seznam</button>
+              <button type="button" onClick={() => setPoiModal((p) => ({ ...p, view: "map" }))}
+                className={`flex-1 px-3 py-2 text-sm font-medium ${poiModal.view === "map" ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>Mapa</button>
+            </div>
+            <div className="max-h-[70vh] overflow-y-auto px-4 py-3">
+              {poiModal.loading ? (
+                <p className="text-sm text-slate-500">Načítám…</p>
+              ) : poiModal.view === "map" ? (
+                (() => {
+                  const lat = projectState.data?.["gps_latitude"];
+                  const lon = projectState.data?.["gps_longitude"];
+                  if (lat == null || lon == null || typeof lat !== "number" || typeof lon !== "number") return <p className="text-sm text-slate-500">Pro zobrazení mapy jsou potřeba souřadnice projektu.</p>;
+                  if (poiModal.items.length === 0) return <p className="text-sm text-slate-500">Žádné záznamy k zobrazení na mapě.</p>;
+                  return <WalkabilityPoiModalMap projectLat={lat} projectLon={lon} items={poiModal.items} highlightIndices={[0, 1]} />;
+                })()
+              ) : poiModal.items.length === 0 ? (
+                <p className="text-sm text-slate-500">Žádné záznamy</p>
+              ) : (
+                <ul className="space-y-2">
+                  {poiModal.items.map((item, idx) => (
+                    <li key={idx} className={`rounded-xl border px-3 py-2 text-sm ${idx === 0 ? "border-emerald-300 bg-emerald-50/70" : idx === 1 ? "border-sky-300 bg-sky-50/70" : "border-slate-100 bg-slate-50/50"}`}>
+                      <p className="flex items-center justify-between font-medium text-slate-900">
+                        <span>{item.name ?? "—"}</span>
+                        {idx === 0 && <span className="ml-2 inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-700">1. nejbližší</span>}
+                        {idx === 1 && <span className="ml-2 inline-flex items-center rounded-full border border-sky-300 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">2. nejbližší</span>}
+                      </p>
+                      <p className="mt-0.5 text-slate-600">{item.distance_m != null ? (item.distance_m >= 1000 ? `${(item.distance_m / 1000).toFixed(1)} km` : `${Math.round(item.distance_m)} m`) : "—"}</p>
+                      {item.lat != null && item.lon != null && (
+                        <a href={`https://mapy.cz/zakladni?source=coor&id=${item.lon}&id=${item.lat}&x=${item.lon}&y=${item.lat}&z=17`} target="_blank" rel="noopener noreferrer"
+                          className="mt-1 inline-block text-xs text-blue-600 hover:underline">Zobrazit na mapě</a>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <WalkabilityPreferencesDrawer
+        open={walkPrefsOpen} value={walkPrefs} onChange={setWalkPrefs}
+        onClose={() => setWalkPrefsOpen(false)}
+        onReset={() => { const def = resetWalkPrefs(); setWalkPrefs(def); }}
+        onApply={() => { saveWalkPrefs(walkPrefs); setPersonalizedModeEnabled(true); setWalkPrefsOpen(false); }}
+      />
     </div>
   );
 }

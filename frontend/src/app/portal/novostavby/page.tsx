@@ -21,7 +21,7 @@ type Rec = {
   project_name: string | null;
   unit_external_id: string | null;
   layout: string | null;
-  layout_label: string | null;
+  layout_label?: string | null;
   floor_area_m2: number | null;
   exterior_area_m2: number | null;
   price_czk: number | null;
@@ -84,6 +84,7 @@ type ProjectGroup = {
   district: string | null;
   units: Rec[];
   best_score: number;
+  avg_score: number;
   price_range: [number | null, number | null];
   area_range: [number | null, number | null];
   ext_area_range: [number | null, number | null];
@@ -214,6 +215,7 @@ function buildProjectGroups(recs: Rec[], matchMap: Map<number, MatchInfo>): Proj
       district: sorted[0].district ?? null,
       units: sorted,
       best_score: sorted[0].score ?? 0,
+      avg_score: Math.round(units.reduce((s, u) => s + (u.score ?? 0), 0) / units.length),
       price_range: [prices.length ? Math.min(...prices) : null, prices.length ? Math.max(...prices) : null],
       area_range: [areas.length ? Math.min(...areas) : null, areas.length ? Math.max(...areas) : null],
       ext_area_range: [extAreas.length ? Math.min(...extAreas) : null, extAreas.length ? Math.max(...extAreas) : null],
@@ -761,6 +763,212 @@ function SortHeader({
   );
 }
 
+// ── Project group card (mirrors broker ProjectGroupCard) ───────────────
+
+function portalMatchLabel(score: number | null) {
+  const s = score ?? 0;
+  if (s >= 85) return { cls: "bg-emerald-100 text-emerald-800" };
+  if (s >= 70) return { cls: "bg-blue-100 text-blue-800" };
+  if (s >= 55) return { cls: "bg-amber-100 text-amber-800" };
+  return { cls: "bg-slate-100 text-slate-700" };
+}
+
+function PortalStatusBadge({ r }: { r: Rec }) {
+  const pinned = r.pinned_by_broker;
+  const fbType = r.feedback?.feedback_type;
+  if (pinned && fbType === "liked") {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">★ Výběr · ♥</span>;
+  }
+  if (pinned) {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">★ Výběr</span>;
+  }
+  if (fbType === "liked") {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[10px] font-semibold text-emerald-800">♥ Líbí se</span>;
+  }
+  if (fbType === "disliked") {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 text-[10px] font-semibold text-rose-800">✕ Nechci</span>;
+  }
+  return <span className="text-xs text-slate-300">—</span>;
+}
+
+function PortalProjectGroupCard({
+  group,
+  activePoiPrefs,
+  sendingFb,
+  onFeedback,
+}: {
+  group: ProjectGroup;
+  activePoiPrefs: string[];
+  sendingFb: number | null;
+  onFeedback: (recId: number, type: string) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const match = portalMatchLabel(group.best_score);
+  const allDisliked = group.disliked_count === group.units.length;
+
+  return (
+    <ReamarCard className={`overflow-hidden${allDisliked ? " opacity-50" : ""}`}>
+      {/* Project header row */}
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50/80 transition-colors"
+        onClick={() => setExpanded((v) => !v)}
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${match.cls}`}>
+            {Math.round(group.best_score)}
+          </span>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-base font-semibold text-slate-900 truncate">{group.project_name}</h3>
+              {group.units[0]?.noise_label && (() => {
+                const lower = group.units[0].noise_label!.toLowerCase();
+                const cls = lower.includes("nízký") || lower.includes("nizky")
+                  ? "bg-emerald-100 text-emerald-700"
+                  : lower.includes("vyšší") || lower.includes("vysoký")
+                  ? "bg-rose-100 text-rose-700"
+                  : "bg-slate-100 text-slate-500";
+                return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>Hluk: {lower}</span>;
+              })()}
+              <PortalNearSourceBadges
+                tramM={group.units[0]?.distance_to_tram_tracks_m}
+                railM={group.units[0]?.distance_to_railway_m}
+                roadM={group.units[0]?.distance_to_primary_road_m}
+              />
+              {group.has_shortlisted && (
+                <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
+                  ★ Výběr makléře
+                </span>
+              )}
+              {group.liked_count > 0 && (
+                <span className="shrink-0 text-[11px] text-emerald-600">♥ {group.liked_count}</span>
+              )}
+              {group.disliked_count > 0 && (
+                <span className="shrink-0 text-[11px] text-rose-500">✕ {group.disliked_count}</span>
+              )}
+            </div>
+            <p className="text-sm text-slate-500">
+              {group.district ? `${group.district} · ` : ""}
+              {group.units.length} {group.units.length === 1 ? "jednotka" : group.units.length < 5 ? "jednotky" : "jednotek"}
+              {group.layouts.length > 0 ? ` · ${group.layouts.join(", ")}` : ""}
+            </p>
+            {group.units[0] && (
+              <div className="mt-0.5 flex flex-wrap gap-1">
+                <PortalMhdBadges rec={group.units[0]} activePrefs={activePoiPrefs} />
+                <PortalPoiBadges poiCounts={group.units[0].poi_counts} activePrefs={activePoiPrefs} />
+              </div>
+            )}
+            <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-slate-400">
+              {group.area_range[0] != null && (
+                <span>
+                  {group.area_range[0] === group.area_range[1]
+                    ? `${Math.round(group.area_range[0]!)} m²`
+                    : `${Math.round(group.area_range[0]!)}–${Math.round(group.area_range[1]!)} m²`}
+                </span>
+              )}
+              {group.ext_area_range[0] != null && group.ext_area_range[0]! > 0 && (
+                <span>
+                  ext. {group.ext_area_range[0] === group.ext_area_range[1]
+                    ? `${Math.round(group.ext_area_range[0]!)} m²`
+                    : `${Math.round(group.ext_area_range[0]!)}–${Math.round(group.ext_area_range[1]!)} m²`}
+                </span>
+              )}
+              {group.construction_completion && (
+                <span>Dokončení: {group.construction_completion}</span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-4 shrink-0">
+          <div className="text-right">
+            {group.price_range[0] != null && (
+              <p className="text-sm font-medium text-slate-900">
+                {group.price_range[0] === group.price_range[1]
+                  ? formatCurrencyCzk(group.price_range[0]!)
+                  : `${formatCurrencyCzk(group.price_range[0]!)} – ${formatCurrencyCzk(group.price_range[1]!)}`}
+              </p>
+            )}
+            <p className="text-xs text-slate-500">Ø shoda {group.avg_score} %</p>
+          </div>
+          <span className={`text-slate-400 transition-transform${expanded ? " rotate-180" : ""}`}>▾</span>
+        </div>
+      </button>
+
+      {/* Expanded: optional project link + unit table */}
+      {expanded && (
+        <div className="border-t border-slate-100">
+          {group.units[0]?.project_url && group.units[0].project_url.startsWith("http") && (
+            <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/40 px-5 py-2.5">
+              <a
+                href={group.units[0].project_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[11px] text-slate-400 hover:text-slate-600 transition-colors"
+                onClick={(e) => e.stopPropagation()}
+              >
+                Web projektu →
+              </a>
+            </div>
+          )}
+          <table className="w-full">
+            <thead>
+              <tr className="bg-slate-50/60 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-2 text-center w-[60px]">Shoda</th>
+                <th className="px-3 py-2 text-left">Dispozice</th>
+                <th className="px-3 py-2 text-right">Plocha</th>
+                <th className="px-3 py-2 text-right">Ext.</th>
+                <th className="px-3 py-2 text-center">Patro</th>
+                <th className="px-3 py-2 text-right">Cena</th>
+                <th className="px-3 py-2">Stav</th>
+                <th className="px-3 py-2">Hodnocení</th>
+              </tr>
+            </thead>
+            <tbody>
+              {group.units.map((r, idx) => {
+                const unitMatch = portalMatchLabel(r.score);
+                const isTop = idx === 0;
+                return (
+                  <tr
+                    key={r.rec_id}
+                    className={`border-t border-slate-100 text-sm hover:bg-slate-50/80${r.feedback?.feedback_type === "disliked" ? " opacity-50" : ""}${isTop ? " bg-blue-50/30" : ""}`}
+                  >
+                    <td className="px-4 py-2 text-center">
+                      <span className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[11px] font-bold ${unitMatch.cls}`}>
+                        {r.score != null ? Math.round(r.score) : "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-slate-700">
+                      {r.layout_label ?? formatLayout(r.layout)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                      {r.floor_area_m2 != null ? `${Math.round(r.floor_area_m2)} m²` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                      {r.exterior_area_m2 != null ? `${Math.round(r.exterior_area_m2)} m²` : "—"}
+                    </td>
+                    <td className="px-3 py-2 text-center tabular-nums text-slate-700">
+                      {r.floor ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
+                      {r.price_czk != null ? formatCurrencyCzk(r.price_czk) : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      <PortalStatusBadge r={r} />
+                    </td>
+                    <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                      <FeedbackButtons rec={r} sendingId={sendingFb} onFeedback={onFeedback} />
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </ReamarCard>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────
 
 export default function PortalNovostavbyPage() {
@@ -788,9 +996,6 @@ export default function PortalNovostavbyPage() {
 
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
-
-  // Expanded project groups
-  const [expandedProjects, setExpandedProjects] = useState<Set<number | null>>(new Set());
 
   useEffect(() => {
     const headers = portalHeaders();
@@ -910,15 +1115,6 @@ export default function PortalNovostavbyPage() {
     });
   };
 
-  const toggleProject = (pid: number | null) => {
-    setExpandedProjects((prev) => {
-      const next = new Set(prev);
-      if (next.has(pid)) next.delete(pid);
-      else next.add(pid);
-      return next;
-    });
-  };
-
   if (loading) return <p className="text-sm text-slate-400">Načítám doporučení...</p>;
   if (error) return <p className="text-sm text-rose-600">{error}</p>;
 
@@ -935,7 +1131,7 @@ export default function PortalNovostavbyPage() {
       {/* Toolbar: view modes + filters */}
       <div className="flex flex-wrap items-center gap-2">
         {/* View mode toggle */}
-        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5">
+        <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5">
           {VIEW_MODES.map((v) => (
             <button
               key={v.key}
@@ -943,10 +1139,10 @@ export default function PortalNovostavbyPage() {
                 setViewMode(v.key);
                 localStorage.setItem("portal_recs_view", v.key);
               }}
-              className={`rounded-md px-3 py-1 text-xs font-medium transition ${
+              className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                 viewMode === v.key
-                  ? "bg-slate-800 text-white"
-                  : "text-slate-600 hover:bg-slate-100"
+                  ? "bg-white text-slate-900 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
               }`}
             >
               {v.label}
@@ -1074,153 +1270,15 @@ export default function PortalNovostavbyPage() {
             ))}
           </div>
 
-          {groups.map((g) => {
-            const expanded = expandedProjects.has(g.project_id);
-            return (
-              <ReamarCard key={g.project_id ?? "null"} className="overflow-hidden">
-                {/* Project header */}
-                <div
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => toggleProject(g.project_id)}
-                  onKeyDown={(e) => e.key === "Enter" || e.key === " " ? toggleProject(g.project_id) : undefined}
-                  className="flex w-full cursor-pointer items-center justify-between gap-4 px-5 py-4 text-left hover:bg-slate-50/80 transition-colors"
-                >
-                  {/* Left: score circle + title block */}
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold ${
-                      g.best_score >= 85 ? "bg-emerald-100 text-emerald-800" :
-                      g.best_score >= 70 ? "bg-blue-100 text-blue-800" :
-                      g.best_score >= 55 ? "bg-amber-100 text-amber-800" :
-                      "bg-slate-100 text-slate-700"
-                    }`}>
-                      {Math.round(g.best_score)}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h3 className="text-base font-semibold text-slate-900 truncate">{g.project_name}</h3>
-                        {g.units[0]?.noise_label && (() => {
-                          const lower = g.units[0].noise_label!.toLowerCase();
-                          const cls = lower.includes("nízký") || lower.includes("nizky")
-                            ? "bg-emerald-100 text-emerald-700"
-                            : lower.includes("vyšší") || lower.includes("vysoký")
-                            ? "bg-rose-100 text-rose-700"
-                            : "bg-slate-100 text-slate-500";
-                          return <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>Hluk: {lower}</span>;
-                        })()}
-                        <PortalNearSourceBadges tramM={g.units[0]?.distance_to_tram_tracks_m} railM={g.units[0]?.distance_to_railway_m} roadM={g.units[0]?.distance_to_primary_road_m} />
-                        {g.has_shortlisted && (
-                          <span className="shrink-0 rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
-                            ★{g.best_shortlist_order != null ? ` #${g.best_shortlist_order}` : ""} Výběr makléře
-                          </span>
-                        )}
-                        {g.liked_count > 0 && (
-                          <span className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-medium text-emerald-700">
-                            {g.liked_count}× líbí se
-                          </span>
-                        )}
-                      </div>
-                      <p className="mt-0.5 text-sm text-slate-500">
-                        {[
-                          g.district,
-                          `${g.units.length} ${g.units.length === 1 ? "jednotka" : g.units.length < 5 ? "jednotky" : "jednotek"}`,
-                          g.layouts.length > 0 ? g.layouts.map(formatLayout).join(", ") : null,
-                          g.area_range[0] != null
-                            ? `${g.area_range[0]}${g.area_range[1] != null && g.area_range[1] !== g.area_range[0] ? `–${g.area_range[1]}` : ""} m²`
-                            : null,
-                          g.construction_completion && parseInt(g.construction_completion.slice(0, 4)) >= 2024
-                            ? `Dokončení: ${g.construction_completion}`
-                            : null,
-                        ].filter(Boolean).join(" · ")}
-                      </p>
-                    </div>
-                  </div>
-                  {/* Right: price + match badge + chevron */}
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="text-right">
-                      {g.price_range[0] != null && (
-                        <p className="text-sm font-medium text-slate-900">
-                          {formatCurrencyCzk(g.price_range[0])}
-                          {g.price_range[1] != null && g.price_range[1] !== g.price_range[0]
-                            ? ` – ${formatCurrencyCzk(g.price_range[1])}`
-                            : ""}
-                        </p>
-                      )}
-                    </div>
-                    {g.best_match && <MatchBadge info={g.best_match} prefs={myPrefs} />}
-                    <span className="text-slate-400 text-xs">{expanded ? "▲" : "▼"}</span>
-                  </div>
-                </div>
-
-                {/* Expanded units */}
-                {expanded && (
-                  <div className="border-t-2 border-slate-200">
-                    {g.units[0]?.project_url && g.units[0].project_url.startsWith("http") && (
-                      <div className="border-b border-slate-50 px-4 py-2">
-                        <a
-                          href={g.units[0].project_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-[11px] text-slate-400 transition-colors hover:text-slate-600"
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          Web projektu →
-                        </a>
-                      </div>
-                    )}
-                    {g.units.map((r) => (
-                      <div
-                        key={r.rec_id}
-                        className={`flex items-center justify-between gap-3 border-b border-slate-50 px-4 py-2.5 last:border-b-0 ${
-                          r.feedback?.feedback_type === "disliked" ? "opacity-50" : ""
-                        }`}
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-700">
-                            <span className="font-medium">{r.unit_external_id ?? `#${r.rec_id}`}</span>
-                            {r.pinned_by_broker && (
-                              <span className="rounded-full bg-violet-100 px-1.5 py-0.5 text-[10px] font-semibold text-violet-700">
-                                ★{r.shortlist_order != null ? ` #${r.shortlist_order}` : ""} {r.shortlist_role ? SHORTLIST_ROLE_LABELS[r.shortlist_role] ?? r.shortlist_role : "Výběr"}
-                              </span>
-                            )}
-                            {r.layout && <span>{formatLayout(r.layout)}</span>}
-                            {r.floor_area_m2 != null && <span>{r.floor_area_m2} m²</span>}
-                            {r.exterior_area_m2 != null && r.exterior_area_m2 > 0 && (
-                              <span>venk. {r.exterior_area_m2} m²</span>
-                            )}
-                            {r.price_czk != null && (
-                              <span>{(r.price_czk / 1_000_000).toFixed(1)} mil. Kč</span>
-                            )}
-                            {r.floor != null && <span>{r.floor}. p.</span>}
-                          </div>
-                          {r.pinned_by_broker && r.shortlist_reason && (
-                            <p className="mt-1 text-[11px] text-violet-700 italic">
-                              {r.shortlist_reason}
-                            </p>
-                          )}
-                          {r.top_strengths.length > 0 && (
-                            <p className="mt-0.5 text-[10px] text-emerald-600">
-                              {r.top_strengths.slice(0, 3).join(" · ")}
-                            </p>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <PortalPriceDiffBadge pct={r.price_diff_pct} />
-                          <PortalMhdBadges rec={r} activePrefs={activePoiPrefs} />
-                          <PortalPoiBadges poiCounts={r.poi_counts} activePrefs={activePoiPrefs} />
-                          {myPrefs.length > 0 && <MatchBadge info={getMatch(r.rec_id)} size="xs" prefs={myPrefs} />}
-                          {r.score != null && (
-                            <span className="text-xs font-medium text-slate-500">{formatScore(r.score)}</span>
-                          )}
-                          <FeedbackButtons rec={r} sendingId={sendingFb} onFeedback={sendFeedback} />
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </ReamarCard>
-            );
-          })}
+          {groups.map((g) => (
+            <PortalProjectGroupCard
+              key={g.project_id ?? "null"}
+              group={g}
+              activePoiPrefs={activePoiPrefs}
+              sendingFb={sendingFb}
+              onFeedback={sendFeedback}
+            />
+          ))}
         </div>
       )}
 

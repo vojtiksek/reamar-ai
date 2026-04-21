@@ -27,7 +27,7 @@ type Rec = {
   project_id: number | null;
   project_name: string | null;
   unit_external_id: string | null;
-  layout_label: string | null;
+  layout_label?: string | null;
   floor_area_m2: number | null;
   price_czk: number | null;
   score: number | null;

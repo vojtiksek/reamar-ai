@@ -105,23 +105,13 @@ from .walkability_sources import (
 
 app = FastAPI(title="Reamar AI Backend")
 
-# CORS — allow all local and Tailscale origins (internal tool, no public exposure)
+# CORS — origins read from ALLOWED_ORIGINS env var (comma-separated).
+# Dev defaults cover local + Tailscale. In production set ALLOWED_ORIGINS to Vercel URL.
+from .settings import settings as _cors_settings
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://localhost:3002",
-        "http://127.0.0.1:3002",
-        "http://192.168.0.96:3002",
-        "http://192.168.1.204:3001",
-        # Tailscale (Mac mini)
-        "http://100.118.81.100:3000",
-        "http://100.118.81.100:3001",
-        "http://100.118.81.100:3002",
-    ],
+    allow_origins=_cors_settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -764,6 +754,102 @@ def list_clients(
             )
         )
     return out
+
+
+# ── Global search ──────────────────────────────────────────────────────
+
+class SearchResultClient(BaseModel):
+    id: int
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    status: str
+
+class SearchResultProject(BaseModel):
+    id: int
+    name: str
+    district: str | None = None
+
+class SearchResultUnit(BaseModel):
+    id: int
+    external_id: str
+    project_id: int | None = None
+    project_name: str | None = None
+    floor: int | None = None
+    price_czk: int | None = None
+
+class SearchResults(BaseModel):
+    clients: list[SearchResultClient] = []
+    projects: list[SearchResultProject] = []
+    units: list[SearchResultUnit] = []
+
+
+@app.get("/search", response_model=SearchResults)
+def global_search(
+    q: str,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+    limit: int = 5,
+) -> SearchResults:
+    """Global search across clients (broker-scoped), projects, and units."""
+    q = q.strip()
+    if len(q) < 2:
+        return SearchResults()
+
+    pattern = f"%{q}%"
+
+    clients = db.execute(
+        select(Client)
+        .where(Client.broker_id == broker.id)
+        .where(or_(
+            Client.name.ilike(pattern),
+            Client.email.ilike(pattern),
+            Client.phone.ilike(pattern),
+        ))
+        .limit(limit)
+    ).scalars().all()
+
+    projects = db.execute(
+        select(Project)
+        .where(or_(
+            Project.name.ilike(pattern),
+            Project.district.ilike(pattern),
+        ))
+        .order_by(Project.name)
+        .limit(limit)
+    ).scalars().all()
+
+    unit_rows = db.execute(
+        select(Unit, Project.name)
+        .outerjoin(Project, Unit.project_id == Project.id)
+        .where(or_(
+            Unit.external_id.ilike(pattern),
+            Unit.unit_name.ilike(pattern),
+        ))
+        .limit(limit)
+    ).all()
+
+    return SearchResults(
+        clients=[
+            SearchResultClient(id=c.id, name=c.name, email=c.email, phone=c.phone, status=c.status)
+            for c in clients
+        ],
+        projects=[
+            SearchResultProject(id=p.id, name=p.name, district=p.district)
+            for p in projects
+        ],
+        units=[
+            SearchResultUnit(
+                id=u.id,
+                external_id=u.external_id,
+                project_id=u.project_id,
+                project_name=pname,
+                floor=u.floor,
+                price_czk=u.price_czk,
+            )
+            for u, pname in unit_rows
+        ],
+    )
 
 
 class ClientDashboardItem(BaseModel):

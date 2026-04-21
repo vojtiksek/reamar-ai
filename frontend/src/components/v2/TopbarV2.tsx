@@ -4,9 +4,10 @@ import { NotificationBell } from "./NotificationBell";
 
 type Props = {
   onMenuToggle: () => void;
+  onSearchOpen: () => void;
 };
 
-export function TopbarV2({ onMenuToggle }: Props) {
+export function TopbarV2({ onMenuToggle, onSearchOpen }: Props) {
   return (
     <header className="rv2-topbar">
       <button
@@ -21,7 +22,12 @@ export function TopbarV2({ onMenuToggle }: Props) {
           <line x1="3" y1="18" x2="21" y2="18" />
         </svg>
       </button>
-      <div className="rv2-topbar-search" role="search">
+      <button
+        type="button"
+        className="rv2-topbar-search"
+        onClick={onSearchOpen}
+        aria-label="Vyhledat"
+      >
         <svg
           width="14"
           height="14"
@@ -37,7 +43,7 @@ export function TopbarV2({ onMenuToggle }: Props) {
         </svg>
         <span>Hledat klienta, projekt nebo jednotku…</span>
         <kbd>⌘K</kbd>
-      </div>
+      </button>
       <div className="rv2-topbar-actions">
         <NotificationBell />
       </div>

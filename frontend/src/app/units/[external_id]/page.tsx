@@ -11,6 +11,9 @@ import {
 import { isEditableCatalogColumn } from "@/lib/columns";
 import { API_BASE } from "@/lib/api";
 import { PaymentSchedule } from "@/components/PaymentSchedule";
+import { StandardsChips, type ChipEntry } from "@/components/v2/StandardsChips";
+import { ProjectSidebarCard } from "@/components/v2/ProjectSidebarCard";
+import { HeroMap } from "@/components/v2/HeroMap";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
@@ -224,6 +227,7 @@ export default function UnitDetailPage() {
   const [draftValues, setDraftValues] = useState<Record<string, unknown>>({});
   const [saving, setSaving] = useState(false);
   const [resolvingField, setResolvingField] = useState<string | null>(null);
+  const [mapModalOpen, setMapModalOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<DebugLog[]>([]);
 
   const appendDebugLog = (log: DebugLog) => {
@@ -690,6 +694,9 @@ export default function UnitDetailPage() {
     catch { const i = rawUrl.indexOf(".cz/"); if (i !== -1) derivedProjectUrl = rawUrl.slice(0, i + 3); }
   }
 
+  // Rows for ProjectSidebarCard (computed after keyProps and filledLocation are ready)
+  // Note: keyProps and filledLocation are computed later in render — we'll inline the rows there.
+
   // Availability
   const availStatus = String(unit.availability_status ?? "").toLowerCase();
   const availLabel = (() => {
@@ -710,6 +717,19 @@ export default function UnitDetailPage() {
 
   const filledStandards = filterFilledPositive(overviewStandards);
   const falseStandards = filterFalseValues(overviewStandards);
+
+  // Normalized ChipEntry arrays for StandardsChips component
+  const standardChips: ChipEntry[] = filledStandards.map((col) => {
+    const raw = getUnitDisplayValue(unit, col);
+    const formatted = formatDisplayValue(raw, col);
+    if (col.data_type === "boolean" || col.data_type === "bool") {
+      return { key: col.key, label: col.label, variant: "yes" };
+    }
+    return { key: col.key, label: col.label, variant: "val", value: formatted ?? undefined };
+  });
+  const standardFalseChips: ChipEntry[] = falseStandards.map((col) => ({
+    key: col.key, label: col.label, variant: "no",
+  }));
   const filledFinance = filterFilledPositive(overviewFinanceParking);
   const filledStats = filterFilledPositive(overviewUnitsStats);
   const filledLocation = filterFilledPositive(overviewLocation);
@@ -730,92 +750,114 @@ export default function UnitDetailPage() {
     { label: "Orientace", value: (unit as Record<string, unknown>)["orientation"] ? String((unit as Record<string, unknown>)["orientation"]) : null },
   ].filter((p) => editMode || p.value != null) as KeyProp[];
 
+  // Rows for ProjectSidebarCard
+  const projectSidebarRows = [
+    ...filledLocation.map((col) => ({
+      label: col.label,
+      value: formatDisplayValue(getUnitDisplayValue(unit, col), col),
+    })),
+    ...keyProps.slice(4).filter((p) => p.value).map((p) => ({ label: p.label, value: p.value })),
+  ] as Array<{ label: string; value: string | null | undefined }>;
+
   // -- RENDER --
   return (
-    <div className="min-h-screen bg-gradient-to-b from-slate-50 to-white">
-      <div className="mx-auto max-w-6xl space-y-6 p-4 pt-6">
+    <div className="space-y-4">
 
-        {/* HERO BLOCK */}
-        <section className="rounded-3xl border border-slate-200/80 bg-white/90 p-6 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-            <button type="button" onClick={() => router.back()}
-              className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors">
-              ← Zpět
-            </button>
-            <div className="flex items-center gap-2">
-              {!editMode ? (
-                <button type="button" onClick={handleStartEdit} disabled={saving}
-                  className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 transition-colors">
-                  Editovat
-                </button>
-              ) : (
-                <>
-                  <button type="button" onClick={handleSave} disabled={saving}
-                    className="rounded-full bg-slate-900 px-4 py-1.5 text-sm font-medium text-white hover:bg-slate-800 disabled:opacity-50 transition-colors">
-                    {saving ? "Ukládám…" : "Uložit"}
+        {/* HERO BLOCK — flex row: left content + right full-height map */}
+        <div className="rv2-card flex overflow-hidden">
+
+          {/* Left: content column */}
+          <div className="flex-1 min-w-0 flex flex-col">
+            <div className="rv2-section-head">
+              <button type="button" onClick={() => router.back()}
+                className="text-sm font-medium transition-opacity hover:opacity-70"
+                style={{ color: "var(--r-text-secondary)" }}>
+                ← Zpět
+              </button>
+              <div className="flex items-center gap-2">
+                {!editMode ? (
+                  <button type="button" onClick={handleStartEdit} disabled={saving}
+                    className="rounded-full border px-4 py-1.5 text-xs font-medium disabled:opacity-50 transition-colors"
+                    style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-primary)", background: "var(--r-surface-1)" }}>
+                    Editovat
                   </button>
-                  <button type="button" onClick={handleCancel} disabled={saving}
-                    className="rounded-full border border-slate-200 bg-white px-4 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 transition-colors">
-                    Zrušit
-                  </button>
-                </>
-              )}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-            <div>
-              {unit.project?.name && (
-                <p className="text-xs font-medium uppercase tracking-[0.16em] text-slate-500 mb-1">
-                  {unit.project_id ? (
-                    <Link href={`/projects/${unit.project_id}`} className="hover:text-slate-700 transition-colors">{unit.project.name}</Link>
-                  ) : unit.project.name}
-                  {developer && <span className="text-slate-400"> · {developer}</span>}
-                </p>
-              )}
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-                {unit.project?.name ? `${unit.project.name} — ` : ""}Jednotka {unit.unit_name ?? unit.external_id}
-              </h1>
-            </div>
-            <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${availColor}`}>{availLabel}</span>
-          </div>
-          <div className="flex flex-wrap items-end gap-6 mb-4">
-            <div>
-              <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">Cena</p>
-              <p className="text-3xl font-bold tracking-tight text-slate-900">{formatCurrencyCzk(unit.price_czk ?? null)}</p>
-            </div>
-            {keyProps.slice(0, 4).map((p) => (
-              <div key={p.label}>
-                <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">{p.label}</p>
-                <p className="text-lg font-semibold text-slate-900">{p.value ?? "—"}</p>
+                ) : (
+                  <>
+                    <button type="button" onClick={handleSave} disabled={saving}
+                      className="rounded-full px-4 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                      style={{ background: "var(--r-text-primary)" }}>
+                      {saving ? "Ukládám…" : "Uložit"}
+                    </button>
+                    <button type="button" onClick={handleCancel} disabled={saving}
+                      className="rounded-full border px-4 py-1.5 text-xs font-medium disabled:opacity-50"
+                      style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-secondary)" }}>
+                      Zrušit
+                    </button>
+                  </>
+                )}
               </div>
-            ))}
+            </div>
+            <div className="rv2-section-body">
+              <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+                <div>
+                  {unit.project?.name && (
+                    <p className="text-xs font-semibold uppercase tracking-[0.14em] mb-1" style={{ color: "var(--r-text-tertiary)" }}>
+                      {unit.project_id ? (
+                        <Link href={`/projects/${unit.project_id}`} className="hover:opacity-80 transition-opacity">{unit.project.name}</Link>
+                      ) : unit.project.name}
+                      {developer && <span> · {developer}</span>}
+                    </p>
+                  )}
+                  <h1 className="text-2xl font-bold tracking-tight" style={{ color: "var(--r-text-primary)" }}>
+                    Jednotka {unit.unit_name ?? unit.external_id}
+                  </h1>
+                </div>
+                <span className={`inline-flex items-center rounded-full border px-3 py-1 text-xs font-semibold ${availColor}`}>{availLabel}</span>
+              </div>
+              <div className="rv2-kpi-grid mb-4">
+                <div className="rv2-kpi">
+                  <span className="rv2-kpi-label">Cena</span>
+                  <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-20)" }}>{formatCurrencyCzk(unit.price_czk ?? null)}</span>
+                </div>
+                {keyProps.slice(0, 4).map((p) => (
+                  <div key={p.label} className="rv2-kpi">
+                    <span className="rv2-kpi-label">{p.label}</span>
+                    <span className="rv2-kpi-value" style={{ fontSize: "var(--r-font-16)" }}>{p.value ?? "—"}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
           </div>
-          {(unitUrl || derivedProjectUrl) && (
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
-              {unitUrl && (
-                <a href={unitUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 no-underline transition hover:bg-slate-100 hover:border-slate-300">
-                  ↗ Nabídka jednotky
-                </a>
-              )}
-              {derivedProjectUrl && (
-                <a href={derivedProjectUrl} target="_blank" rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 no-underline transition hover:bg-slate-100 hover:border-slate-300">
-                  ↗ Web projektu
-                </a>
-              )}
+
+          {/* Right: full-height 1:1 map */}
+          {hasGps && gpsLat != null && gpsLng != null && (
+            <div className="relative self-stretch shrink-0 overflow-hidden border-l"
+              style={{ aspectRatio: "1 / 1", borderColor: "var(--r-border-default)", minHeight: 260 }}>
+              <HeroMap lat={gpsLat} lng={gpsLng} zoomControl={true} />
+              <button
+                type="button"
+                onClick={() => setMapModalOpen(true)}
+                className="absolute top-2 right-2 flex items-center justify-center rounded-full shadow-md transition-opacity hover:opacity-90 cursor-pointer"
+                style={{ width: 32, height: 32, zIndex: 1001, background: "rgba(255,255,255,0.95)", backdropFilter: "blur(4px)" }}
+                aria-label="Zvětšit mapu"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" />
+                  <line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              </button>
             </div>
           )}
-        </section>
+        </div>
 
         {/* PENDING API UPDATES */}
         {unit.pending_api_updates && unit.pending_api_updates.length > 0 && (
-          <section className="rounded-2xl border border-amber-200 bg-amber-50/80 p-4 shadow-sm">
-            <h2 className="mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-amber-800">API poslalo nové údaje</h2>
-            <p className="mb-3 text-sm text-amber-900">U následujících polí přišly z API jiné hodnoty. Zvolte, zda použít data z API, nebo ponechat stávající.</p>
+          <section className="rounded-xl border border-amber-200 bg-amber-50/80 p-4">
+            <h2 className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-amber-800">API poslalo nové údaje</h2>
+            <p className="mb-3 text-sm text-amber-900">Zvolte, zda použít data z API nebo ponechat stávající.</p>
             <ul className="space-y-2">
               {unit.pending_api_updates.map((p) => (
-                <li key={p.field} className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-white px-3 py-2">
+                <li key={p.field} className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-white px-3 py-2">
                   <span className="font-medium text-slate-700">{PENDING_FIELD_LABELS[p.field] ?? p.field}:</span>
                   <span className="text-slate-600">API: {formatPendingApiValue(p.field, p.api_value)}</span>
                   <div className="ml-auto flex gap-2">
@@ -834,121 +876,95 @@ export default function UnitDetailPage() {
           </section>
         )}
 
-        {/* MAP + KEY PROPERTIES side by side */}
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          {hasGps && gpsLat != null && gpsLng != null && (
-            <section className="rounded-2xl border border-slate-200/70 bg-white/80 shadow-[0_14px_30px_rgba(15,23,42,0.06)] overflow-hidden">
-              <div className="px-5 pt-4 pb-2">
-                <h2 className="text-sm font-semibold tracking-wide text-slate-500">
-                  <span className="uppercase">Poloha</span>: <span className="font-medium normal-case text-slate-900">
-                    {[unit.project?.name, unit.unit_name ?? unit.external_id].filter(Boolean).join(" – ")}
-                  </span>
-                </h2>
+        {/* 2-COLUMN BODY */}
+        <div className="rv2-detail-2col">
+
+          {/* === LEFT COLUMN === */}
+          <div className="min-w-0 space-y-4">
+
+            {/* PAYMENT SCHEDULE */}
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Harmonogram plateb</h2>
               </div>
-              <UnitDetailMap lat={gpsLat} lng={gpsLng}
-                label={[unit.project?.name, unit.unit_name ?? unit.external_id].filter(Boolean).join(" – ")} />
-            </section>
-          )}
-
-          {/* Key properties panel */}
-          {keyProps.length > 4 && (
-            <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-              <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Vlastnosti</h2>
-              <div className="grid grid-cols-2 gap-4">
-                {keyProps.slice(4).map((p) => (
-                  <div key={p.label}>
-                    <p className="text-[11px] font-medium uppercase tracking-[0.16em] text-slate-500">{p.label}</p>
-                    <p className="mt-1 text-lg font-semibold text-slate-900">{p.value ?? "—"}</p>
-                  </div>
-                ))}
+              <div className="rv2-section-body">
+                {unit.price_czk != null && unit.price_czk > 0 ? (
+                  <PaymentSchedule
+                    priceCzk={unit.price_czk}
+                    paymentContract={unit.data?.payment_contract as number | null | undefined}
+                    paymentConstruction={unit.data?.payment_construction as number | null | undefined}
+                    paymentOccupancy={unit.data?.payment_occupancy as number | null | undefined}
+                    parkingPriceCzk={(unit.data?.min_parking_indoor_price_czk as number | null | undefined) ?? (unit.data?.min_parking_outdoor_price_czk as number | null | undefined)}
+                  />
+                ) : (
+                  <p className="text-sm italic" style={{ color: "var(--r-text-tertiary)" }}>Harmonogram nebyl vyplněn — cena jednotky není známa.</p>
+                )}
               </div>
-            </section>
-          )}
-        </div>
-
-        {/* PAYMENT SCHEDULE (always visible) */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Harmonogram plateb</h2>
-          {unit.price_czk != null && unit.price_czk > 0 ? (
-            <PaymentSchedule
-              priceCzk={unit.price_czk}
-              paymentContract={unit.data?.payment_contract as number | null | undefined}
-              paymentConstruction={unit.data?.payment_construction as number | null | undefined}
-              paymentOccupancy={unit.data?.payment_occupancy as number | null | undefined}
-              parkingPriceCzk={(unit.data?.min_parking_indoor_price_czk as number | null | undefined) ?? (unit.data?.min_parking_outdoor_price_czk as number | null | undefined)}
-            />
-          ) : (
-            <p className="text-sm text-slate-500 italic">Harmonogram nebyl vyplněn — cena jednotky není známa.</p>
-          )}
-        </section>
-
-        {/* STANDARDS (only filled positive) */}
-        {(filledStandards.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Standardy projektu</h2>
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? overviewStandards : filledStandards).map((col) => renderProjectField(col, { showNull: editMode }))}
             </div>
-            {!editMode && falseStandards.length > 0 && (
-              <details className="mt-3 group">
-                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
-                  <span className="group-open:hidden">Zobrazit vlastnosti s hodnotou Ne ({falseStandards.length})</span>
-                  <span className="hidden group-open:inline">Skrýt</span>
-                </summary>
-                <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
-                  {falseStandards.map((col) => renderProjectField(col, { showNull: true }))}
+
+            {/* STANDARDS */}
+            {(filledStandards.length > 0 || editMode) && (
+              <div className="rv2-card">
+                <div className="rv2-section-head">
+                  <h2 className="rv2-section-title">Standardy projektu</h2>
                 </div>
-              </details>
+                <div className="rv2-section-body">
+                  {editMode ? (
+                    <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3">
+                      {(editMode ? overviewStandards : filledStandards).map((col) => renderProjectField(col, { showNull: editMode }))}
+                    </div>
+                  ) : (
+                    <StandardsChips items={standardChips} falseItems={standardFalseChips} />
+                  )}
+                </div>
+              </div>
             )}
-          </section>
-        )}
 
-        {/* FINANCING (only if filled) */}
-        {(filledFinance.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Financování a parkování</h2>
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? overviewFinanceParking : filledFinance).map((col) => renderProjectField(col, { showNull: editMode }))}
-            </div>
-          </section>
-        )}
+            {/* FINANCING */}
+            {(filledFinance.length > 0 || editMode) && (
+              <div className="rv2-card">
+                <div className="rv2-section-head">
+                  <h2 className="rv2-section-title">Financování a parkování</h2>
+                </div>
+                <div className="rv2-section-body">
+                  <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3">
+                    {(editMode ? overviewFinanceParking : filledFinance).map((col) => renderProjectField(col, { showNull: editMode }))}
+                  </div>
+                </div>
+              </div>
+            )}
 
-        {/* PROJECT STATS (only if filled) */}
-        {(filledStats.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Statistiky projektu</h2>
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? overviewUnitsStats : filledStats).map((col) => renderProjectField(col, { showNull: editMode }))}
-            </div>
-          </section>
-        )}
+            {/* PROJECT STATS */}
+            {(filledStats.length > 0 || editMode) && (
+              <div className="rv2-card">
+                <div className="rv2-section-head">
+                  <h2 className="rv2-section-title">Statistiky projektu</h2>
+                </div>
+                <div className="rv2-section-body">
+                  <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3">
+                    {(editMode ? overviewUnitsStats : filledStats).map((col) => renderProjectField(col, { showNull: editMode }))}
+                  </div>
+                </div>
+              </div>
+            )}
 
-        {/* LOCATION (only if filled) */}
-        {(filledLocation.length > 0 || editMode) && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Lokalita</h2>
-            <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-              {(editMode ? overviewLocation : filledLocation).map((col) => renderProjectField(col, { showNull: editMode }))}
-            </div>
-          </section>
-        )}
-
-        {/* ALL UNIT DATA (collapsible) */}
+            {/* ALL UNIT DATA (collapsible) */}
         {unitColumns.length > 0 && (
-          <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">
-                {editMode ? "Data o jednotce" : "Všechna data o jednotce"}
+          <div className="rv2-card">
+            <div className="rv2-section-head">
+              <h2 className="rv2-section-title">
+                {editMode ? "Data o jednotce" : "Všechna data"}
               </h2>
               {!editMode && (
                 <button type="button" onClick={() => setShowAllData((v) => !v)}
-                  className="rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors">
+                  className="rounded-full border px-3 py-1 text-xs font-medium transition-colors"
+                  style={{ borderColor: "var(--r-border-default)", color: "var(--r-text-secondary)", background: "var(--r-surface-1)" }}>
                   {showAllData ? "Skrýt" : "Zobrazit vše"}
                 </button>
               )}
             </div>
             {(editMode || showAllData) && (
-              <div className="grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+              <div className="p-4 grid gap-x-8 gap-y-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                 {unitColumns
                   .filter((col) => !["heating","air_conditioning","cooling_ceilings","exterior_blinds","smart_home"].includes(col.key))
                   .map((col) => {
@@ -1050,55 +1066,96 @@ export default function UnitDetailPage() {
               </div>
             )}
             {!editMode && !showAllData && (
-              <p className="text-xs text-slate-500">Klikněte na &quot;Zobrazit vše&quot; pro zobrazení všech dat o jednotce.</p>
+              <p className="px-4 pb-3 text-xs" style={{ color: "var(--r-text-tertiary)" }}>Klikněte na „Zobrazit vše" pro zobrazení všech dat o jednotce.</p>
             )}
             {(editMode || showAllData) && otherOverviewColumns.length > 0 && (
-              <details className="mt-4 group">
-                <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700 transition-colors">
+              <details className="px-4 pb-4 group">
+                <summary className="cursor-pointer text-xs font-medium hover:opacity-80 transition-opacity" style={{ color: "var(--r-text-tertiary)" }}>
                   <span className="group-open:hidden">Zobrazit další data o projektu ({otherOverviewColumns.length})</span>
-                  <span className="hidden group-open:inline">Skrýt další data o projektu</span>
+                  <span className="hidden group-open:inline">Skrýt</span>
                 </summary>
-                <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 rounded-xl border border-slate-100 bg-slate-50/50 p-3">
+                <div className="mt-2 grid gap-x-6 gap-y-2 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 rounded-lg p-3" style={{ background: "var(--r-surface-0)" }}>
                   {otherOverviewColumns.map((col) => renderProjectField(col, { showNull: editMode }))}
                 </div>
               </details>
             )}
-          </section>
+          </div>
         )}
 
-        {/* PRICE HISTORY CHART */}
-        <section className="rounded-2xl border border-slate-200/70 bg-white/80 p-5 shadow-[0_14px_30px_rgba(15,23,42,0.06)]">
-          <h2 className="mb-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500">Historie ceny</h2>
-          <div className="h-64 w-full">
-            {chartDataDeduped.length === 0 ? (
-              <div className="flex h-full items-center justify-center">
-                <p className="text-sm text-slate-400 italic">Žádná historie cen.</p>
+            {/* PRICE HISTORY */}
+            <div className="rv2-card">
+              <div className="rv2-section-head">
+                <h2 className="rv2-section-title">Historie ceny</h2>
               </div>
-            ) : chartDataDeduped.length === 1 ? (
-              <div className="flex h-full items-center justify-center">
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-slate-900">{formatCurrencyCzk(chartDataDeduped[0].price_czk as number)}</p>
-                  <p className="text-xs text-slate-500 mt-1">{chartDataDeduped[0].captured_at}</p>
-                  <p className="text-xs text-slate-400 mt-2 italic">Zatím pouze jeden záznam ceny.</p>
+              <div className="rv2-section-body">
+                <div className="h-56 w-full">
+                  {chartDataDeduped.length === 0 ? (
+                    <div className="flex h-full items-center justify-center">
+                      <p className="text-sm italic" style={{ color: "var(--r-text-tertiary)" }}>Žádná historie cen.</p>
+                    </div>
+                  ) : chartDataDeduped.length === 1 ? (
+                    <div className="flex h-full items-center justify-center">
+                      <div className="text-center">
+                        <p className="text-2xl font-bold" style={{ color: "var(--r-text-primary)" }}>{formatCurrencyCzk(chartDataDeduped[0].price_czk as number)}</p>
+                        <p className="text-xs mt-1" style={{ color: "var(--r-text-tertiary)" }}>{chartDataDeduped[0].captured_at}</p>
+                        <p className="text-xs mt-2 italic" style={{ color: "var(--r-text-tertiary)" }}>Zatím pouze jeden záznam ceny.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={chartDataDeduped} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                        <XAxis dataKey="captured_at" tick={{ fontSize: 11, fill: "#94a3b8" }} tickMargin={8} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
+                        <YAxis tickFormatter={(v) => Number.isFinite(v) ? `${(Number(v) / 1_000_000).toFixed(1)} M` : ""}
+                          tick={{ fontSize: 11, fill: "#94a3b8" }} width={52} tickMargin={4} axisLine={false} tickLine={false} />
+                        <Tooltip formatter={(v) => [formatCurrencyCzk(v as number), "Cena"]}
+                          contentStyle={{ fontSize: "12px", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(15,23,42,0.08)" }} />
+                        <Line type="monotone" dataKey="price_czk" stroke="#0f172a" strokeWidth={2}
+                          dot={{ r: 4, fill: "#0f172a", strokeWidth: 2, stroke: "#fff" }}
+                          activeDot={{ r: 6, fill: "#0f172a", stroke: "#fff", strokeWidth: 2 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartDataDeduped} margin={{ top: 8, right: 16, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                  <XAxis dataKey="captured_at" tick={{ fontSize: 11, fill: "#94a3b8" }} tickMargin={8} axisLine={{ stroke: "#e2e8f0" }} tickLine={false} />
-                  <YAxis tickFormatter={(v) => Number.isFinite(v) ? `${(Number(v) / 1_000_000).toFixed(1)} M` : ""}
-                    tick={{ fontSize: 11, fill: "#94a3b8" }} width={52} tickMargin={4} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => [formatCurrencyCzk(v as number), "Cena"]}
-                    contentStyle={{ fontSize: "12px", borderRadius: "12px", border: "1px solid #e2e8f0", boxShadow: "0 4px 12px rgba(15,23,42,0.08)" }} />
-                  <Line type="monotone" dataKey="price_czk" stroke="#0f172a" strokeWidth={2}
-                    dot={{ r: 4, fill: "#0f172a", strokeWidth: 2, stroke: "#fff" }}
-                    activeDot={{ r: 6, fill: "#0f172a", stroke: "#fff", strokeWidth: 2 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            )}
+            </div>
           </div>
-        </section>
+
+          {/* === RIGHT SIDEBAR === */}
+          <aside className="rv2-detail-sidebar">
+
+
+
+            <ProjectSidebarCard
+              projectId={unit.project_id}
+              projectName={unit.project?.name}
+              developer={developer}
+              rows={projectSidebarRows}
+              unitUrl={unitUrl}
+              projectUrl={derivedProjectUrl}
+            />
+          </aside>
+        </div>
+
+        {/* MAP MODAL */}
+        {mapModalOpen && hasGps && gpsLat != null && gpsLng != null && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+            onClick={() => setMapModalOpen(false)} role="dialog" aria-modal="true" aria-label="Mapa projektu">
+            <div className="relative w-full aspect-square rounded-2xl overflow-hidden shadow-2xl bg-white"
+              style={{ maxWidth: "min(896px, 90vh)" }}
+              onClick={(e) => e.stopPropagation()}>
+              <HeroMap lat={gpsLat} lng={gpsLng} zoomControl={true} attributionControl={true} />
+              <button type="button" onClick={() => setMapModalOpen(false)}
+                className="absolute top-3 right-3 flex items-center justify-center rounded-full shadow-lg transition-opacity hover:opacity-90 cursor-pointer"
+                style={{ width: 32, height: 32, zIndex: 1001, background: "rgba(255,255,255,0.95)" }}
+                aria-label="Zavřít mapu">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* DEBUG */}
         {debugMode && debugLogs.length > 0 && (
@@ -1119,7 +1176,6 @@ export default function UnitDetailPage() {
             </ul>
           </section>
         )}
-      </div>
     </div>
   );
 }

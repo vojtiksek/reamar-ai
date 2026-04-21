@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { SidebarV2 } from "./SidebarV2";
 import { TopbarV2 } from "./TopbarV2";
+import { GlobalSearchPalette } from "./GlobalSearchPalette";
 
 const STORAGE_KEY = "reamar_sidebar_collapsed";
 
 export function AppShellV2({ children }: { children: React.ReactNode }) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   useEffect(() => {
     try {
@@ -38,6 +40,20 @@ export function AppShellV2({ children }: { children: React.ReactNode }) {
 
   const closeMobile = useCallback(() => setMobileOpen(false), []);
   const toggleMobile = useCallback(() => setMobileOpen((v) => !v), []);
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  const closeSearch = useCallback(() => setSearchOpen(false), []);
+
+  // Global ⌘K / Ctrl+K shortcut
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
 
   return (
     <div
@@ -48,9 +64,10 @@ export function AppShellV2({ children }: { children: React.ReactNode }) {
       <div className="rv2-sidebar-overlay" onClick={closeMobile} />
       <SidebarV2 collapsed={collapsed} onToggle={toggle} onMobileClose={closeMobile} />
       <div className="rv2-main">
-        <TopbarV2 onMenuToggle={toggleMobile} />
+        <TopbarV2 onMenuToggle={toggleMobile} onSearchOpen={openSearch} />
         <div className="rv2-main-inner">{children}</div>
       </div>
+      <GlobalSearchPalette open={searchOpen} onClose={closeSearch} />
     </div>
   );
 }

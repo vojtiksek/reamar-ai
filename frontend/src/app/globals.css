@@ -492,6 +492,11 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
 }
 
 .rv2-topbar-search {
+  /* Reset button defaults */
+  appearance: none;
+  text-align: left;
+  cursor: pointer;
+  /* Layout */
   flex: 1;
   max-width: 480px;
   display: flex;
@@ -503,6 +508,11 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   border-radius: var(--r-radius-sm);
   color: var(--r-text-tertiary);
   font-size: var(--r-font-13);
+  transition: border-color 0.15s, background 0.15s;
+}
+.rv2-topbar-search:hover {
+  border-color: var(--r-border-strong);
+  background: var(--r-surface-1);
 }
 
 .rv2-topbar-search kbd {
@@ -1464,6 +1474,79 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   box-shadow: var(--r-shadow-sm);
 }
 .rv2-analytics-toggle:hover { border-color: var(--r-border-strong); }
+
+/* ---------- Detail page layout (project/unit) ---------- */
+
+.rv2-detail-2col {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--r-space-4);
+  align-items: start;
+}
+@media (max-width: 1100px) {
+  .rv2-detail-2col {
+    grid-template-columns: 1fr;
+  }
+  .rv2-detail-sidebar { position: static; }
+}
+
+.rv2-detail-sidebar {
+  position: sticky;
+  top: calc(var(--r-topbar-h) + var(--r-space-4));
+  display: flex;
+  flex-direction: column;
+  gap: var(--r-space-4);
+  max-height: calc(100vh - var(--r-topbar-h) - var(--r-space-6));
+  overflow-y: auto;
+}
+
+/* Standards / amenities chips */
+.rv2-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: var(--r-radius-pill);
+  font-size: var(--r-font-12);
+  font-weight: 500;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.rv2-chip-yes {
+  background: var(--r-state-success-soft);
+  color: var(--r-state-success);
+}
+.rv2-chip-val {
+  background: var(--r-surface-2);
+  color: var(--r-text-secondary);
+  border-color: var(--r-border-default);
+}
+.rv2-chip-no {
+  background: transparent;
+  color: var(--r-text-tertiary);
+  border-color: var(--r-border-subtle);
+  opacity: 0.6;
+}
+
+/* Detail page section header */
+.rv2-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px var(--r-space-4);
+  border-bottom: 1px solid var(--r-border-default);
+  background: var(--r-surface-1);
+}
+.rv2-section-title {
+  font-size: var(--r-font-11);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: var(--r-tracking-wider);
+  color: var(--r-text-tertiary);
+}
+.rv2-section-body {
+  padding: var(--r-space-4);
+}
 
 /* ---------- V2 overrides pro legacy komponenty (glass-*, data grid) ----------
  * Scoped pouze uvnitř V2 main area, aby V1 režim zůstal beze změny.
