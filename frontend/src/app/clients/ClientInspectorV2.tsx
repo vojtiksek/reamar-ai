@@ -29,14 +29,6 @@ export function ClientInspectorV2({ client, onClose }: Props) {
           <div className="rv2-drawer-title">{client.name}</div>
           <div className="rv2-drawer-subtitle">
             <span className={`rv2-badge ${stageBadgeClass(stage.label)}`}>{stage.label}</span>
-            {client.unseen_matches > 0 && (
-              <>
-                {" "}
-                <span className="rv2-badge rv2-badge-unseen">
-                  {client.unseen_matches} nových
-                </span>
-              </>
-            )}
             {isStale(client) && (
               <>
                 {" "}
@@ -111,16 +103,6 @@ export function ClientInspectorV2({ client, onClose }: Props) {
           <dl className="rv2-def-list">
             <dt>Celkem</dt>
             <dd>{client.recommendations_count}</dd>
-            <dt>Nové shody</dt>
-            <dd>
-              {client.unseen_matches > 0 ? (
-                <span className="rv2-badge rv2-badge-unseen">
-                  {client.unseen_matches} nových
-                </span>
-              ) : (
-                <span style={{ color: "var(--r-text-tertiary)" }}>žádné</span>
-              )}
-            </dd>
           </dl>
         </section>
 

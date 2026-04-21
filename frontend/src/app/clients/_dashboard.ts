@@ -28,7 +28,6 @@ export function stageFromClient(c: DashboardClient): { label: string; cls: strin
 export function nextAction(c: DashboardClient): string {
   if (!c.has_profile) return "Doplnit zadání";
   if (c.recommendations_count === 0) return "Vygenerovat doporučení";
-  if (c.unseen_matches > 0) return `${c.unseen_matches} nových shod`;
   if (c.days_since_last_note != null && c.days_since_last_note > 14)
     return "Ozvat se klientovi";
   return "Zkontrolovat výběr";
@@ -62,7 +61,6 @@ export function lastTouchLabel(c: DashboardClient): string {
 export function statusLabel(c: DashboardClient): string {
   if (!c.has_profile) return "Čeká na brief";
   if (c.recommendations_count === 0) return "Bez doporučení";
-  if (c.unseen_matches > 0) return `Nové shody: ${c.unseen_matches}`;
   return "Aktivní";
 }
 
@@ -73,7 +71,6 @@ export function isStale(c: DashboardClient): boolean {
 export function sortByPriority(list: DashboardClient[]): DashboardClient[] {
   const score = (c: DashboardClient) =>
     (c.priority === "high" ? 3 : c.priority === "medium" ? 2 : 1) * 100 +
-    (c.unseen_matches || 0) * 10 +
     (c.recommendations_count || 0);
   return [...list].sort((a, b) => score(b) - score(a));
 }

@@ -130,11 +130,9 @@ export function ClientsListV2() {
           <span className="rv2-kpi-hint">Je z čeho vybírat.</span>
         </div>
         <div className="rv2-kpi">
-          <span className="rv2-kpi-label">Nových shod celkem</span>
-          <span className="rv2-kpi-value">
-            {clients.reduce((sum, c) => sum + (c.unseen_matches || 0), 0)}
-          </span>
-          <span className="rv2-kpi-hint">Napříč všemi klienty.</span>
+          <span className="rv2-kpi-label">Celkem klientů</span>
+          <span className="rv2-kpi-value">{clients.length}</span>
+          <span className="rv2-kpi-hint">Aktivní případy.</span>
         </div>
       </div>
 
@@ -242,11 +240,6 @@ export function ClientsListV2() {
                           <td>
                             <div className="rv2-recs-cell">
                               <span>{c.recommendations_count}</span>
-                              {c.unseen_matches > 0 && (
-                                <span className="rv2-badge rv2-badge-unseen">
-                                  {c.unseen_matches} nových
-                                </span>
-                              )}
                             </div>
                           </td>
                           <td style={{ color: "var(--r-text-primary)", fontWeight: 500 }}>
