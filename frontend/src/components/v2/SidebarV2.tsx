@@ -14,6 +14,7 @@ type NavEntry = {
 type Props = {
   collapsed: boolean;
   onToggle: () => void;
+  onMobileClose: () => void;
 };
 
 const ICONS = {
@@ -131,11 +132,13 @@ function NavGroup({
   items,
   pathname,
   collapsed,
+  onItemClick,
 }: {
   label: string;
   items: NavEntry[];
   pathname: string;
   collapsed: boolean;
+  onItemClick?: () => void;
 }) {
   return (
     <>
@@ -151,6 +154,7 @@ function NavGroup({
               className="rv2-nav-item"
               data-active={active}
               title={collapsed ? item.label : undefined}
+              onClick={onItemClick}
             >
               {item.icon}
               <span className="rv2-nav-item-label">{item.label}</span>
@@ -173,7 +177,7 @@ const CHEVRON_RIGHT = (
   </svg>
 );
 
-export function SidebarV2({ collapsed, onToggle }: Props) {
+export function SidebarV2({ collapsed, onToggle, onMobileClose }: Props) {
   const pathname = usePathname() ?? "/";
   const { activeClient, deactivate } = useActiveClient();
 
@@ -193,9 +197,9 @@ export function SidebarV2({ collapsed, onToggle }: Props) {
         </button>
       </div>
 
-      <NavGroup label="Práce" items={WORK_NAV} pathname={pathname} collapsed={collapsed} />
-      <NavGroup label="Explorer" items={EXPLORER_NAV} pathname={pathname} collapsed={collapsed} />
-      <NavGroup label="Konfigurace" items={ADMIN_NAV} pathname={pathname} collapsed={collapsed} />
+      <NavGroup label="Práce" items={WORK_NAV} pathname={pathname} collapsed={collapsed} onItemClick={onMobileClose} />
+      <NavGroup label="Explorer" items={EXPLORER_NAV} pathname={pathname} collapsed={collapsed} onItemClick={onMobileClose} />
+      <NavGroup label="Konfigurace" items={ADMIN_NAV} pathname={pathname} collapsed={collapsed} onItemClick={onMobileClose} />
 
       <div className="rv2-sidebar-footer">
         {activeClient ? (

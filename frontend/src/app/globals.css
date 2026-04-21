@@ -522,6 +522,109 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   gap: var(--r-space-2);
 }
 
+/* Hamburger — hidden on desktop, shown on mobile */
+.rv2-topbar-hamburger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  background: transparent;
+  border: none;
+  color: var(--r-text-primary);
+  cursor: pointer;
+  border-radius: var(--r-radius-sm);
+  flex-shrink: 0;
+}
+.rv2-topbar-hamburger:hover {
+  background: var(--r-surface-2);
+}
+.rv2-topbar-hamburger svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* Sidebar overlay (mobile) */
+.rv2-sidebar-overlay {
+  display: none;
+}
+
+/* ---- Mobile (< 768px) ---- */
+@media (max-width: 767px) {
+  /* Layout: single column, sidebar out of flow */
+  .rv2-layout {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* Sidebar: fixed drawer from left */
+  .rv2-sidebar {
+    position: fixed !important;
+    left: 0;
+    top: 0;
+    height: 100dvh;
+    width: var(--r-sidebar-w) !important;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: var(--r-shadow-lg);
+  }
+
+  /* Open state */
+  .rv2-layout[data-mobile-open="true"] .rv2-sidebar {
+    transform: translateX(0);
+  }
+
+  /* Overlay behind sidebar */
+  .rv2-layout[data-mobile-open="true"] .rv2-sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 40;
+  }
+
+  /* Always show full sidebar text (never icon-only on mobile) */
+  .rv2-sidebar[data-collapsed="true"] .rv2-sidebar-brand-text,
+  .rv2-sidebar[data-collapsed="true"] .rv2-sidebar-section-label,
+  .rv2-sidebar[data-collapsed="true"] .rv2-nav-item-label {
+    display: block !important;
+    opacity: 1 !important;
+    width: auto !important;
+  }
+  .rv2-sidebar[data-collapsed="true"] .rv2-nav-item {
+    justify-content: flex-start;
+    padding: var(--r-space-2) var(--r-space-3);
+  }
+  .rv2-sidebar[data-collapsed="true"] .rv2-sidebar-nav {
+    padding: 0 var(--r-space-2);
+  }
+
+  /* Hide desktop collapse toggle, show hamburger */
+  .rv2-sidebar-toggle {
+    display: none !important;
+  }
+  .rv2-topbar-hamburger {
+    display: flex;
+  }
+
+  /* Reduce main padding */
+  .rv2-main-inner {
+    padding: var(--r-space-3) var(--r-space-3) var(--r-space-5);
+  }
+
+  /* Topbar: search takes remaining space */
+  .rv2-topbar {
+    padding: 0 var(--r-space-3);
+    gap: var(--r-space-2);
+  }
+  .rv2-topbar-search {
+    max-width: 100%;
+  }
+  .rv2-topbar-search kbd {
+    display: none;
+  }
+}
+
 /* ---------- Page-level primitives (v2) ---------- */
 
 .rv2-page {
