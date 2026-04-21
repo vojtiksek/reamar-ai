@@ -625,6 +625,31 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   }
 }
 
+/* ---- Desktop (≥ 768px) — explicitní reset ---- */
+@media (min-width: 768px) {
+  .rv2-layout {
+    grid-template-columns: var(--r-sidebar-w) 1fr;
+  }
+  .rv2-layout[data-sidebar="collapsed"] {
+    grid-template-columns: var(--r-sidebar-w-collapsed) 1fr;
+  }
+  .rv2-sidebar {
+    position: sticky !important;
+    top: 0;
+    height: 100vh;
+    width: auto !important;
+    transform: none !important;
+    z-index: auto;
+    box-shadow: none;
+  }
+  .rv2-sidebar-overlay {
+    display: none !important;
+  }
+  .rv2-topbar-hamburger {
+    display: none !important;
+  }
+}
+
 /* ---------- Page-level primitives (v2) ---------- */
 
 .rv2-page {
