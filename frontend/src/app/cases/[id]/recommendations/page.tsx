@@ -1894,14 +1894,6 @@ export default function RecommendationsPage() {
 
   /* ─── V2 shell branch ─── */
   if (uiVersion === "v2") {
-    const strongCount = recs.filter(
-      (r) => r.eligibility !== "review" && r.score >= thresholds.strong_pick_min_score,
-    ).length;
-    const reviewCount = recs.filter((r) => r.eligibility === "review").length;
-    const projectCount = new Set(
-      filteredRecs.map((r) => r.project_id).filter((id) => id != null),
-    ).size;
-
     const selectedRec = recs.find((r) => r.rec_id === selectedRecId) ?? null;
     const v2SharedProps = {
       ...sharedProps,
@@ -1939,88 +1931,102 @@ export default function RecommendationsPage() {
           </div>
         )}
 
-        <header className="rv2-page-header">
-          <div>
-            <h1 className="rv2-page-title">Doporučení</h1>
-            <p className="rv2-page-subtitle">
-              {client.name} · {filteredRecs.length} jednotek ve {projectCount}{" "}
-              {projectCount === 1 ? "projektu" : projectCount < 5 ? "projektech" : "projektech"}
-            </p>
+        {/* Portals — filter chips into tabs bar, stats into stats row */}
+        {typeof document !== "undefined" && document.getElementById("case-tabs-slot") && profile && createPortal(
+          <>
+            <span className="text-[11px] text-slate-400 font-medium">Filtry:</span>
+            {profile.budget_max != null && profile.budget_min == null && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {formatCurrencyCzk(profile.budget_max)}</span>
+            )}
+            {profile.budget_min != null && profile.budget_max != null && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{formatCurrencyCzk(profile.budget_min)} – {formatCurrencyCzk(profile.budget_max)}</span>
+            )}
+            {profile.area_min != null && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">od {profile.area_min} m²</span>
+            )}
+            {profile.area_max != null && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {profile.area_max} m²</span>
+            )}
+            {selectedLayouts.length > 0 && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{selectedLayouts.join(", ")}</span>
+            )}
+            {profile.property_type && profile.property_type !== "any" && (
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{profile.property_type === "flat" ? "Byt" : "Dům"}</span>
+            )}
+            {hasEstimatedCommute && !recomputing && (
+              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">⚠ odhady</span>
+            )}
+          </>,
+          document.getElementById("case-tabs-slot")!
+        )}
+
+        {typeof document !== "undefined" && document.getElementById("case-stats-slot") && createPortal(
+          <>
+            <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-1.5">
+              <span className="text-[11px] uppercase tracking-wide text-slate-500">Doporučení</span>
+              <span className="text-base font-bold text-slate-900">{recs.length}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5">
+              <span className="text-[11px] text-amber-700">★ Ve výběru</span>
+              <span className="text-base font-bold text-amber-900">{pinnedCount}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5">
+              <span className="text-[11px] text-emerald-700">♥ Líbí se</span>
+              <span className="text-base font-bold text-emerald-900">{likedCount}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5">
+              <span className="text-[11px] text-rose-700">✕ Nechci</span>
+              <span className="text-base font-bold text-rose-900">{dislikedCount}</span>
+            </div>
+          </>,
+          document.getElementById("case-stats-slot")!
+        )}
+
+        {/* Quick filters + count + Přepočítat + ViewToggle */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <QuickFilterBar
+              filter={quickFilter}
+              onChange={(f) => { setQuickFilter(f); localStorage.setItem("reamar_recs_filter", f); }}
+              counts={filterCounts}
+            />
+            <span className="text-xs text-slate-400">{filteredRecs.length} z {recs.length}</span>
           </div>
-          <div style={{ display: "flex", gap: "var(--r-space-2)" }}>
+          <div className="flex items-center gap-2">
             <button
               type="button"
               className="rv2-button rv2-button-secondary"
-              onClick={() => setSettingsOpen((v) => !v)}
-            >
-              Filtry
-            </button>
-            <button
-              type="button"
-              className="rv2-button rv2-button-primary"
               onClick={handleRecompute}
               disabled={recomputing}
             >
               {recomputing ? "Počítám…" : "⟳ Přepočítat"}
             </button>
-          </div>
-        </header>
-
-        <div className="rv2-kpi-grid">
-          <div className="rv2-kpi">
-            <span className="rv2-kpi-label">Všech doporučení</span>
-            <span className="rv2-kpi-value">{recs.length}</span>
-            <span className="rv2-kpi-hint">Ve všech projektech</span>
-          </div>
-          <div className="rv2-kpi">
-            <span className="rv2-kpi-label">Silné shody</span>
-            <span className="rv2-kpi-value" data-tone={strongCount > 0 ? undefined : "warning"}>
-              {strongCount}
-            </span>
-            <span className="rv2-kpi-hint">
-              Skóre ≥ {thresholds.strong_pick_min_score}
-            </span>
-          </div>
-          <div className="rv2-kpi">
-            <span className="rv2-kpi-label">Ve výběru</span>
-            <span className="rv2-kpi-value">{pinnedCount}</span>
-            <span className="rv2-kpi-hint">
-              {likedCount > 0 ? `♥ ${likedCount} oblíbených` : "Zatím žádné"}
-            </span>
-          </div>
-          <div className="rv2-kpi">
-            <span className="rv2-kpi-label">K přezkoumání</span>
-            <span className="rv2-kpi-value" data-tone={reviewCount > 0 ? "warning" : undefined}>
-              {reviewCount}
-            </span>
-            <span className="rv2-kpi-hint">
-              {dislikedCount > 0 ? `✕ ${dislikedCount} vyřazeno` : "Chybí kontext"}
-            </span>
+            <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
           </div>
         </div>
 
-        <div className="rv2-filter-row">
-          {QUICK_FILTERS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              className="rv2-filter-pill"
-              data-active={quickFilter === key}
-              onClick={() => {
-                setQuickFilter(key);
-                try {
-                  localStorage.setItem("reamar_recs_filter", key);
-                } catch {
-                  /* ignore */
-                }
-              }}
-            >
-              {label}
-              {filterCounts[key] != null ? ` · ${filterCounts[key]}` : ""}
-            </button>
-          ))}
-        </div>
+        {/* Active filter chips */}
+        <StandardsBar
+          wizardExtras={wizardExtras}
+          onChange={(section, key, value) => {
+            setWizardExtras((prev) => ({
+              ...prev,
+              [section]: { ...((prev as Record<string, any>)[section] ?? {}), [key]: value },
+            }));
+          }}
+          onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
+          recomputing={recomputing}
+        />
+        {walkPrefs && setWalkPrefs && (
+          <WalkabilityBar
+            walkPrefs={walkPrefs}
+            onChange={(key, value) => setWalkPrefs((prev) => ({ ...prev, [key]: value }))}
+            onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
+            recomputing={recomputing}
+          />
+        )}
 
+        {/* Content — viewMode aware, drawer only for projects view */}
         {filteredRecs.length === 0 ? (
           <div className="rv2-card">
             <div className="rv2-empty">
@@ -2030,32 +2036,47 @@ export default function RecommendationsPage() {
             </div>
           </div>
         ) : (
-          <div
-            className="rv2-with-drawer"
-            data-drawer-open={selectedRec ? "true" : "false"}
-          >
-            <div style={{ minWidth: 0 }}>
-              <ProjectsGroupedView
+          <>
+            {(viewMode === "projects" || viewMode === "cards") && (
+              <div
+                className="rv2-with-drawer"
+                data-drawer-open={selectedRec ? "true" : "false"}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <ProjectsGroupedView
+                    recs={filteredRecs}
+                    {...v2SharedProps}
+                    onBulkPin={handleBulkPin}
+                    onBulkDislike={handleBulkDislike}
+                    onBulkClearFeedback={handleBulkClearFeedback}
+                  />
+                </div>
+                {selectedRec && (
+                  <UnitInspectorV2
+                    unit={selectedRec}
+                    onClose={() => setSelectedRecId(null)}
+                    onPin={() => handlePin(selectedRec.rec_id, selectedRec.pinned_by_broker)}
+                    onFeedback={(type, options) =>
+                      handleRecommendationFeedback(selectedRec.rec_id, type, options)
+                    }
+                    onClearFeedback={() => clearRecommendationFeedback(selectedRec.rec_id)}
+                    saving={feedbackSavingId === selectedRec.rec_id}
+                  />
+                )}
+              </div>
+            )}
+            {viewMode === "units" && (
+              <UnitsTableView recs={filteredRecs} commuteLabels={commuteLabels} {...v2SharedProps} />
+            )}
+            {viewMode === "map" && (
+              <RecommendationsMap
                 recs={filteredRecs}
-                {...v2SharedProps}
-                onBulkPin={handleBulkPin}
-                onBulkDislike={handleBulkDislike}
-                onBulkClearFeedback={handleBulkClearFeedback}
-              />
-            </div>
-            {selectedRec && (
-              <UnitInspectorV2
-                unit={selectedRec}
-                onClose={() => setSelectedRecId(null)}
-                onPin={() => handlePin(selectedRec.rec_id, selectedRec.pinned_by_broker)}
-                onFeedback={(type, options) =>
-                  handleRecommendationFeedback(selectedRec.rec_id, type, options)
-                }
-                onClearFeedback={() => clearRecommendationFeedback(selectedRec.rec_id)}
-                saving={feedbackSavingId === selectedRec.rec_id}
+                onProjectFeedback={(recIds, type) => {
+                  for (const id of recIds) handleRecommendationFeedback(id, type);
+                }}
               />
             )}
-          </div>
+          </>
         )}
       </div>
     );
