@@ -27,6 +27,23 @@ class Settings(BaseSettings):
 
     frontend_url: str = Field(default="http://localhost:3001", validation_alias="FRONTEND_URL")
 
+    # Comma-separated list of allowed CORS origins.
+    # In production set to your Vercel URL, e.g. "https://reamar-ai.vercel.app"
+    allowed_origins: str = Field(
+        default=(
+            "http://localhost:3000,http://127.0.0.1:3000,"
+            "http://localhost:3001,http://127.0.0.1:3001,"
+            "http://localhost:3002,http://127.0.0.1:3002,"
+            "http://192.168.0.96:3002,http://192.168.1.204:3001,"
+            "http://100.118.81.100:3000,http://100.118.81.100:3001,http://100.118.81.100:3002"
+        ),
+        validation_alias="ALLOWED_ORIGINS",
+    )
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
     builtmind_api_key: str | None = Field(default=None, validation_alias="BUILTMIND_API_KEY")
 
     model_config = SettingsConfigDict(

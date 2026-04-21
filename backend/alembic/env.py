@@ -50,10 +50,17 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
+    # If connecting via Supabase Transaction pooler, disable prepared statements.
+    db_url = settings.database_url
+    connect_args: dict = {}
+    if "pooler.supabase.com" in db_url or ":6543" in db_url:
+        connect_args["prepare_threshold"] = None
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
 
     with connectable.connect() as connection:  # type: Connection

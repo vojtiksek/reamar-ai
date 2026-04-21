@@ -8,6 +8,12 @@ from .settings import settings
 
 
 def _create_engine() -> Engine:
+    # If we're connecting through PgBouncer (Supabase Transaction pooler on port 6543),
+    # disable server-side prepared statements — transaction pooling doesn't support them.
+    connect_args: dict = {}
+    if "pooler.supabase.com" in settings.database_url or ":6543" in settings.database_url:
+        connect_args["prepare_threshold"] = None
+
     return create_engine(
         settings.database_url,
         echo=False,
@@ -16,6 +22,7 @@ def _create_engine() -> Engine:
         max_overflow=20,
         pool_pre_ping=True,
         pool_recycle=300,
+        connect_args=connect_args,
     )
 
 

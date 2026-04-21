@@ -1,0 +1,16 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+tests/
+logs/
+backups/
+*.db
+*.dump
+*.sqlite*
+reamar.db
+.env
+.env.*
+node_modules
