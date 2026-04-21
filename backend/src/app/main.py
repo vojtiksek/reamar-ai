@@ -846,12 +846,14 @@ def client_dashboard(
         has_profile = c.id in profile_ids
 
         # Priority calculation
+        # high   = klient nemá brief → broker musí vyplnit zadání
+        # medium = má profil ale 0 doporučení, nebo žádná aktivita > 14 dní
+        # normal = má profil, má doporučení, nedávná aktivita
+        rec_count = rec_counts.get(c.id, 0)
         priority = "normal"
-        if unseen > 0:
+        if not has_profile:
             priority = "high"
-        elif days_since is not None and days_since > 14:
-            priority = "medium"
-        elif c.status == "new" and not has_profile:
+        elif rec_count == 0 or (days_since is not None and days_since > 14):
             priority = "medium"
 
         out.append(ClientDashboardItem(

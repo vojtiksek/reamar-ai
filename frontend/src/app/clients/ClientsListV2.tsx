@@ -115,7 +115,7 @@ export function ClientsListV2() {
           <span className="rv2-kpi-value" data-tone={highOnlyCount > 0 ? "danger" : undefined}>
             {highOnlyCount}
           </span>
-          <span className="rv2-kpi-hint">Nové shody nebo bez reakce.</span>
+          <span className="rv2-kpi-hint">Chybí zadání klienta.</span>
         </div>
         <div className="rv2-kpi">
           <span className="rv2-kpi-label">Ke kontrole</span>
