@@ -137,11 +137,6 @@ export function ClientInspectorV2({ client, onClose }: Props) {
             {action}
           </button>
         </Link>
-        <Link href={`/cases/${client.id}/overview`}>
-          <button type="button" className="rv2-button rv2-button-secondary">
-            Otevřít případ
-          </button>
-        </Link>
         <Link href={`/cases/${client.id}/brief`}>
           <button type="button" className="rv2-button rv2-button-ghost">
             Brief

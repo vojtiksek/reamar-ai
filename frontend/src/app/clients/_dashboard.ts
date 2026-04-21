@@ -28,9 +28,8 @@ export function stageFromClient(c: DashboardClient): { label: string; cls: strin
 export function nextAction(c: DashboardClient): string {
   if (!c.has_profile) return "Doplnit zadání";
   if (c.recommendations_count === 0) return "Vygenerovat doporučení";
-  if (c.days_since_last_note != null && c.days_since_last_note > 14)
-    return "Ozvat se klientovi";
-  return "Zkontrolovat výběr";
+  if (c.status === "shortlist") return "Výběr";
+  return "Doporučení";
 }
 
 export function nextRoute(c: DashboardClient): string {
