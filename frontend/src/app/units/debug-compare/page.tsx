@@ -4,9 +4,7 @@ import { API_BASE } from "@/lib/api";
 import Link from "next/link";
 import nextDynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
-
-export const dynamic = "force-dynamic";
+import { Suspense, useCallback, useEffect, useState } from "react";
 
 const LocalDiffDebugMap = nextDynamic(() => import("./LocalDiffDebugMap"), {
   ssr: false,
@@ -52,7 +50,7 @@ type DebugData = {
   comparables: Comparable[];
 };
 
-export default function DebugComparePage() {
+function DebugCompareInner() {
   const searchParams = useSearchParams();
   const externalId = searchParams?.get("external_id") ?? "";
   const radiusParam = searchParams?.get("radius_m");
@@ -346,5 +344,21 @@ export default function DebugComparePage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function DebugComparePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-50 p-6">
+          <div className="mx-auto max-w-5xl rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+            <p className="text-sm text-gray-600">Načítám…</p>
+          </div>
+        </div>
+      }
+    >
+      <DebugCompareInner />
+    </Suspense>
   );
 }

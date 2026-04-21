@@ -1,12 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { API_BASE } from "@/lib/api";
 
-export const dynamic = "force-dynamic";
-
-export default function PortalLoginPage() {
+function PortalLoginInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [status, setStatus] = useState<"loading" | "error" | "success">("loading");
@@ -65,5 +63,21 @@ export default function PortalLoginPage() {
         )}
       </div>
     </div>
+  );
+}
+
+export default function PortalLoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-slate-50">
+          <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-sm text-center">
+            <p className="text-sm text-slate-500">Načítám...</p>
+          </div>
+        </div>
+      }
+    >
+      <PortalLoginInner />
+    </Suspense>
   );
 }
