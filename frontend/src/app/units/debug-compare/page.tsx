@@ -2,11 +2,13 @@
 
 import { API_BASE } from "@/lib/api";
 import Link from "next/link";
-import dynamic from "next/dynamic";
+import nextDynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 
-const LocalDiffDebugMap = dynamic(() => import("./LocalDiffDebugMap"), {
+export const dynamic = "force-dynamic";
+
+const LocalDiffDebugMap = nextDynamic(() => import("./LocalDiffDebugMap"), {
   ssr: false,
 });
 

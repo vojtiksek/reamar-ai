@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { API_BASE } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 export default function PortalLoginPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
