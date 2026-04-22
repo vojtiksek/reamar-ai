@@ -341,6 +341,7 @@ class Broker(Base):
     email: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     session_token: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    supabase_user_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     role: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'broker'"))
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),

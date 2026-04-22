@@ -518,6 +518,30 @@ class BrokerInfo(BaseModel):
     token: str
 
 
+_SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
+
+def _try_verify_supabase_jwt(token: str) -> str | None:
+    """Return Supabase user id (sub) if token is a valid Supabase JWT, else None."""
+    if not _SUPABASE_JWT_SECRET:
+        return None
+    try:
+        import jwt  # PyJWT
+        payload = jwt.decode(
+            token,
+            _SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            audience="authenticated",
+            options={"require": ["sub", "exp"]},
+        )
+    except Exception:
+        return None
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub:
+        return None
+    return sub
+
+
 def get_current_broker(
     db: DbSession,
     authorization: str | None = Header(default=None, alias=AUTH_HEADER),
@@ -525,12 +549,26 @@ def get_current_broker(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.split(" ", 1)[1].strip()
+
+    # Preferred path: Supabase JWT.
+    supabase_sub = _try_verify_supabase_jwt(token)
+    if supabase_sub:
+        broker = db.execute(
+            select(Broker).where(Broker.supabase_user_id == supabase_sub)
+        ).scalars().first()
+        if broker:
+            return broker
+        # Valid JWT but unknown broker — do not fall back silently.
+        raise HTTPException(status_code=401, detail="Broker not provisioned")
+
+    # Legacy path: opaque session token (kept during migration, will be removed).
     broker = db.execute(
         select(Broker).where(Broker.session_token == token)
     ).scalars().first()
-    if not broker:
-        raise HTTPException(status_code=401, detail="Invalid token")
-    return broker
+    if broker:
+        return broker
+
+    raise HTTPException(status_code=401, detail="Invalid token")
 
 
 def _get_unit_or_404(db: Session, external_id: str) -> Unit:

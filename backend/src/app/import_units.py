@@ -1126,15 +1126,22 @@ def import_units(
 
         if not dry_run:
             print(
-                f"[import] all chunks done, starting final recompute "
+                f"[import] all chunks done, committing units before recompute "
                 f"(touched_projects={len(touched_project_ids)})",
                 flush=True,
             )
+            # Commit units first — recompute can OOM / be killed, but raw import must survive.
+            db.commit()
+            print("[import] units committed; starting recompute", flush=True)
             # Recompute cached project aggregates for all affected projects in this import
             if touched_project_ids:
                 recompute_project_aggregates(db, sorted(touched_project_ids))
+                db.commit()
+                print("[import] project aggregates recomputed & committed", flush=True)
             # Recompute local price diffs (vs. market) for all units
             recompute_local_price_diffs(db)
+            db.commit()
+            print("[import] local price diffs recomputed & committed", flush=True)
             # Cleanup: not_seen jednotky v mrtvých projektech (0 available, first_seen > 180d) → sold
             dead_fixed = cleanup_not_seen_in_dead_projects(db)
             if dead_fixed > 0:
