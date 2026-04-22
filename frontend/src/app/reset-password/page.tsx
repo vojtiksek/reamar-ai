@@ -14,20 +14,39 @@ function ResetPasswordInner() {
   const [password2, setPassword2] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Supabase při detectSessionInUrl:true parsuje tokeny z hashe a vytvoří
-  // dočasnou session. Ověříme, že ji máme.
+  // Supabase při detectSessionInUrl:true parsuje tokeny z URL hashe asynchronně
+  // → posloucháme auth event (PASSWORD_RECOVERY / SIGNED_IN) a dáme si time budget
+  // než prohlásíme link za neplatný.
   useEffect(() => {
+    const supabase = getSupabase();
     let cancelled = false;
-    (async () => {
-      try {
-        const { data } = await getSupabase().auth.getSession();
-        if (cancelled) return;
-        setPhase(data.session ? "ready" : "no-session");
-      } catch {
-        if (!cancelled) setPhase("no-session");
+
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if (cancelled) return;
+      if (event === "PASSWORD_RECOVERY" || (event === "SIGNED_IN" && session)) {
+        setPhase("ready");
       }
-    })();
-    return () => { cancelled = true; };
+    });
+
+    // Primary cesta: zkontroluj stávající session (Supabase ji měl vytvořit z URL).
+    supabase.auth.getSession().then(({ data }) => {
+      if (cancelled) return;
+      if (data.session) setPhase("ready");
+    });
+
+    // Fallback: po 2s pokud nepřišel žádný event ani session → link je neplatný.
+    const timeout = setTimeout(async () => {
+      if (cancelled) return;
+      const { data } = await supabase.auth.getSession();
+      if (cancelled) return;
+      if (!data.session) setPhase("no-session");
+    }, 2000);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

@@ -20,7 +20,10 @@ export function getSupabase(): SupabaseClient {
       autoRefreshToken: true,
       // true = auto-detect tokens v URL hashi (potřebné pro reset-password flow)
       detectSessionInUrl: true,
-      flowType: "pkce",
+      // implicit flow — robustnější pro reset password (funguje i když user klikne
+      // na email link v jiném prohlížeči než kde požádal o reset). PKCE by vyžadovalo
+      // code_verifier v localStorage původního prohlížeče.
+      flowType: "implicit",
       storageKey: "reamar_supabase_auth",
     },
   });
