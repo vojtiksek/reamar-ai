@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, useRef } from "react";
 import { useActiveClient } from "@/contexts/ActiveClientContext";
 import { API_BASE } from "@/lib/api";
+import { UserMenu } from "./v2/UserMenu";
 
 /** Params that belong to a specific page and must not carry over to other pages. */
 const PAGE_ONLY_PARAMS = new Set(["sort_by", "sort_dir", "limit", "offset"]);
@@ -209,7 +210,10 @@ export function GlobalNav() {
           <NavLinks />
         </Suspense>
       </div>
-      <NotificationBell />
+      <div className="flex items-center gap-2">
+        <NotificationBell />
+        <UserMenu />
+      </div>
     </header>
   );
 }

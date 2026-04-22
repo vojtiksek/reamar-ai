@@ -1,6 +1,7 @@
 "use client";
 
 import { NotificationBell } from "./NotificationBell";
+import { UserMenu } from "./UserMenu";
 
 type Props = {
   onMenuToggle: () => void;
@@ -44,8 +45,9 @@ export function TopbarV2({ onMenuToggle, onSearchOpen }: Props) {
         <span>Hledat klienta, projekt nebo jednotku…</span>
         <kbd>⌘K</kbd>
       </button>
-      <div className="rv2-topbar-actions">
+      <div className="rv2-topbar-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
         <NotificationBell />
+        <UserMenu />
       </div>
     </header>
   );

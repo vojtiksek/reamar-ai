@@ -13,6 +13,33 @@ function LoginInner() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotMsg, setForgotMsg] = useState<string | null>(null);
+  const [forgotLoading, setForgotLoading] = useState(false);
+
+  const handleForgot = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email) {
+      setError("Zadej email výše a klikni na Zapomenuté heslo znovu.");
+      return;
+    }
+    setForgotLoading(true);
+    setForgotMsg(null);
+    setError(null);
+    const redirectTo =
+      typeof window !== "undefined"
+        ? `${window.location.origin}/reset-password`
+        : undefined;
+    const { error: err } = await getSupabase().auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+    if (err) {
+      setForgotMsg("Nepodařilo se odeslat email.");
+    } else {
+      setForgotMsg("Email s odkazem pro reset hesla byl odeslán (zkontroluj i spam).");
+    }
+    setForgotLoading(false);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -78,6 +105,41 @@ function LoginInner() {
             {loading ? "Přihlašuji…" : "Přihlásit se"}
           </button>
         </form>
+
+        <div className="mt-4 text-center">
+          {!forgotOpen ? (
+            <button
+              type="button"
+              onClick={() => { setForgotOpen(true); setForgotMsg(null); }}
+              className="text-xs text-slate-500 underline hover:text-slate-700"
+            >
+              Zapomenuté heslo?
+            </button>
+          ) : (
+            <form onSubmit={handleForgot} className="space-y-2 text-left">
+              <p className="text-xs text-slate-600">
+                Pošleme ti email s odkazem pro nastavení nového hesla na adresu výše.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={forgotLoading}
+                  className="flex-1 rounded-full bg-slate-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
+                >
+                  {forgotLoading ? "Odesílám…" : "Poslat reset link"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setForgotOpen(false)}
+                  className="rounded-full border border-slate-300 px-3 py-2 text-xs text-slate-600"
+                >
+                  Zpět
+                </button>
+              </div>
+              {forgotMsg && <p className="text-xs text-emerald-700">{forgotMsg}</p>}
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

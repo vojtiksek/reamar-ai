@@ -18,7 +18,9 @@ export function getSupabase(): SupabaseClient {
     auth: {
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: false,
+      // true = auto-detect tokens v URL hashi (potřebné pro reset-password flow)
+      detectSessionInUrl: true,
+      flowType: "pkce",
       storageKey: "reamar_supabase_auth",
     },
   });

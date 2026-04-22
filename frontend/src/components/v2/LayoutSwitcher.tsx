@@ -10,7 +10,7 @@ type UiVersion = "v1" | "v2";
 const STORAGE_KEY = "reamar_ui_version";
 
 // Cesty, které jsou dostupné bez broker tokenu.
-const PUBLIC_PATH_PREFIXES = ["/login", "/portal"];
+const PUBLIC_PATH_PREFIXES = ["/login", "/portal", "/reset-password"];
 
 function isPublicPath(pathname: string | null): boolean {
   if (!pathname) return false;
