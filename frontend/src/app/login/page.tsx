@@ -1,12 +1,14 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { Suspense, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { API_BASE } from "@/lib/api";
 
-export default function LoginPage() {
+function LoginInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const nextParam = searchParams?.get("next") ?? null;
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +34,12 @@ export default function LoginPage() {
         window.localStorage.setItem("broker_token", json.token);
         window.localStorage.setItem("broker_name", json.name ?? "");
       }
-      router.push("/clients");
+      // Bezpečnostní check: povolíme jen interní cesty, ne absolutní URL.
+      const target =
+        nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
+          ? nextParam
+          : "/clients";
+      router.push(target);
     } catch {
       setError("Chyba při přihlášení");
     } finally {
@@ -76,6 +83,22 @@ export default function LoginPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-screen items-center justify-center bg-[#F8F9FA]">
+          <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-sm border border-slate-200 text-center">
+            <p className="text-sm text-slate-500">Načítám…</p>
+          </div>
+        </div>
+      }
+    >
+      <LoginInner />
+    </Suspense>
   );
 }
 
