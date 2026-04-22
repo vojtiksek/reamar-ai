@@ -3,7 +3,7 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { API_BASE } from "@/lib/api";
+import { getSupabase } from "@/lib/supabase";
 
 function LoginInner() {
   const router = useRouter();
@@ -19,21 +19,18 @@ function LoginInner() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      const supabase = getSupabase();
+      const { data, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      if (!res.ok) {
+      if (authError || !data.session) {
         setError("Neplatné přihlašovací údaje");
         setLoading(false);
         return;
       }
-      const json = await res.json();
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem("broker_token", json.token);
-        window.localStorage.setItem("broker_name", json.name ?? "");
-      }
+      // installBrokerTokenSync() v LayoutSwitcher už synchronizuje broker_token
+      // do localStorage přes onAuthStateChange — nemusíme nic ručně ukládat.
       // Bezpečnostní check: povolíme jen interní cesty, ne absolutní URL.
       const target =
         nextParam && nextParam.startsWith("/") && !nextParam.startsWith("//")
