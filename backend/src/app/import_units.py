@@ -843,22 +843,28 @@ def import_units(
     snapshot_id: int | None = None
     changes_by_field: dict[str, int] = {}
 
-    with get_db() as db:
-        if not dry_run:
+    # Create snapshot in its own short-lived session
+    if not dry_run:
+        with get_db() as snap_db:
             snapshot = UnitSnapshot(source=normalize_str(source, 255))
-            db.add(snapshot)
-            db.flush()
+            snap_db.add(snapshot)
+            snap_db.flush()
             snapshot_id = snapshot.id
             captured_at = snapshot.imported_at
+            snap_db.commit()
             print(f"Created UnitSnapshot id={snapshot_id} (source={source})")
-        else:
-            from datetime import timezone
-            captured_at = datetime.now(timezone.utc)
+    else:
+        from datetime import timezone
+        captured_at = datetime.now(timezone.utc)
 
-        touched_project_ids: set[int] = set()
-        total_chunks = (len(valid) + chunk_size - 1) // chunk_size
+    touched_project_ids: set[int] = set()
+    total_chunks = (len(valid) + chunk_size - 1) // chunk_size
 
-        for chunk_start in range(0, len(valid), chunk_size):
+    for chunk_start in range(0, len(valid), chunk_size):
+        # Fresh session per chunk: isolates connection drops (Supavisor) so a
+        # dead TCP socket kills only one chunk instead of the whole import.
+        # pool_pre_ping validates the connection on each checkout.
+        with get_db() as db:
             chunk_idx = chunk_start // chunk_size + 1
             chunk_t0 = time.perf_counter()
             chunk = valid[chunk_start : chunk_start + chunk_size]
@@ -1171,29 +1177,27 @@ def import_units(
                 flush=True,
             )
 
-        if not dry_run:
-            print(
-                f"[import] all chunks done, committing units before recompute "
-                f"(touched_projects={len(touched_project_ids)})",
-                flush=True,
-            )
-            # Commit units first — recompute can OOM / be killed, but raw import must survive.
-            db.commit()
-            print("[import] units committed; starting recompute", flush=True)
-            # Recompute cached project aggregates for all affected projects in this import
-            if touched_project_ids:
-                recompute_project_aggregates(db, sorted(touched_project_ids))
-                db.commit()
-                print("[import] project aggregates recomputed & committed", flush=True)
-            # Recompute local price diffs (vs. market) for all units
-            recompute_local_price_diffs(db)
-            db.commit()
-            print("[import] local price diffs recomputed & committed", flush=True)
-            # Cleanup: not_seen jednotky v mrtvých projektech (0 available, first_seen > 180d) → sold
-            dead_fixed = cleanup_not_seen_in_dead_projects(db)
+    # Recompute phase uses its own session (outside the chunk loop). Each
+    # sub-step opens a fresh session so connection drops only cost one step.
+    if not dry_run:
+        print(
+            f"[import] all chunks done (touched_projects={len(touched_project_ids)}); starting recompute",
+            flush=True,
+        )
+        if touched_project_ids:
+            with get_db() as rdb:
+                recompute_project_aggregates(rdb, sorted(touched_project_ids))
+                rdb.commit()
+            print("[import] project aggregates recomputed & committed", flush=True)
+        with get_db() as rdb:
+            recompute_local_price_diffs(rdb)
+            rdb.commit()
+        print("[import] local price diffs recomputed & committed", flush=True)
+        with get_db() as rdb:
+            dead_fixed = cleanup_not_seen_in_dead_projects(rdb)
             if dead_fixed > 0:
                 print(f"Cleanup: {dead_fixed} not_seen jednotek v mrtvých projektech označeno jako sold")
-            db.commit()
+            rdb.commit()
 
     total_elapsed = time.perf_counter() - total_start
     n = len(valid)
