@@ -1118,9 +1118,16 @@ def import_units(
                                             )
                                         )
 
+            # Commit + expunge po každém chunku — drží paměť session nízko
+            # a zaručuje, že OOM kill neztratí už importované chunky.
+            if not dry_run:
+                db.commit()
+                db.expunge_all()
+
             chunk_elapsed = time.perf_counter() - chunk_t0
             print(
-                f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s",
+                f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s "
+                f"(committed)",
                 flush=True,
             )
 
