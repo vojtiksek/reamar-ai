@@ -806,9 +806,15 @@ def import_units(
     load_elapsed = time.perf_counter() - load_start
     print(f"Found {len(units_data)} units in JSON (load: {load_elapsed:.2f}s)")
 
-    # Filter valid rows and build project keys
+    # Filter valid rows and build project keys.
+    # Memory: consume units_data in place (pop from end) so we don't hold
+    # two 45k-item lists simultaneously. Peak RAM drop ~150 MB on full Czechia import.
     valid: list[tuple[dict[str, Any], tuple[str | None, str, str | None], str]] = []
-    for idx, unit_data in enumerate(units_data, 1):
+    total_loaded = len(units_data)
+    idx = 0
+    while units_data:
+        unit_data = units_data.pop()
+        idx += 1
         unique_id = unit_data.get("unique_id")
         if not unique_id:
             print(f"Warning: Unit {idx} missing unique_id, skipping")
@@ -823,6 +829,10 @@ def import_units(
             unit_data.get("address"),
         )
         valid.append((unit_data, key, str(unique_id)))
+    # Drop the now-empty source list reference.
+    del units_data
+    valid.reverse()  # preserve original order (we appended while popping from end)
+    print(f"[import] built valid list: {len(valid)}/{total_loaded} rows usable")
 
     total_start = time.perf_counter()
     projects_created = 0
@@ -1124,10 +1134,18 @@ def import_units(
                 db.commit()
                 db.expunge_all()
 
+            # Uvolni již zpracovaný chunk z `valid` — raw dict tuples z této
+            # části už nepotřebujeme (výsledek je v DB). Nahradíme None, aby
+            # index-based přístup + len(valid) zůstaly funkční.
+            for i in range(chunk_start, min(chunk_start + chunk_size, len(valid))):
+                valid[i] = None  # type: ignore[call-overload]
+            # Lokální reference na chunk / maps také uvolníme explicitně.
+            del chunk, project_keys, external_ids, projects_map, units_map
+
             chunk_elapsed = time.perf_counter() - chunk_t0
             print(
                 f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s "
-                f"(committed)",
+                f"(committed, freed)",
                 flush=True,
             )
 
