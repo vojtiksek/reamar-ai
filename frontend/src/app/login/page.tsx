@@ -74,72 +74,88 @@ function LoginInner() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#F8F9FA]">
       <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-[0_4px_24px_rgba(0,0,0,0.08)] border border-slate-200">
-        <h1 className="mb-6 text-xl font-semibold text-[#1E3A5F]">Přihlášení makléře</h1>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Email</label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-slate-600">Heslo</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-              required
-            />
-          </div>
-          {error && <p className="text-sm text-rose-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-full bg-[#1E3A5F] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0F2B46] disabled:opacity-50"
-          >
-            {loading ? "Přihlašuji…" : "Přihlásit se"}
-          </button>
-        </form>
+        <h1 className="mb-6 text-xl font-semibold text-[#1E3A5F]">
+          {forgotOpen ? "Reset hesla" : "Přihlášení makléře"}
+        </h1>
 
-        <div className="mt-4 text-center">
-          {!forgotOpen ? (
-            <button
-              type="button"
-              onClick={() => { setForgotOpen(true); setForgotMsg(null); }}
-              className="text-xs text-slate-500 underline hover:text-slate-700"
-            >
-              Zapomenuté heslo?
-            </button>
-          ) : (
-            <form onSubmit={handleForgot} className="space-y-2 text-left">
-              <p className="text-xs text-slate-600">
-                Pošleme ti email s odkazem pro nastavení nového hesla na adresu výše.
-              </p>
-              <div className="flex gap-2">
-                <button
-                  type="submit"
-                  disabled={forgotLoading}
-                  className="flex-1 rounded-full bg-slate-700 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50"
-                >
-                  {forgotLoading ? "Odesílám…" : "Poslat reset link"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setForgotOpen(false)}
-                  className="rounded-full border border-slate-300 px-3 py-2 text-xs text-slate-600"
-                >
-                  Zpět
-                </button>
+        {!forgotOpen ? (
+          <>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-600">Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
               </div>
-              {forgotMsg && <p className="text-xs text-emerald-700">{forgotMsg}</p>}
+              <div>
+                <label className="block text-xs font-medium text-slate-600">Heslo</label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  required
+                />
+              </div>
+              {error && <p className="text-sm text-rose-600">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-full bg-[#1E3A5F] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0F2B46] disabled:opacity-50"
+              >
+                {loading ? "Přihlašuji…" : "Přihlásit se"}
+              </button>
             </form>
-          )}
-        </div>
+            <div className="mt-4 text-center">
+              <button
+                type="button"
+                onClick={() => { setForgotOpen(true); setForgotMsg(null); setError(null); }}
+                className="text-xs text-slate-500 underline hover:text-slate-700"
+              >
+                Zapomenuté heslo?
+              </button>
+            </div>
+          </>
+        ) : (
+          <form onSubmit={handleForgot} className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-slate-600">Email</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                required
+                autoFocus
+              />
+            </div>
+            <p className="text-xs text-slate-600">
+              Pošleme ti email s odkazem pro nastavení nového hesla.
+            </p>
+            {forgotMsg && <p className="text-xs text-emerald-700">{forgotMsg}</p>}
+            {error && <p className="text-sm text-rose-600">{error}</p>}
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={forgotLoading}
+                className="flex-1 rounded-full bg-[#1E3A5F] px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#0F2B46] disabled:opacity-50"
+              >
+                {forgotLoading ? "Odesílám…" : "Poslat reset link"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setForgotOpen(false); setForgotMsg(null); setError(null); }}
+                className="rounded-full border border-slate-300 px-4 py-2.5 text-sm text-slate-600 hover:bg-slate-50"
+              >
+                Zpět
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
