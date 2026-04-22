@@ -871,7 +871,9 @@ def import_units(
             )
 
             # Batch load existing projects and units
+            _t = time.perf_counter()
             projects_map = batch_load_projects(db, project_keys)
+            print(f"[chunk {chunk_idx}] batch_load_projects: {time.perf_counter()-_t:.2f}s ({len(projects_map)} found)", flush=True)
 
             # Phase 2 project-id matching: prefer builtmind_project_id over name-key.
             # Build key -> builtmind_project_id from first unit in chunk with that key.
@@ -880,9 +882,13 @@ def import_units(
                 if k not in key_to_builtmind_id:
                     key_to_builtmind_id[k] = normalize_int(ud.get("builtmind_project_id"))
             bm_ids = [bid for bid in key_to_builtmind_id.values() if bid is not None]
+            _t = time.perf_counter()
             builtmind_id_map = batch_load_projects_by_builtmind_id(db, bm_ids)
+            print(f"[chunk {chunk_idx}] batch_load_projects_by_builtmind_id: {time.perf_counter()-_t:.2f}s ({len(builtmind_id_map)} found)", flush=True)
 
+            _t = time.perf_counter()
             units_map = batch_load_units_by_external_id(db, external_ids)
+            print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: {time.perf_counter()-_t:.2f}s ({len(units_map)} found)", flush=True)
 
             # Resolve or create projects (unique keys per chunk).
             # Priority: 1) builtmind_project_id match, 2) name-key match, 3) create new.
@@ -1055,9 +1061,17 @@ def import_units(
                         enrich_project_ids.add(p.id)
 
             if not dry_run:
+                _t = time.perf_counter()
                 db.flush()
-                for pid in sorted(enrich_project_ids):
-                    enrich_project_location_metrics(db, pid)
+                print(f"[chunk {chunk_idx}] db.flush after unit loop: {time.perf_counter()-_t:.2f}s", flush=True)
+                if enrich_project_ids:
+                    print(f"[chunk {chunk_idx}] enriching {len(enrich_project_ids)} projects (external APIs)", flush=True)
+                    for pid in sorted(enrich_project_ids):
+                        _te = time.perf_counter()
+                        enrich_project_location_metrics(db, pid)
+                        dt = time.perf_counter() - _te
+                        if dt > 2.0:
+                            print(f"[chunk {chunk_idx}]   enrich pid={pid}: {dt:.2f}s (slow)", flush=True)
 
                 # Invalidate commute cache for projects whose GPS changed.
                 if enrich_project_ids:
@@ -1065,6 +1079,7 @@ def import_units(
 
             # After flushing unit changes and potential events, generate client alerts for new events.
             if not dry_run:
+                _t_alerts = time.perf_counter()
                 # Load recent events for units touched in this chunk
                 unit_ids = [u.id for u in units_map.values()]
                 if unit_ids:
@@ -1131,7 +1146,12 @@ def import_units(
             # Commit + expunge po každém chunku — drží paměť session nízko
             # a zaručuje, že OOM kill neztratí už importované chunky.
             if not dry_run:
+                _t_alerts_dt = time.perf_counter() - _t_alerts
+                if _t_alerts_dt > 1.0:
+                    print(f"[chunk {chunk_idx}] alerts/match block: {_t_alerts_dt:.2f}s (slow)", flush=True)
+                _t = time.perf_counter()
                 db.commit()
+                print(f"[chunk {chunk_idx}] db.commit: {time.perf_counter()-_t:.2f}s", flush=True)
                 db.expunge_all()
 
             # Uvolni již zpracovaný chunk z `valid` — raw dict tuples z této
