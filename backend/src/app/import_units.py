@@ -846,11 +846,19 @@ def import_units(
             captured_at = datetime.now(timezone.utc)
 
         touched_project_ids: set[int] = set()
+        total_chunks = (len(valid) + chunk_size - 1) // chunk_size
 
         for chunk_start in range(0, len(valid), chunk_size):
+            chunk_idx = chunk_start // chunk_size + 1
+            chunk_t0 = time.perf_counter()
             chunk = valid[chunk_start : chunk_start + chunk_size]
             project_keys = [k for _, k, _ in chunk]
             external_ids = [eid for _, _, eid in chunk]
+            print(
+                f"[chunk {chunk_idx}/{total_chunks}] start: {len(chunk)} units "
+                f"({chunk_start}-{chunk_start + len(chunk)})",
+                flush=True,
+            )
 
             # Batch load existing projects and units
             projects_map = batch_load_projects(db, project_keys)
@@ -1110,8 +1118,18 @@ def import_units(
                                             )
                                         )
 
+            chunk_elapsed = time.perf_counter() - chunk_t0
+            print(
+                f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s",
+                flush=True,
+            )
 
         if not dry_run:
+            print(
+                f"[import] all chunks done, starting final recompute "
+                f"(touched_projects={len(touched_project_ids)})",
+                flush=True,
+            )
             # Recompute cached project aggregates for all affected projects in this import
             if touched_project_ids:
                 recompute_project_aggregates(db, sorted(touched_project_ids))

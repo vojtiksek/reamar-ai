@@ -7136,47 +7136,96 @@ def admin_recompute_derived_floors(db: DbSession) -> dict[str, Any]:
 # BuiltMind API import
 # ---------------------------------------------------------------------------
 
-@app.post("/admin/imports/builtmind/run")
-def run_builtmind_import() -> dict[str, Any]:
-    """Fetch latest data from BuiltMind API and run full import into DB.
+# Paměťový stav posledního běhu BuiltMind importu. Přepisuje se při každém spuštění.
+# Struktura: {status, started_at, finished_at, error, stats, recompute}
+_builtmind_import_state: dict[str, Any] = {"status": "idle"}
 
-    Reads BUILTMIND_API_KEY from environment. Returns import stats on success.
-    This can take 1–2 minutes — called from the admin UI action menu.
-    """
+
+def _run_builtmind_import_job() -> None:
+    """Background job: fetch + import + recompute. Updates _builtmind_import_state."""
     import tempfile
+    import traceback
     import json as _json
+    from datetime import datetime, timezone
+    from pathlib import Path as _Path
     from .fetch_builtmind import fetch_from_api
     from .import_units import import_units as _import_units
     from .settings import settings
 
-    # Prefer settings (loaded from .env via pydantic-settings). Fall back to
-    # raw os.environ for contexts where shell exports the var directly.
-    api_key = (settings.builtmind_api_key or os.environ.get("BUILTMIND_API_KEY", "")).strip()
-    if not api_key:
-        raise HTTPException(status_code=500, detail="BUILTMIND_API_KEY not set in environment")
-
+    _builtmind_import_state.update(
+        {
+            "status": "running",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "finished_at": None,
+            "error": None,
+            "stats": None,
+            "recompute": None,
+        }
+    )
     try:
+        api_key = (settings.builtmind_api_key or os.environ.get("BUILTMIND_API_KEY", "")).strip()
+        if not api_key:
+            raise RuntimeError("BUILTMIND_API_KEY not set in environment")
+
+        print("[import] fetching from BuiltMind API…", flush=True)
         units = fetch_from_api(api_key)
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"BuiltMind API fetch failed: {exc}") from exc
+        print(f"[import] fetched {len(units)} units", flush=True)
 
-    # Save to temp file (import_units expects a Path)
-    from pathlib import Path as _Path
-    fd, tmp_path_str = tempfile.mkstemp(suffix=".json", prefix="builtmind_")
-    tmp_path = _Path(tmp_path_str)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            _json.dump(units, f, ensure_ascii=False)
-        stats = _import_units(tmp_path, source="api")
-    finally:
+        fd, tmp_path_str = tempfile.mkstemp(suffix=".json", prefix="builtmind_")
+        tmp_path = _Path(tmp_path_str)
         try:
-            tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                _json.dump(units, f, ensure_ascii=False)
+            stats = _import_units(tmp_path, source="api")
+        finally:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
-    # Auto-recompute recommendations for all active clients after import
-    recompute_stats = _recompute_all_client_recommendations()
-    return {"ok": True, **stats, "recompute": recompute_stats}
+        print("[import] recomputing client recommendations…", flush=True)
+        recompute_stats = _recompute_all_client_recommendations()
+        _builtmind_import_state.update(
+            {
+                "status": "done",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "stats": stats,
+                "recompute": recompute_stats,
+            }
+        )
+        print("[import] DONE", flush=True)
+    except Exception as exc:  # noqa: BLE001
+        print(f"[import] FAILED: {exc}", flush=True)
+        traceback.print_exc()
+        _builtmind_import_state.update(
+            {
+                "status": "error",
+                "finished_at": datetime.now(timezone.utc).isoformat(),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+        )
+
+
+@app.post("/admin/imports/builtmind/run")
+def run_builtmind_import() -> dict[str, Any]:
+    """Spustí BuiltMind import v background threadu a hned vrátí 202.
+
+    Pokud už job běží, vrátí 409. Stav si zjisti přes GET /admin/imports/builtmind/status.
+    """
+    import threading
+
+    if _builtmind_import_state.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Import already running")
+
+    t = threading.Thread(target=_run_builtmind_import_job, daemon=True, name="builtmind-import")
+    t.start()
+    return {"ok": True, "status": "started"}
+
+
+@app.get("/admin/imports/builtmind/status")
+def get_builtmind_import_status() -> dict[str, Any]:
+    """Poll stav posledního BuiltMind importu."""
+    return dict(_builtmind_import_state)
 
 
 def _recompute_all_client_recommendations() -> dict[str, Any]:
