@@ -7214,7 +7214,9 @@ def _run_builtmind_import_job() -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 _json.dump(units, f, ensure_ascii=False)
-            stats = _import_units(tmp_path, source="api")
+            # chunk_size=500 místo defaultu 2000 → 4× menší memory špičky uvnitř chunku
+            # = robustnější proti Railway OOM killu.
+            stats = _import_units(tmp_path, source="api", chunk_size=500)
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
