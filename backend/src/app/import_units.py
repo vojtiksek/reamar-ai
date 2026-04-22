@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import threading
 import time
 from datetime import date, datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete, desc, select, text, tuple_
+from sqlalchemy.exc import DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.orm import Session
 
 from .db import get_db
@@ -472,14 +474,28 @@ def batch_load_projects_by_builtmind_id(
 def batch_load_units_by_external_id(
     db: Session,
     external_ids: list[str],
+    sub_batch: int = 100,
 ) -> dict[str, Unit]:
-    """Load units by external_id. Returns external_id -> Unit."""
+    """Load units by external_id. Returns external_id -> Unit.
+
+    Queries are split into sub-batches of at most ``sub_batch`` IDs. This
+    keeps each individual IN (...) query small and predictable on the
+    Supavisor pooler — we observed that a single IN clause with 500 values
+    occasionally causes the pooler to silently buffer the query without
+    forwarding it to Postgres. Smaller queries dramatically reduce the
+    chance of hitting that path.
+    """
     if not external_ids:
         return {}
     unique_ids = list(dict.fromkeys(external_ids))
-    stmt = select(Unit).where(Unit.external_id.in_(unique_ids))
-    rows = db.execute(stmt).scalars().all()
-    return {u.external_id: u for u in rows}
+    result: dict[str, Unit] = {}
+    for i in range(0, len(unique_ids), sub_batch):
+        batch = unique_ids[i : i + sub_batch]
+        stmt = select(Unit).where(Unit.external_id.in_(batch))
+        rows = db.execute(stmt).scalars().all()
+        for u in rows:
+            result[u.external_id] = u
+    return result
 
 
 def batch_load_latest_price_history(
@@ -860,322 +876,432 @@ def import_units(
     touched_project_ids: set[int] = set()
     total_chunks = (len(valid) + chunk_size - 1) // chunk_size
 
-    for chunk_start in range(0, len(valid), chunk_size):
-        # Fresh session per chunk: isolates connection drops (Supavisor) so a
-        # dead TCP socket kills only one chunk instead of the whole import.
-        # pool_pre_ping validates the connection on each checkout.
-        with get_db() as db:
-            chunk_idx = chunk_start // chunk_size + 1
-            chunk_t0 = time.perf_counter()
-            chunk = valid[chunk_start : chunk_start + chunk_size]
-            project_keys = [k for _, k, _ in chunk]
-            external_ids = [eid for _, _, eid in chunk]
-            print(
-                f"[chunk {chunk_idx}/{total_chunks}] start: {len(chunk)} units "
-                f"({chunk_start}-{chunk_start + len(chunk)})",
-                flush=True,
-            )
+    # --- forward-looking per-chunk resilience -----------------------------
+    # Supavisor (Supabase pooler) occasionally buffers a query without
+    # forwarding it to PostgreSQL. The client TCP recv() then hangs
+    # indefinitely and a standard CancelRequest is a no-op because no
+    # backend PID exists yet. The only reliable unblock is an OS-level
+    # socket close (bypasses psycopg's connection lock held by the hung
+    # thread). We then dispose the SQLAlchemy pool so the next checkout
+    # opens a fresh TCP connection, and retry with exponential backoff.
+    CHUNK_TIMEOUT_S = 45.0
+    CHUNK_MAX_RETRIES = 5
 
-            # Batch load existing projects and units
-            _t = time.perf_counter()
-            projects_map = batch_load_projects(db, project_keys)
-            print(f"[chunk {chunk_idx}] batch_load_projects: {time.perf_counter()-_t:.2f}s ({len(projects_map)} found)", flush=True)
+    def _hard_close_socket(raw_conn: Any) -> None:
+        """os.close() the underlying TCP fd; unblocks a thread in recv()."""
+        try:
+            fd = int(raw_conn.pgconn.socket)
+            if fd >= 0:
+                import os as _os
+                _os.close(fd)
+        except Exception:  # noqa: BLE001
+            pass
 
-            # Phase 2 project-id matching: prefer builtmind_project_id over name-key.
-            # Build key -> builtmind_project_id from first unit in chunk with that key.
-            key_to_builtmind_id: dict[tuple, int | None] = {}
-            for ud, k, _ in chunk:
-                if k not in key_to_builtmind_id:
-                    key_to_builtmind_id[k] = normalize_int(ud.get("builtmind_project_id"))
-            bm_ids = [bid for bid in key_to_builtmind_id.values() if bid is not None]
-            _t = time.perf_counter()
-            builtmind_id_map = batch_load_projects_by_builtmind_id(db, bm_ids)
-            print(f"[chunk {chunk_idx}] batch_load_projects_by_builtmind_id: {time.perf_counter()-_t:.2f}s ({len(builtmind_id_map)} found)", flush=True)
+    def _run_chunk_body(db: Session, chunk_start: int, chunk_idx: int) -> None:
+        """Process one chunk. Raises on DB error; safe to retry."""
+        nonlocal projects_created, projects_reused, units_created, units_updated, history_inserted
+        chunk_t0 = time.perf_counter()
+        chunk = valid[chunk_start : chunk_start + chunk_size]
+        project_keys = [k for _, k, _ in chunk]
+        external_ids = [eid for _, _, eid in chunk]
+        print(
+            f"[chunk {chunk_idx}/{total_chunks}] start: {len(chunk)} units "
+            f"({chunk_start}-{chunk_start + len(chunk)})",
+            flush=True,
+        )
 
-            _t = time.perf_counter()
-            _sample = (external_ids[:3], external_ids[-3:]) if external_ids else ([], [])
-            print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: calling with {len(external_ids)} ids, sample={_sample}", flush=True)
-            units_map = batch_load_units_by_external_id(db, external_ids)
-            print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: {time.perf_counter()-_t:.2f}s ({len(units_map)} found)", flush=True)
+        # Batch load existing projects and units
+        _t = time.perf_counter()
+        projects_map = batch_load_projects(db, project_keys)
+        print(f"[chunk {chunk_idx}] batch_load_projects: {time.perf_counter()-_t:.2f}s ({len(projects_map)} found)", flush=True)
 
-            # Resolve or create projects (unique keys per chunk).
-            # Priority: 1) builtmind_project_id match, 2) name-key match, 3) create new.
-            project_key_to_project: dict[tuple[str | None, str, str | None], Project] = {}
-            for key in project_keys:
-                if key in project_key_to_project:
-                    continue
-                bm_id = key_to_builtmind_id.get(key)
-                if bm_id is not None and bm_id in builtmind_id_map:
-                    # Found existing project via stable BuiltMind ID (survives renames).
-                    project_key_to_project[key] = builtmind_id_map[bm_id]
-                    projects_reused += 1
-                elif key in projects_map:
-                    project_key_to_project[key] = projects_map[key]
-                    projects_reused += 1
-                else:
-                    proj = Project(developer=key[0], name=key[1], address=key[2])
-                    if not dry_run:
-                        db.add(proj)
-                        db.flush()
-                    project_key_to_project[key] = proj
-                    projects_created += 1
+        # Phase 2 project-id matching: prefer builtmind_project_id over name-key.
+        # Build key -> builtmind_project_id from first unit in chunk with that key.
+        key_to_builtmind_id: dict[tuple, int | None] = {}
+        for ud, k, _ in chunk:
+            if k not in key_to_builtmind_id:
+                key_to_builtmind_id[k] = normalize_int(ud.get("builtmind_project_id"))
+        bm_ids = [bid for bid in key_to_builtmind_id.values() if bid is not None]
+        _t = time.perf_counter()
+        builtmind_id_map = batch_load_projects_by_builtmind_id(db, bm_ids)
+        print(f"[chunk {chunk_idx}] batch_load_projects_by_builtmind_id: {time.perf_counter()-_t:.2f}s ({len(builtmind_id_map)} found)", flush=True)
 
-            existing_unit_ids = [u.id for u in units_map.values()]
-            latest_history = batch_load_latest_price_history(db, existing_unit_ids) if existing_unit_ids else {}
-            override_map = batch_load_unit_overrides(db, existing_unit_ids)
-            pending_list: list[tuple[int, str, str]] = []
+        _t = time.perf_counter()
+        _sample = (external_ids[:3], external_ids[-3:]) if external_ids else ([], [])
+        print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: calling with {len(external_ids)} ids, sample={_sample}", flush=True)
+        units_map = batch_load_units_by_external_id(db, external_ids)
+        print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: {time.perf_counter()-_t:.2f}s ({len(units_map)} found)", flush=True)
 
-            # Track which projects need location-metrics enrichment (new or gps/region changed)
-            old_project_location: dict[tuple[str | None, str, str | None], tuple[Any, Any, Any]] = {}
-            for key in project_key_to_project:
-                if key in projects_map:
-                    p = project_key_to_project[key]
-                    old_project_location[key] = (p.gps_latitude, p.gps_longitude, p.region_iga)
-            enrich_project_ids: set[int] = set()
-            for key in project_key_to_project:
-                if key not in projects_map and project_key_to_project[key].id is not None:
-                    enrich_project_ids.add(project_key_to_project[key].id)
-
-            for unit_data, key, external_id in chunk:
-                project = project_key_to_project[key]
-                project_id = project.id  # None in dry-run for new projects; we don't persist then
-                if project_id is not None:
-                    touched_project_ids.add(project_id)
-                apply_project_data(project, unit_data, only_if_present=(key in projects_map))
-                unit = units_map.get(external_id)
-                is_new = unit is None
-
-                if is_new:
-                    unit = Unit(external_id=external_id, project_id=project_id or 0)
-                    apply_unit_data_mapped(unit, unit_data, only_if_present=False)
-                else:
-                    attrs_tracked = _attrs_tracked_from_unit_data(unit_data)
-                    old_vals = {a: getattr(unit, a, None) for a in attrs_tracked}
-                    apply_unit_data_respecting_overrides(
-                        unit,
-                        unit_data,
-                        override_map.get(unit.id, {}),
-                        pending_list,
-                        only_if_present=True,
-                    )
-                    for a in attrs_tracked:
-                        new_v = getattr(unit, a, None)
-                        old_v = old_vals.get(a)
-                        if old_v != new_v:
-                            changes_by_field[a] = changes_by_field.get(a, 0) + 1
-
-                    # Detect unit events based on changes in price and availability/status.
-                    old_price = old_vals.get("price_czk")
-                    new_price = getattr(unit, "price_czk", None)
-                    if old_price is not None and new_price is not None and old_price != new_price:
-                        ev_type = "price_drop" if new_price < old_price else "price_increase"
-                        if not dry_run:
-                            db.add(
-                                UnitEvent(
-                                    unit_id=unit.id,
-                                    event_type=ev_type,
-                                    old_value=str(old_price),
-                                    new_value=str(new_price),
-                                )
-                            )
-
-                    old_available = old_vals.get("available")
-                    new_available = getattr(unit, "available", None)
-                    if old_available is not None and new_available is not None and old_available != new_available:
-                        if old_available is False and new_available is True:
-                            ev_type = "status_available"
-                        elif old_available is True and new_available is False:
-                            ev_type = "status_reserved"
-                        else:
-                            ev_type = None
-                        if ev_type and not dry_run:
-                            db.add(
-                                UnitEvent(
-                                    unit_id=unit.id,
-                                    event_type=ev_type,
-                                    old_value=str(old_available),
-                                    new_value=str(new_available),
-                                )
-                            )
-
-                if is_new:
-                    if dry_run:
-                        units_created += 1
-                        history_inserted += 1  # first row per new unit
-                        continue
-                    unit.project_id = project_id
-                    db.add(unit)
+        # Resolve or create projects (unique keys per chunk).
+        # Priority: 1) builtmind_project_id match, 2) name-key match, 3) create new.
+        project_key_to_project: dict[tuple[str | None, str, str | None], Project] = {}
+        for key in project_keys:
+            if key in project_key_to_project:
+                continue
+            bm_id = key_to_builtmind_id.get(key)
+            if bm_id is not None and bm_id in builtmind_id_map:
+                # Found existing project via stable BuiltMind ID (survives renames).
+                project_key_to_project[key] = builtmind_id_map[bm_id]
+                projects_reused += 1
+            elif key in projects_map:
+                project_key_to_project[key] = projects_map[key]
+                projects_reused += 1
+            else:
+                proj = Project(developer=key[0], name=key[1], address=key[2])
+                if not dry_run:
+                    db.add(proj)
                     db.flush()
-                    units_created += 1
-                    # Record new unit event
+                project_key_to_project[key] = proj
+                projects_created += 1
+
+        existing_unit_ids = [u.id for u in units_map.values()]
+        latest_history = batch_load_latest_price_history(db, existing_unit_ids) if existing_unit_ids else {}
+        override_map = batch_load_unit_overrides(db, existing_unit_ids)
+        pending_list: list[tuple[int, str, str]] = []
+
+        # Track which projects need location-metrics enrichment (new or gps/region changed)
+        old_project_location: dict[tuple[str | None, str, str | None], tuple[Any, Any, Any]] = {}
+        for key in project_key_to_project:
+            if key in projects_map:
+                p = project_key_to_project[key]
+                old_project_location[key] = (p.gps_latitude, p.gps_longitude, p.region_iga)
+        enrich_project_ids: set[int] = set()
+        for key in project_key_to_project:
+            if key not in projects_map and project_key_to_project[key].id is not None:
+                enrich_project_ids.add(project_key_to_project[key].id)
+
+        for unit_data, key, external_id in chunk:
+            project = project_key_to_project[key]
+            project_id = project.id  # None in dry-run for new projects; we don't persist then
+            if project_id is not None:
+                touched_project_ids.add(project_id)
+            apply_project_data(project, unit_data, only_if_present=(key in projects_map))
+            unit = units_map.get(external_id)
+            is_new = unit is None
+
+            if is_new:
+                unit = Unit(external_id=external_id, project_id=project_id or 0)
+                apply_unit_data_mapped(unit, unit_data, only_if_present=False)
+            else:
+                attrs_tracked = _attrs_tracked_from_unit_data(unit_data)
+                old_vals = {a: getattr(unit, a, None) for a in attrs_tracked}
+                apply_unit_data_respecting_overrides(
+                    unit,
+                    unit_data,
+                    override_map.get(unit.id, {}),
+                    pending_list,
+                    only_if_present=True,
+                )
+                for a in attrs_tracked:
+                    new_v = getattr(unit, a, None)
+                    old_v = old_vals.get(a)
+                    if old_v != new_v:
+                        changes_by_field[a] = changes_by_field.get(a, 0) + 1
+
+                # Detect unit events based on changes in price and availability/status.
+                old_price = old_vals.get("price_czk")
+                new_price = getattr(unit, "price_czk", None)
+                if old_price is not None and new_price is not None and old_price != new_price:
+                    ev_type = "price_drop" if new_price < old_price else "price_increase"
                     if not dry_run:
                         db.add(
                             UnitEvent(
                                 unit_id=unit.id,
-                                event_type="new_unit",
-                                old_value=None,
-                                new_value=None,
+                                event_type=ev_type,
+                                old_value=str(old_price),
+                                new_value=str(new_price),
                             )
                         )
-                    last = None
-                else:
-                    units_updated += 1
-                    last = latest_history.get(unit.id)
 
-                if should_insert_history(
-                    last,
-                    unit.price_czk,
-                    unit.price_per_m2_czk,
-                    unit.availability_status,
-                    unit.available,
-                ):
-                    history_inserted += 1
-                    if not dry_run:
+                old_available = old_vals.get("available")
+                new_available = getattr(unit, "available", None)
+                if old_available is not None and new_available is not None and old_available != new_available:
+                    if old_available is False and new_available is True:
+                        ev_type = "status_available"
+                    elif old_available is True and new_available is False:
+                        ev_type = "status_reserved"
+                    else:
+                        ev_type = None
+                    if ev_type and not dry_run:
                         db.add(
-                            UnitPriceHistory(
+                            UnitEvent(
                                 unit_id=unit.id,
-                                captured_at=captured_at,
-                                price_czk=unit.price_czk,
-                                price_per_m2_czk=unit.price_per_m2_czk,
-                                availability_status=unit.availability_status,
-                                available=unit.available,
+                                event_type=ev_type,
+                                old_value=str(old_available),
+                                new_value=str(new_available),
                             )
                         )
 
-            if not dry_run and pending_list:
-                for (uid, field, value) in pending_list:
-                    db.execute(
-                        delete(UnitApiPending).where(
-                            UnitApiPending.unit_id == uid,
-                            UnitApiPending.field == field,
-                        )
-                    )
-                    db.add(UnitApiPending(unit_id=uid, field=field, value=value))
-
-            # Mark existing projects for enrichment when gps or region changed
-            for key in project_key_to_project:
-                if key in projects_map:
-                    p = project_key_to_project[key]
-                    old = old_project_location.get(key)
-                    if old is not None and p.id is not None and should_enrich_after_project_change(
-                        is_new_project=False,
-                        old_lat=old[0],
-                        old_lon=old[1],
-                        old_region=old[2],
-                        new_lat=p.gps_latitude,
-                        new_lon=p.gps_longitude,
-                        new_region=p.region_iga,
-                    ):
-                        enrich_project_ids.add(p.id)
-
-            if not dry_run:
-                _t = time.perf_counter()
+            if is_new:
+                if dry_run:
+                    units_created += 1
+                    history_inserted += 1  # first row per new unit
+                    continue
+                unit.project_id = project_id
+                db.add(unit)
                 db.flush()
-                print(f"[chunk {chunk_idx}] db.flush after unit loop: {time.perf_counter()-_t:.2f}s", flush=True)
-                if enrich_project_ids:
-                    print(f"[chunk {chunk_idx}] enriching {len(enrich_project_ids)} projects (external APIs)", flush=True)
-                    for pid in sorted(enrich_project_ids):
-                        _te = time.perf_counter()
-                        enrich_project_location_metrics(db, pid)
-                        dt = time.perf_counter() - _te
-                        if dt > 2.0:
-                            print(f"[chunk {chunk_idx}]   enrich pid={pid}: {dt:.2f}s (slow)", flush=True)
-
-                # Invalidate commute cache for projects whose GPS changed.
-                if enrich_project_ids:
-                    db.execute(delete(CommuteCache).where(CommuteCache.project_id.in_(enrich_project_ids)))
-
-            # After flushing unit changes and potential events, generate client alerts for new events.
-            if not dry_run:
-                _t_alerts = time.perf_counter()
-                # Load recent events for units touched in this chunk
-                unit_ids = [u.id for u in units_map.values()]
-                if unit_ids:
-                    events = (
-                        db.execute(
-                            select(UnitEvent)
-                            .where(UnitEvent.unit_id.in_(unit_ids))
-                            .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+                units_created += 1
+                # Record new unit event
+                if not dry_run:
+                    db.add(
+                        UnitEvent(
+                            unit_id=unit.id,
+                            event_type="new_unit",
+                            old_value=None,
+                            new_value=None,
                         )
-                        .scalars()
-                        .all()
                     )
-                    # Map unit_id -> latest event per type (simple last-seen)
-                    events_by_unit: dict[int, list[UnitEvent]] = {}
-                    for ev in events:
-                        events_by_unit.setdefault(ev.unit_id, []).append(ev)
+                last = None
+            else:
+                units_updated += 1
+                last = latest_history.get(unit.id)
 
-                    if events_by_unit:
-                        # Build reverse map: project_id -> Project for unit lookup
-                        project_id_to_project = {
-                            p.id: p for p in project_key_to_project.values() if p.id is not None
-                        }
-                        # Load clients + profiles once (simple approach: all clients)
-                        clients = db.execute(select(Client)).scalars().all()
-                        profiles_map: dict[int, ClientProfile | None] = {}
-                        if clients:
-                            prof_rows = db.execute(
-                                select(ClientProfile).where(
-                                    ClientProfile.client_id.in_([c.id for c in clients])
-                                )
-                            ).scalars().all()
-                            for p in prof_rows:
-                                profiles_map[p.client_id] = p
+            if should_insert_history(
+                last,
+                unit.price_czk,
+                unit.price_per_m2_czk,
+                unit.availability_status,
+                unit.available,
+            ):
+                history_inserted += 1
+                if not dry_run:
+                    db.add(
+                        UnitPriceHistory(
+                            unit_id=unit.id,
+                            captured_at=captured_at,
+                            price_czk=unit.price_czk,
+                            price_per_m2_czk=unit.price_per_m2_czk,
+                            availability_status=unit.availability_status,
+                            available=unit.available,
+                        )
+                    )
 
-                        for unit in units_map.values():
-                            unit_events = events_by_unit.get(unit.id)
-                            if not unit_events:
-                                continue
-                            # For alerting, we don't care which exact event, we just use latest.
-                            latest_event = unit_events[0]
-                            project = project_id_to_project.get(unit.project_id)
-                            if project is None:
-                                continue
-                            for client in clients:
-                                profile = profiles_map.get(client.id)
-                                score, _parts = _compute_unit_match_score(unit, project, profile)
-                                if score >= 80.0:
-                                    exists = db.execute(
-                                        select(ClientUnitMatch).where(
-                                            ClientUnitMatch.client_id == client.id,
-                                            ClientUnitMatch.unit_id == unit.id,
+        if not dry_run and pending_list:
+            for (uid, field, value) in pending_list:
+                db.execute(
+                    delete(UnitApiPending).where(
+                        UnitApiPending.unit_id == uid,
+                        UnitApiPending.field == field,
+                    )
+                )
+                db.add(UnitApiPending(unit_id=uid, field=field, value=value))
+
+        # Mark existing projects for enrichment when gps or region changed
+        for key in project_key_to_project:
+            if key in projects_map:
+                p = project_key_to_project[key]
+                old = old_project_location.get(key)
+                if old is not None and p.id is not None and should_enrich_after_project_change(
+                    is_new_project=False,
+                    old_lat=old[0],
+                    old_lon=old[1],
+                    old_region=old[2],
+                    new_lat=p.gps_latitude,
+                    new_lon=p.gps_longitude,
+                    new_region=p.region_iga,
+                ):
+                    enrich_project_ids.add(p.id)
+
+        if not dry_run:
+            _t = time.perf_counter()
+            db.flush()
+            print(f"[chunk {chunk_idx}] db.flush after unit loop: {time.perf_counter()-_t:.2f}s", flush=True)
+            if enrich_project_ids:
+                print(f"[chunk {chunk_idx}] enriching {len(enrich_project_ids)} projects (external APIs)", flush=True)
+                for pid in sorted(enrich_project_ids):
+                    _te = time.perf_counter()
+                    enrich_project_location_metrics(db, pid)
+                    dt = time.perf_counter() - _te
+                    if dt > 2.0:
+                        print(f"[chunk {chunk_idx}]   enrich pid={pid}: {dt:.2f}s (slow)", flush=True)
+
+            # Invalidate commute cache for projects whose GPS changed.
+            if enrich_project_ids:
+                db.execute(delete(CommuteCache).where(CommuteCache.project_id.in_(enrich_project_ids)))
+
+        # After flushing unit changes and potential events, generate client alerts for new events.
+        if not dry_run:
+            _t_alerts = time.perf_counter()
+            # Load recent events for units touched in this chunk
+            unit_ids = [u.id for u in units_map.values()]
+            if unit_ids:
+                events = (
+                    db.execute(
+                        select(UnitEvent)
+                        .where(UnitEvent.unit_id.in_(unit_ids))
+                        .order_by(UnitEvent.created_at.desc(), UnitEvent.id.desc())
+                    )
+                    .scalars()
+                    .all()
+                )
+                # Map unit_id -> latest event per type (simple last-seen)
+                events_by_unit: dict[int, list[UnitEvent]] = {}
+                for ev in events:
+                    events_by_unit.setdefault(ev.unit_id, []).append(ev)
+
+                if events_by_unit:
+                    # Build reverse map: project_id -> Project for unit lookup
+                    project_id_to_project = {
+                        p.id: p for p in project_key_to_project.values() if p.id is not None
+                    }
+                    # Load clients + profiles once (simple approach: all clients)
+                    clients = db.execute(select(Client)).scalars().all()
+                    profiles_map: dict[int, ClientProfile | None] = {}
+                    if clients:
+                        prof_rows = db.execute(
+                            select(ClientProfile).where(
+                                ClientProfile.client_id.in_([c.id for c in clients])
+                            )
+                        ).scalars().all()
+                        for p in prof_rows:
+                            profiles_map[p.client_id] = p
+
+                    for unit in units_map.values():
+                        unit_events = events_by_unit.get(unit.id)
+                        if not unit_events:
+                            continue
+                        # For alerting, we don't care which exact event, we just use latest.
+                        latest_event = unit_events[0]
+                        project = project_id_to_project.get(unit.project_id)
+                        if project is None:
+                            continue
+                        for client in clients:
+                            profile = profiles_map.get(client.id)
+                            score, _parts = _compute_unit_match_score(unit, project, profile)
+                            if score >= 80.0:
+                                exists = db.execute(
+                                    select(ClientUnitMatch).where(
+                                        ClientUnitMatch.client_id == client.id,
+                                        ClientUnitMatch.unit_id == unit.id,
+                                    )
+                                ).scalars().first()
+                                if not exists:
+                                    db.add(
+                                        ClientUnitMatch(
+                                            client_id=client.id,
+                                            unit_id=unit.id,
+                                            score=score,
+                                            event_type=latest_event.event_type,
                                         )
-                                    ).scalars().first()
-                                    if not exists:
-                                        db.add(
-                                            ClientUnitMatch(
-                                                client_id=client.id,
-                                                unit_id=unit.id,
-                                                score=score,
-                                                event_type=latest_event.event_type,
-                                            )
-                                        )
+                                    )
 
-            # Commit + expunge po každém chunku — drží paměť session nízko
-            # a zaručuje, že OOM kill neztratí už importované chunky.
-            if not dry_run:
-                _t_alerts_dt = time.perf_counter() - _t_alerts
-                if _t_alerts_dt > 1.0:
-                    print(f"[chunk {chunk_idx}] alerts/match block: {_t_alerts_dt:.2f}s (slow)", flush=True)
-                _t = time.perf_counter()
-                db.commit()
-                print(f"[chunk {chunk_idx}] db.commit: {time.perf_counter()-_t:.2f}s", flush=True)
-                db.expunge_all()
+        # Commit + expunge po každém chunku — drží paměť session nízko
+        # a zaručuje, že OOM kill neztratí už importované chunky.
+        if not dry_run:
+            _t_alerts_dt = time.perf_counter() - _t_alerts
+            if _t_alerts_dt > 1.0:
+                print(f"[chunk {chunk_idx}] alerts/match block: {_t_alerts_dt:.2f}s (slow)", flush=True)
+            _t = time.perf_counter()
+            db.commit()
+            print(f"[chunk {chunk_idx}] db.commit: {time.perf_counter()-_t:.2f}s", flush=True)
+            db.expunge_all()
 
-            # Uvolni již zpracovaný chunk z `valid` — raw dict tuples z této
-            # části už nepotřebujeme (výsledek je v DB). Nahradíme None, aby
-            # index-based přístup + len(valid) zůstaly funkční.
-            for i in range(chunk_start, min(chunk_start + chunk_size, len(valid))):
-                valid[i] = None  # type: ignore[call-overload]
-            # Lokální reference na chunk / maps také uvolníme explicitně.
-            del chunk, project_keys, external_ids, projects_map, units_map
+        # Uvolni již zpracovaný chunk z `valid` — raw dict tuples z této
+        # části už nepotřebujeme (výsledek je v DB). Nahradíme None, aby
+        # index-based přístup + len(valid) zůstaly funkční.
+        for i in range(chunk_start, min(chunk_start + chunk_size, len(valid))):
+            valid[i] = None  # type: ignore[call-overload]
+        # Lokální reference na chunk / maps také uvolníme explicitně.
+        del chunk, project_keys, external_ids, projects_map, units_map
 
-            chunk_elapsed = time.perf_counter() - chunk_t0
-            print(
-                f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s "
-                f"(committed, freed)",
-                flush=True,
-            )
+        chunk_elapsed = time.perf_counter() - chunk_t0
+        print(
+            f"[chunk {chunk_idx}/{total_chunks}] done in {chunk_elapsed:.2f}s "
+            f"(committed, freed)",
+            flush=True,
+        )
+
+    for chunk_start in range(0, len(valid), chunk_size):
+        chunk_idx = chunk_start // chunk_size + 1
+        for attempt in range(1, CHUNK_MAX_RETRIES + 1):
+            # _raw_holder defined OUTSIDE try so the except block can access it
+            # and explicitly close the (broken) psycopg connection. Without this,
+            # the connection state remains "command in progress" and gets
+            # returned to the pool, causing the next attempt to immediately
+            # fail with "another command is already in progress".
+            _raw_holder: list[Any] = [None]
+            try:
+                with get_db() as db:
+                    # Fresh session per chunk. pool_pre_ping validates the
+                    # connection at checkout; engine.dispose() between retries
+                    # guarantees a brand-new TCP connection if we hit a stall.
+                    try:
+                        _raw_holder[0] = db.connection().connection
+                    except Exception:  # noqa: BLE001
+                        pass
+                    _wd_stop = threading.Event()
+
+                    def _watchdog(
+                        _stop: threading.Event = _wd_stop,
+                        _raw: list[Any] = _raw_holder,
+                        _idx: int = chunk_idx,
+                        _t: float = CHUNK_TIMEOUT_S,
+                        _att: int = attempt,
+                    ) -> None:
+                        if _stop.wait(_t):
+                            return
+                        print(
+                            f"[chunk {_idx}] WATCHDOG (attempt {_att}): "
+                            f"exceeded {_t:.0f}s — hard-closing TCP socket",
+                            flush=True,
+                        )
+                        raw = _raw[0]
+                        if raw is not None:
+                            _hard_close_socket(raw)
+
+                    _wd = threading.Thread(
+                        target=_watchdog,
+                        daemon=True,
+                        name=f"chunk-wd-{chunk_idx}-att{attempt}",
+                    )
+                    _wd.start()
+                    try:
+                        _run_chunk_body(db, chunk_start, chunk_idx)
+                    finally:
+                        _wd_stop.set()
+                break  # chunk succeeded
+            except (OperationalError, InterfaceError, DBAPIError) as exc:
+                if attempt >= CHUNK_MAX_RETRIES:
+                    print(
+                        f"[chunk {chunk_idx}] FATAL after {attempt} attempts: "
+                        f"{type(exc).__name__}: {exc}",
+                        flush=True,
+                    )
+                    raise
+                wait = min(2.0 ** attempt, 30.0)
+                print(
+                    f"[chunk {chunk_idx}] attempt {attempt}/{CHUNK_MAX_RETRIES} "
+                    f"failed ({type(exc).__name__}); cleaning broken conn, "
+                    f"retrying in {wait:.1f}s",
+                    flush=True,
+                )
+                # 1) Explicitly close the broken psycopg connection BEFORE it
+                # gets recycled by the pool. os.close(fd) from the watchdog
+                # killed the socket but left psycopg's internal state flagged
+                # as "command in progress" — if we return this conn to the
+                # pool, the next checkout sees that flag and dies immediately.
+                try:
+                    raw = _raw_holder[0]
+                    if raw is not None:
+                        try:
+                            raw.close()
+                        except Exception:  # noqa: BLE001
+                            pass
+                except Exception:  # noqa: BLE001
+                    pass
+                # 2) Dispose the engine with close=False — don't try to
+                # gracefully close any remaining broken connections (which
+                # could hang); just drop all pool references so the next
+                # checkout opens a brand-new TCP connection.
+                try:
+                    from .db import engine as _engine
+                    _engine.dispose(close=False)
+                except Exception as _derr:  # noqa: BLE001
+                    print(
+                        f"[chunk {chunk_idx}] engine.dispose failed: {_derr}",
+                        flush=True,
+                    )
+                time.sleep(wait)
 
     # Recompute phase uses its own session (outside the chunk loop). Each
     # sub-step opens a fresh session so connection drops only cost one step.
