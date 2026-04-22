@@ -887,6 +887,8 @@ def import_units(
             print(f"[chunk {chunk_idx}] batch_load_projects_by_builtmind_id: {time.perf_counter()-_t:.2f}s ({len(builtmind_id_map)} found)", flush=True)
 
             _t = time.perf_counter()
+            _sample = (external_ids[:3], external_ids[-3:]) if external_ids else ([], [])
+            print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: calling with {len(external_ids)} ids, sample={_sample}", flush=True)
             units_map = batch_load_units_by_external_id(db, external_ids)
             print(f"[chunk {chunk_idx}] batch_load_units_by_external_id: {time.perf_counter()-_t:.2f}s ({len(units_map)} found)", flush=True)
 
