@@ -46,6 +46,19 @@ class Settings(BaseSettings):
 
     builtmind_api_key: str | None = Field(default=None, validation_alias="BUILTMIND_API_KEY")
 
+    # ----- Supabase (Auth) -----
+    # Project URL — required for admin broker operations (Supabase Admin API).
+    supabase_url: str | None = Field(default=None, validation_alias="SUPABASE_URL")
+    # JWKS discovery URL — public endpoint with signing keys for asymmetric JWT verification.
+    # Typical form: https://<project>.supabase.co/auth/v1/.well-known/jwks.json
+    supabase_jwks_url: str | None = Field(default=None, validation_alias="SUPABASE_JWKS_URL")
+    # Legacy HS256 secret — kept for backward compatibility with old tokens.
+    # New projects use asymmetric keys (JWKS). If both are set, JWKS is preferred.
+    supabase_jwt_secret: str | None = Field(default=None, validation_alias="SUPABASE_JWT_SECRET")
+    # Service-role key — server-only secret. Bypasses RLS.
+    # Needed by /admin/brokers to invite/delete users in Supabase Auth.
+    supabase_service_role_key: str | None = Field(default=None, validation_alias="SUPABASE_SERVICE_ROLE_KEY")
+
     model_config = SettingsConfigDict(
         env_file=str(_PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",

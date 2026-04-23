@@ -518,28 +518,77 @@ class BrokerInfo(BaseModel):
     token: str
 
 
-_SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+from .settings import settings as _settings
+
+_SUPABASE_JWT_SECRET = _settings.supabase_jwt_secret or os.getenv("SUPABASE_JWT_SECRET")
+_SUPABASE_JWKS_URL = _settings.supabase_jwks_url or os.getenv("SUPABASE_JWKS_URL")
+
+# Lazy singleton — fetched on first use, caches keys internally, refreshes on rotation.
+_jwks_client = None
 
 
-def _try_verify_supabase_jwt(token: str) -> str | None:
-    """Return Supabase user id (sub) if token is a valid Supabase JWT, else None."""
-    if not _SUPABASE_JWT_SECRET:
+def _get_jwks_client():
+    global _jwks_client
+    if _jwks_client is not None:
+        return _jwks_client
+    if not _SUPABASE_JWKS_URL:
         return None
     try:
         import jwt  # PyJWT
-        payload = jwt.decode(
-            token,
-            _SUPABASE_JWT_SECRET,
-            algorithms=["HS256"],
-            audience="authenticated",
-            options={"require": ["sub", "exp"]},
-        )
+        # cache_keys=True: avoid a fetch per token. lifespan handled by PyJWKClient (default 300 s).
+        _jwks_client = jwt.PyJWKClient(_SUPABASE_JWKS_URL, cache_keys=True)
+        return _jwks_client
     except Exception:
         return None
-    sub = payload.get("sub")
-    if not isinstance(sub, str) or not sub:
+
+
+def _try_verify_supabase_jwt(token: str) -> str | None:
+    """Return Supabase user id (sub) if token is a valid Supabase JWT, else None.
+
+    Prefers asymmetric verification via JWKS (ES256/RS256).
+    Falls back to HS256 with shared secret if JWKS not configured but SUPABASE_JWT_SECRET is.
+    """
+    try:
+        import jwt  # PyJWT
+    except Exception:
         return None
-    return sub
+
+    # Asymmetric path — new Supabase projects.
+    jwks = _get_jwks_client()
+    if jwks is not None:
+        try:
+            signing_key = jwks.get_signing_key_from_jwt(token).key
+            payload = jwt.decode(
+                token,
+                signing_key,
+                algorithms=["ES256", "RS256", "EdDSA"],
+                audience="authenticated",
+                options={"require": ["sub", "exp"]},
+            )
+        except Exception:
+            payload = None
+        if payload:
+            sub = payload.get("sub")
+            if isinstance(sub, str) and sub:
+                return sub
+
+    # Legacy HS256 path — kept for projects still on the old signing scheme.
+    if _SUPABASE_JWT_SECRET:
+        try:
+            payload = jwt.decode(
+                token,
+                _SUPABASE_JWT_SECRET,
+                algorithms=["HS256"],
+                audience="authenticated",
+                options={"require": ["sub", "exp"]},
+            )
+        except Exception:
+            return None
+        sub = payload.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+
+    return None
 
 
 def get_current_broker(
@@ -569,6 +618,15 @@ def get_current_broker(
         return broker
 
     raise HTTPException(status_code=401, detail="Invalid token")
+
+
+# ---------------------------------------------------------------------------
+# Admin routers — mounted here so they can wire `get_current_broker` as the
+# auth dependency. See backend/src/app/admin_brokers.py.
+# ---------------------------------------------------------------------------
+from .admin_brokers import build_routes as _build_admin_broker_routes
+
+app.include_router(_build_admin_broker_routes(get_current_broker))
 
 
 def _get_unit_or_404(db: Session, external_id: str) -> Unit:
