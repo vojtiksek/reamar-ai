@@ -542,16 +542,21 @@ def _get_jwks_client():
         return None
 
 
-def _try_verify_supabase_jwt(token: str) -> str | None:
-    """Return Supabase user id (sub) if token is a valid Supabase JWT, else None.
+def _try_verify_supabase_jwt(token: str) -> tuple[str, str | None] | None:
+    """Return (sub, email) if token is a valid Supabase JWT, else None.
 
     Prefers asymmetric verification via JWKS (ES256/RS256).
     Falls back to HS256 with shared secret if JWKS not configured but SUPABASE_JWT_SECRET is.
+
+    Email is returned so `get_current_broker` can email-fallback and self-heal
+    brokers whose supabase_user_id drifted (e.g. manually reset Supabase user).
     """
     try:
         import jwt  # PyJWT
     except Exception:
         return None
+
+    payload = None
 
     # Asymmetric path — new Supabase projects.
     jwks = _get_jwks_client()
@@ -567,13 +572,9 @@ def _try_verify_supabase_jwt(token: str) -> str | None:
             )
         except Exception:
             payload = None
-        if payload:
-            sub = payload.get("sub")
-            if isinstance(sub, str) and sub:
-                return sub
 
     # Legacy HS256 path — kept for projects still on the old signing scheme.
-    if _SUPABASE_JWT_SECRET:
+    if payload is None and _SUPABASE_JWT_SECRET:
         try:
             payload = jwt.decode(
                 token,
@@ -583,12 +584,18 @@ def _try_verify_supabase_jwt(token: str) -> str | None:
                 options={"require": ["sub", "exp"]},
             )
         except Exception:
-            return None
-        sub = payload.get("sub")
-        if isinstance(sub, str) and sub:
-            return sub
+            payload = None
 
-    return None
+    if not payload:
+        return None
+
+    sub = payload.get("sub")
+    if not isinstance(sub, str) or not sub:
+        return None
+    email = payload.get("email")
+    if not isinstance(email, str) or not email:
+        email = None
+    return sub, email
 
 
 def get_current_broker(
@@ -600,14 +607,33 @@ def get_current_broker(
     token = authorization.split(" ", 1)[1].strip()
 
     # Preferred path: Supabase JWT.
-    supabase_sub = _try_verify_supabase_jwt(token)
-    if supabase_sub:
+    verified = _try_verify_supabase_jwt(token)
+    if verified:
+        sub, email = verified
+
+        # 1) Primary match: supabase_user_id == sub.
         broker = db.execute(
-            select(Broker).where(Broker.supabase_user_id == supabase_sub)
+            select(Broker).where(Broker.supabase_user_id == sub)
         ).scalars().first()
         if broker:
             return broker
-        # Valid JWT but unknown broker — do not fall back silently.
+
+        # 2) Self-heal by email (case-insensitive). Handles the case where a
+        #    broker row exists but its supabase_user_id is null/stale (e.g.
+        #    Supabase user was re-created or the link was never set).
+        if email:
+            broker = db.execute(
+                select(Broker).where(func.lower(Broker.email) == email.lower())
+            ).scalars().first()
+            if broker:
+                if broker.supabase_user_id != sub:
+                    broker.supabase_user_id = sub
+                    db.add(broker)
+                    db.commit()
+                    db.refresh(broker)
+                return broker
+
+        # Valid JWT but no broker row — do not fall back silently.
         raise HTTPException(status_code=401, detail="Broker not provisioned")
 
     # Legacy path: opaque session token (kept during migration, will be removed).
