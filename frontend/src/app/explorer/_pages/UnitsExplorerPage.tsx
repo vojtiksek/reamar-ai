@@ -14,6 +14,15 @@ import {
   filtersToSearchParams,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
+import {
+  clearExplorerFilters,
+  clearExplorerPolygon,
+  loadExplorerFilters,
+  loadExplorerPolygon,
+  saveExplorerFilters,
+  saveExplorerPolygon,
+  urlHasAnyFilterParam,
+} from "@/lib/explorerFilters";
 import { formatValue, formatLayout, formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
@@ -938,6 +947,44 @@ export default function Home() {
     }
   }, [searchParams]);
 
+  // Explorer filter persistence: hydratace z localStorage, pokud URL žádné
+  // filtry/polygon nenese. Sdílené s /explorer/projects a /explorer/map.
+  const [hydratedExplorerFilters, setHydratedExplorerFilters] = useState(false);
+  useEffect(() => {
+    if (hydratedExplorerFilters) return;
+    const raw = new URLSearchParams(searchParams?.toString() ?? "");
+
+    const urlHasFilter = urlHasAnyFilterParam(raw);
+    const urlHasPoly = (raw.get("poly") ?? "").trim() !== "";
+
+    const storedFilters = urlHasFilter ? null : loadExplorerFilters();
+    const storedPoly = urlHasPoly ? null : loadExplorerPolygon();
+
+    const hydrateFilters = storedFilters && Object.keys(storedFilters).length > 0 ? storedFilters : null;
+    const hydratePoly = storedPoly && storedPoly.trim() !== "" ? storedPoly : null;
+
+    if (hydrateFilters !== null || hydratePoly !== null) {
+      const nextFilters = hydrateFilters ?? filters;
+      const nextPoly = hydratePoly ?? polygon;
+      skipSyncSortPaginationRef.current = true;
+      if (hydrateFilters !== null) setFilters(nextFilters);
+      if (hydratePoly !== null) setPolygon(nextPoly);
+      syncToUrl(nextFilters, limit, 0, sortBy, sortDir, nextPoly);
+      setOffset(0);
+    }
+    setHydratedExplorerFilters(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!hydratedExplorerFilters) return;
+    saveExplorerFilters(filters);
+  }, [filters, hydratedExplorerFilters]);
+  useEffect(() => {
+    if (!hydratedExplorerFilters) return;
+    saveExplorerPolygon(polygon);
+  }, [polygon, hydratedExplorerFilters]);
+
 
   const safeLimit = ROWS_PER_PAGE_OPTIONS.includes(limit as (typeof ROWS_PER_PAGE_OPTIONS)[number])
     ? limit
@@ -1201,13 +1248,16 @@ export default function Home() {
   }, [recs]);
 
   const onResetAll = useCallback(() => {
+    clearExplorerFilters();
+    clearExplorerPolygon();
     skipSyncSortPaginationRef.current = true;
     setFilters({});
+    setPolygon(null);
     onReset();
-    syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
+    syncToUrl({}, limit, 0, sortBy, sortDir, null);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer, onReset]);
+  }, [limit, sortBy, sortDir, syncToUrl, closeDrawer, onReset]);
 
   const applyFilters = useCallback(
     (next: CurrentFilters) => {

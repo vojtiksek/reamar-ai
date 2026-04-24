@@ -16,6 +16,15 @@ import {
   filtersToSearchParams,
   parseFiltersFromSearchParams,
 } from "@/lib/filters";
+import {
+  clearExplorerFilters,
+  clearExplorerPolygon,
+  loadExplorerFilters,
+  loadExplorerPolygon,
+  saveExplorerFilters,
+  saveExplorerPolygon,
+  urlHasAnyFilterParam,
+} from "@/lib/explorerFilters";
 import { formatAreaM2, formatByDisplayFormat, formatCurrencyCzk, formatCurrencyPerM2, formatDate, formatLayout, formatLayoutsList, formatMinutes, formatPercent } from "@/lib/format";
 import { API_BASE } from "@/lib/api";
 import { decodePolygon, getPolygonBounds } from "@/lib/geo";
@@ -446,6 +455,48 @@ export default function ProjectsPage() {
     setPolygon(parsed.polygon ?? null);
   }, [searchParams]);
 
+  // Explorer filter persistence: jednorázová hydratace z localStorage,
+  // pokud URL žádné filtry/polygon nenese. Sdílené s /explorer/units a /explorer/map.
+  // `hydrated` je state (ne ref) kvůli druhému renderu, který uvolní save-effect
+  // až po dokončení hydratace — jinak by save-effect z initialního renderu
+  // přepsal storage výchozími hodnotami.
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => {
+    if (hydrated) return;
+    const raw = new URLSearchParams(searchParams?.toString() ?? "");
+
+    const urlHasFilter = urlHasAnyFilterParam(raw);
+    const urlHasPoly = (raw.get("poly") ?? "").trim() !== "";
+
+    const storedFilters = urlHasFilter ? null : loadExplorerFilters();
+    const storedPoly = urlHasPoly ? null : loadExplorerPolygon();
+
+    const hydrateFilters = storedFilters && Object.keys(storedFilters).length > 0 ? storedFilters : null;
+    const hydratePoly = storedPoly && storedPoly.trim() !== "" ? storedPoly : null;
+
+    if (hydrateFilters !== null || hydratePoly !== null) {
+      const nextFilters = hydrateFilters ?? filters;
+      const nextPoly = hydratePoly ?? polygon;
+      if (hydrateFilters !== null) setFilters(nextFilters);
+      if (hydratePoly !== null) setPolygon(nextPoly);
+      syncToUrl(nextFilters, initial.limit, 0, initial.sortBy, initial.sortDir, nextPoly);
+      setOffset(0);
+    }
+    setHydrated(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Ulož každou změnu filtrů/polygonu do storage až po dokončení hydratace
+  // (ostatní Explorer záložky je pak načtou).
+  useEffect(() => {
+    if (!hydrated) return;
+    saveExplorerFilters(filters);
+  }, [filters, hydrated]);
+  useEffect(() => {
+    if (!hydrated) return;
+    saveExplorerPolygon(polygon);
+  }, [polygon, hydrated]);
+
   // Initialize walkability preferences and mode on client (avoid SSR mismatch).
   useEffect(() => {
     const prefs = loadWalkPrefs();
@@ -741,12 +792,15 @@ export default function ProjectsPage() {
   }, [activeClient, filters, activate]);
 
   const onResetAll = useCallback(() => {
+    clearExplorerFilters();
+    clearExplorerPolygon();
     setFilters({});
+    setPolygon(null);
     onReset();
-    syncToUrl({}, limit, 0, sortBy, sortDir, polygon);
+    syncToUrl({}, limit, 0, sortBy, sortDir, null);
     setOffset(0);
     closeDrawer();
-  }, [limit, sortBy, sortDir, polygon, syncToUrl, closeDrawer, onReset]);
+  }, [limit, sortBy, sortDir, syncToUrl, closeDrawer, onReset]);
 
   const setPage = useCallback(
     (newOffset: number) => {

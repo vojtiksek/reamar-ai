@@ -78,6 +78,11 @@ const CATALOG_TO_UNITS_API: Record<
   payment_contract: { min: "min_payment_contract", max: "max_payment_contract" },
   payment_construction: { min: "min_payment_construction", max: "max_payment_construction" },
   payment_occupancy: { min: "min_payment_occupancy", max: "max_payment_occupancy" },
+  // „Blízko dopravy" toggles — ukládají se jako <key>_max = 500 (m)
+  distance_to_metro_station_m: { max: "max_distance_to_metro_station_m" },
+  distance_to_tram_stop_m: { max: "max_distance_to_tram_stop_m" },
+  distance_to_bus_stop_m: { max: "max_distance_to_bus_stop_m" },
+  distance_to_train_station_m: { max: "max_distance_to_train_station_m" },
 };
 
 /**
@@ -92,7 +97,7 @@ export function filtersToUnitsParams(
   for (const key of supportedKeys) {
     const api = CATALOG_TO_UNITS_API[key];
     if (!api) continue;
-    if (api.min != null) {
+    if (api.min != null || api.max != null) {
       let vMin = filters[`${key}_min`] as number | undefined;
       let vMax = filters[`${key}_max`] as number | undefined;
       // Backend očekává payment_* jako 0–1 (zlomek). Ve state máme vždy 0–1 (FiltersDrawer ukládá 10% jako 0.1).
@@ -105,8 +110,8 @@ export function filtersToUnitsParams(
         if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) vMin = toFraction(vMin);
         if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) vMax = toFraction(vMax);
       }
-      if (vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) out[api.min] = vMin;
-      if (vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) out[api.max!] = vMax;
+      if (api.min && vMin !== undefined && vMin !== null && !Number.isNaN(vMin)) out[api.min] = vMin;
+      if (api.max && vMax !== undefined && vMax !== null && !Number.isNaN(vMax)) out[api.max] = vMax;
     }
     if (api.list != null) {
       const v = filters[key] as string[] | undefined;
@@ -220,6 +225,10 @@ const API_TO_CATALOG: Record<string, { key: string; suffix?: string }> = {
   max_payment_construction: { key: "payment_construction", suffix: "max" },
   min_payment_occupancy: { key: "payment_occupancy", suffix: "min" },
   max_payment_occupancy: { key: "payment_occupancy", suffix: "max" },
+  max_distance_to_metro_station_m: { key: "distance_to_metro_station_m", suffix: "max" },
+  max_distance_to_tram_stop_m: { key: "distance_to_tram_stop_m", suffix: "max" },
+  max_distance_to_bus_stop_m: { key: "distance_to_bus_stop_m", suffix: "max" },
+  max_distance_to_train_station_m: { key: "distance_to_train_station_m", suffix: "max" },
 };
 
 /** List-type API params (multi-select, repeated in URL) */

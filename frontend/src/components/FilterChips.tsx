@@ -31,6 +31,15 @@ const PERCENT_RANGE_BASES = new Set([
   "payment_occupancy",
 ]);
 
+// „Blízko dopravy" toggly — v state reprezentované jako <key>_max (v metrech).
+// Render jako jednoduchý text „Blízko metra" místo „Vzdálenost k metru: do 500 m".
+const NEARBY_TRANSPORT_LABELS: Record<string, string> = {
+  distance_to_metro_station_m: "Blízko metra",
+  distance_to_tram_stop_m: "Blízko tramvaje",
+  distance_to_bus_stop_m: "Blízko autobusu",
+  distance_to_train_station_m: "Blízko vlaku",
+};
+
 type FilterBadge = { id: string; label: string; clearKeys: string[] };
 
 type Props = {
@@ -97,6 +106,15 @@ export function FilterChips({ filters, filterGroups, onRemove, formatEnumValue }
       (min === undefined || Number.isNaN(min as number)) &&
       (max === undefined || Number.isNaN(max as number))
     ) {
+      continue;
+    }
+    // „Blízko dopravy" toggle — render jako boolean ("Blízko metra"), ne range.
+    if (NEARBY_TRANSPORT_LABELS[base] && max != null && min == null) {
+      badges.push({
+        id: `${base}:nearby`,
+        label: NEARBY_TRANSPORT_LABELS[base],
+        clearKeys: [`${base}_min`, `${base}_max`],
+      });
       continue;
     }
     const spec = aliasByKey.get(base);

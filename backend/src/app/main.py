@@ -4642,6 +4642,10 @@ def _build_units_query(
     min_payment_occupancy: float | None = None,
     max_payment_occupancy: float | None = None,
     recuperation: list[str] | None = None,
+    max_distance_to_metro_station_m: float | None = None,
+    max_distance_to_tram_stop_m: float | None = None,
+    max_distance_to_bus_stop_m: float | None = None,
+    max_distance_to_train_station_m: float | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None.
     Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
@@ -4941,6 +4945,21 @@ def _build_units_query(
                 Unit.payment_occupancy <= max_payment_occupancy,
             )
         )
+    # Vzdálenosti k zastávkám MHD / vlaku (Project-level, filtr „blízko X")
+    _distance_filters = [
+        (max_distance_to_metro_station_m, "distance_to_metro_station_m"),
+        (max_distance_to_tram_stop_m, "distance_to_tram_stop_m"),
+        (max_distance_to_bus_stop_m, "distance_to_bus_stop_m"),
+        (max_distance_to_train_station_m, "distance_to_train_station_m"),
+    ]
+    if any(v is not None for v, _ in _distance_filters):
+        proj_dist = aliased(Project)
+        base = base.outerjoin(proj_dist, proj_dist.id == Unit.project_id)
+        for max_val, field_name in _distance_filters:
+            if max_val is None:
+                continue
+            col = getattr(proj_dist, field_name)
+            base = base.where(col.isnot(None)).where(col <= max_val)
     return base
 
 
@@ -5077,6 +5096,10 @@ def list_units(
     max_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
     min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_distance_to_metro_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_metro_station_m <= value (m)")] = None,
+    max_distance_to_tram_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_tram_stop_m <= value (m)")] = None,
+    max_distance_to_bus_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_bus_stop_m <= value (m)")] = None,
+    max_distance_to_train_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_train_station_m <= value (m)")] = None,
     include_archived: Annotated[bool, Query(description="Include units from fully sold projects older than 6 months")] = False,
     pending_api: Annotated[bool, Query(description="Return only units that have pending API update proposals")] = False,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
@@ -5161,6 +5184,10 @@ def list_units(
         min_payment_occupancy=min_payment_occupancy,
         max_payment_occupancy=max_payment_occupancy,
         recuperation=recuperation,
+        max_distance_to_metro_station_m=max_distance_to_metro_station_m,
+        max_distance_to_tram_stop_m=max_distance_to_tram_stop_m,
+        max_distance_to_bus_stop_m=max_distance_to_bus_stop_m,
+        max_distance_to_train_station_m=max_distance_to_train_station_m,
     )
     if pending_api:
         pending_subq = select(UnitApiPending.unit_id).where(UnitApiPending.unit_id == Unit.id)
@@ -6314,6 +6341,10 @@ def _has_unit_filters(
     max_payment_construction,
     min_payment_occupancy,
     max_payment_occupancy,
+    max_distance_to_metro_station_m=None,
+    max_distance_to_tram_stop_m=None,
+    max_distance_to_bus_stop_m=None,
+    max_distance_to_train_station_m=None,
 ):
     """True if any unit-level filter is set (so we restrict projects to those that have matching units)."""
     if available is not None:
@@ -6406,6 +6437,13 @@ def _has_unit_filters(
         return True
     if min_payment_occupancy is not None or max_payment_occupancy is not None:
         return True
+    if (
+        max_distance_to_metro_station_m is not None
+        or max_distance_to_tram_stop_m is not None
+        or max_distance_to_bus_stop_m is not None
+        or max_distance_to_train_station_m is not None
+    ):
+        return True
     return False
 
 
@@ -6490,6 +6528,10 @@ def list_projects(
     max_payment_construction: Annotated[float | None, Query(ge=0, le=1)] = None,
     min_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
     max_payment_occupancy: Annotated[float | None, Query(ge=0, le=1)] = None,
+    max_distance_to_metro_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_metro_station_m <= value (m)")] = None,
+    max_distance_to_tram_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_tram_stop_m <= value (m)")] = None,
+    max_distance_to_bus_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_bus_stop_m <= value (m)")] = None,
+    max_distance_to_train_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_train_station_m <= value (m)")] = None,
 ) -> ProjectsListResponse:
     allowed_sort = get_projects_sort_keys()
     if sort_by not in allowed_sort:
@@ -6572,6 +6614,10 @@ def list_projects(
         min_payment_contract, max_payment_contract,
         min_payment_construction, max_payment_construction,
         min_payment_occupancy, max_payment_occupancy,
+        max_distance_to_metro_station_m=max_distance_to_metro_station_m,
+        max_distance_to_tram_stop_m=max_distance_to_tram_stop_m,
+        max_distance_to_bus_stop_m=max_distance_to_bus_stop_m,
+        max_distance_to_train_station_m=max_distance_to_train_station_m,
     ):
         units_base = _build_units_query(
             available=available,
@@ -6640,6 +6686,10 @@ def list_projects(
             min_payment_occupancy=min_payment_occupancy,
             max_payment_occupancy=max_payment_occupancy,
             recuperation=recuperation,
+            max_distance_to_metro_station_m=max_distance_to_metro_station_m,
+            max_distance_to_tram_stop_m=max_distance_to_tram_stop_m,
+            max_distance_to_bus_stop_m=max_distance_to_bus_stop_m,
+            max_distance_to_train_station_m=max_distance_to_train_station_m,
         )
         u_sub = units_base.subquery()
         matching_project_ids = select(u_sub.c.project_id).distinct()

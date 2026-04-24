@@ -136,6 +136,7 @@ CATALOG_TO_DB: dict[str, tuple[str, str]] = {
     "distance_to_tram_stop_m": ("Project", "distance_to_tram_stop_m"),
     "distance_to_bus_stop_m": ("Project", "distance_to_bus_stop_m"),
     "distance_to_metro_station_m": ("Project", "distance_to_metro_station_m"),
+    "distance_to_train_station_m": ("Project", "distance_to_train_station_m"),
     # Walkability counts in 500 m (Project-level)
     "count_supermarket_500m": ("Project", "count_supermarket_500m"),
     "count_pharmacy_500m": ("Project", "count_pharmacy_500m"),

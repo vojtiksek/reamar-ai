@@ -13,6 +13,15 @@ import {
   parseFiltersFromSearchParams,
   type CurrentFilters,
 } from "@/lib/filters";
+import {
+  clearExplorerFilters,
+  clearExplorerPolygon,
+  loadExplorerFilters,
+  loadExplorerPolygon,
+  saveExplorerFilters,
+  saveExplorerPolygon,
+  urlHasAnyFilterParam,
+} from "@/lib/explorerFilters";
 import { decodePolygon, encodePolygon, getPolygonBounds, isPointInPolygon, polygonToGeoJson, type LatLng } from "@/lib/geo";
 import Link from "next/link";
 import dynamic from "next/dynamic";
@@ -223,6 +232,56 @@ export default function ProjectsMapPage() {
     [pathname, router, polygon]
   );
 
+  // Explorer filter persistence: hydratace z localStorage, pokud URL žádné
+  // filtry/polygon nenese. Sdílené s /explorer/projects a /explorer/units.
+  const [hydratedExplorerFilters, setHydratedExplorerFilters] = useState(false);
+  useEffect(() => {
+    if (hydratedExplorerFilters) return;
+    const raw = new URLSearchParams(searchParams?.toString() ?? "");
+
+    const urlHasFilter = urlHasAnyFilterParam(raw);
+    const urlHasPoly = (raw.get("poly") ?? "").trim() !== "";
+
+    const storedFilters = urlHasFilter ? null : loadExplorerFilters();
+    // Pokud je aktivní klient s polygonem, nechceme storage polygon převálcovat
+    // klientův polygon (clientPolygonInit se o něj postará). Jinak hydrujeme.
+    const activeClientHasPoly = !!activeClient?.polygonGeoJson;
+    const storedPoly = (urlHasPoly || activeClientHasPoly) ? null : loadExplorerPolygon();
+
+    const hydrateFilters = storedFilters && Object.keys(storedFilters).length > 0 ? storedFilters : null;
+    const hydratePolyEncoded = storedPoly && storedPoly.trim() !== "" ? storedPoly : null;
+
+    if (hydrateFilters !== null || hydratePolyEncoded !== null) {
+      const nextFilters = hydrateFilters ?? filtersInUrl;
+      const decodedPoly = hydratePolyEncoded ? decodePolygon(hydratePolyEncoded) : polygon;
+      if (hydratePolyEncoded && decodedPoly.length >= 3) {
+        setPolygon(decodedPoly);
+        // Zabraň clientPolygonInit efektu, aby přepsal nově načtený polygon,
+        // pokud klient dorazí později.
+        clientPolygonInitializedRef.current = true;
+      }
+      // Sestav URL inline (closure applyFiltersToUrl čte staré `polygon`).
+      const params = filtersToSearchParams(nextFilters);
+      const polyForUrl = decodedPoly.length >= 3 ? encodePolygon(decodedPoly) : null;
+      if (polyForUrl) params.set("poly", polyForUrl);
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }
+    setHydratedExplorerFilters(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Uloží aktuální filtry z URL do storage (po dokončení hydratace).
+  useEffect(() => {
+    if (!hydratedExplorerFilters) return;
+    saveExplorerFilters(filtersInUrl);
+  }, [filtersInUrl, hydratedExplorerFilters]);
+  // Uloží polygon (jako zakódovaný string) do storage.
+  useEffect(() => {
+    if (!hydratedExplorerFilters) return;
+    saveExplorerPolygon(polygon.length >= 3 ? encodePolygon(polygon) : null);
+  }, [polygon, hydratedExplorerFilters]);
+
   const syncPolygonToUrl = (poly: LatLng[] | null) => {
     const params = filtersToSearchParams(filtersInUrl);
     if (poly && poly.length >= 3) {
@@ -292,9 +351,17 @@ export default function ProjectsMapPage() {
   }, [activeClient, applyFiltersToUrl]);
 
   const onResetAll = useCallback(() => {
+    clearExplorerFilters();
+    clearExplorerPolygon();
     onReset();
-    applyFiltersToUrl(activeClient ? activeClient.derivedFilters : {});
-  }, [onReset, applyFiltersToUrl, activeClient]);
+    setPolygon([]);
+    // Sestav URL bez poly (applyFiltersToUrl by znovu přečetl stale polygon
+    // z closure, takže píšeme přímo).
+    const next = activeClient ? activeClient.derivedFilters : {};
+    const params = filtersToSearchParams(next);
+    const qs = params.toString();
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+  }, [onReset, activeClient, router, pathname]);
 
   const onApply = useCallback(() => {
     applyFiltersToUrl(currentFilters);
