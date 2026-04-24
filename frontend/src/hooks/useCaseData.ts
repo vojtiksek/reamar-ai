@@ -276,6 +276,16 @@ export function useCaseData() {
       .then(async (clientJson) => {
         if (controller.signal.aborted) return;
         setClient(clientJson as ClientSummary);
+        // Remember last-visited client for quick-jump (Ctrl/⌘+Shift+L)
+        try {
+          const cj = clientJson as ClientSummary;
+          if (typeof window !== "undefined" && cj?.id) {
+            localStorage.setItem(
+              "reamar_last_client",
+              JSON.stringify({ id: cj.id, name: cj.name ?? "", at: Date.now() })
+            );
+          }
+        } catch { /* ignore quota */ }
 
         const [
           profileJson,

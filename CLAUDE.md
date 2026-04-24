@@ -44,13 +44,44 @@ It is a data-driven tool used by a consultant (broker) to:
    - `_wizard_preferences_adjustment()` — soft bonus/penalty (±20 pts)
 5. Results stored as `ClientRecommendation` rows, ranked by score
 
-### Known issues (as of 2026-04)
-- UI not dense enough — hard to compare units side by side
-- Weak project-level context in recommendation list
-- Wizard ↔ backend field mismatches exist (partially fixed via `normalize_wizard`)
-- Scoring sometimes unintuitive — commute_fit=0 when commute point has null lat/lng
-- Polygon is a soft signal (60 vs 100), not a hard filter
-- Stale recommendations possible if recompute not triggered after wizard changes
+### Known issues (as of 2026-04-24)
+- Project-level context v recommendation listu lze dál zhušťovat
+- Wizard ↔ backend field mismatches — částečně fixnuto přes `normalize_wizard`; občas najdeš nový
+- `commute_fit=0` při null lat/lng commute bodu — graceful degradation chybí
+
+### Known strengths (2026-04-24)
+- Polygon je **hard filtr** (ne soft signal)
+- Stale detekce v Recs (banner + auto timestamp porovnání)
+- Comparison view (units table + checkbox + modal)
+- Denní automatizace přes Vercel Cron → backend ops runner
+- Keyboard shortcuts v Recs + quick-jump na posledního klienta
+
+---
+
+## 2.5 Automation & Deployment
+
+### Produkce
+- **Frontend**: Vercel (Next.js 16, `main` branch auto-deploy)
+- **Backend**: Mac mini (FastAPI, port 8001, za Tailscale)
+- **DB**: Mac mini Docker PostgreSQL 16 + PostGIS, port 5433
+
+### Daily automation (05:00 CEST / 04:00 CET)
+- Vercel Cron `vercel.json`: `0 3 * * *` UTC
+- Route: `frontend/src/app/api/cron/daily-ops/route.ts`
+  - Ověří `Authorization: Bearer $CRON_SECRET`
+  - Volá `POST $BACKEND_API_URL/admin/ops/daily-run` s `x-cron-secret`
+- Backend: `backend/src/app/ops_runner.py` spouští 5 kroků:
+  1. Import units
+  2. Walkability recompute
+  3. Microlocation recompute
+  4. Market deviation recompute
+  5. API suggestions
+- Log: tabulka `ops_runs` (JSONB payload per step, duration, status)
+- Dashboard: `/admin/operace` (day/week/month summary + log)
+
+### Environment proměnné
+- `CRON_SECRET` — Vercel project env (bearer token pro cron route)
+- `BACKEND_API_URL` — veřejná URL backendu (přes Tailscale / tunel)
 
 ---
 
@@ -108,12 +139,13 @@ It is a data-driven tool used by a consultant (broker) to:
 
 ## 6. Scoring Philosophy
 
-- Scoring is **not the source of truth** — hard filters are
+- Scoring je **not the source of truth** — hard filters are
+- **Polygon je hard filter** (ne ranking signál)
 - Scoring only **ranks** already-relevant results
 - Do NOT hide valid units solely due to a low score
 - The system must remain **explainable** — broker must understand why a unit ranked high
-- `top_strengths` and `top_compromises` must reflect real signal, not noise
-- When wizard data is sparse → scoring degrades gracefully, not silently
+- `top_strengths` a `top_compromises` musí odrážet reálný signál, ne noise
+- Při sparse wizard datech → scoring degraduje graceful, ne silently
 
 ---
 
@@ -142,12 +174,19 @@ For UI tasks:
 
 ## Project layout
 ```
-backend/src/app/     — FastAPI app (main.py, models.py, scoring.py, ...)
-backend/alembic/     — DB migrations
-frontend/src/app/    — Next.js pages and components
-  cases/[id]/brief/  — New 10-step wizard (primary)
-  clients/[id]/      — Legacy 7-step wizard (secondary)
-scripts/             — dev/ops scripts
+backend/src/app/     — FastAPI app
+  main.py            — endpoints + auth
+  models.py          — SQLAlchemy
+  scoring.py         — 22-aspect flat scoring
+  ops_runner.py      — daily automation orchestrátor
+backend/alembic/     — DB migrace
+frontend/src/app/    — Next.js
+  cases/[id]/brief/  — 10-step wizard (primary)
+  cases/[id]/recommendations/  — Recs list, comparison modal, shortcuts
+  admin/operace/     — Ops dashboard
+  api/cron/daily-ops/ — Vercel cron route
+frontend/vercel.json  — Cron schedule
+scripts/             — dev/ops scripty
 ```
 
 ## Dev commands
@@ -183,9 +222,30 @@ cd backend && source .venv/bin/activate && alembic upgrade head
 - Never force push to main
 - If auto-pull skips due to local changes, commit or stash first
 
+## Keyboard shortcuts & UX fast paths
+
+**Globální:**
+- `⌘K` / `Ctrl+K` — vyhledávání (palette)
+- `⌘⇧L` / `Ctrl⇧L` — skok na posledního navštíveného klienta
+
+**V Recs (`/cases/[id]/recommendations`):**
+- `j` / `↓` — další jednotka
+- `k` / `↑` — předchozí jednotka
+- `p` — pin / unpin
+- `l` — líbí se
+- `d` — nelíbí se
+- `Enter` — otevřít detail jednotky
+- `Esc` — zavřít drawer / dialog
+- `?` — nápověda
+
+**Comparison flow:**
+- V Units view checkbox „⇌" u každé jednotky
+- Plovoucí tlačítko „Porovnat (N)" po výběru ≥2 jednotek
+- Tlačítko „⇌ Porovnat" v toolbaru přepne do units view
+
 ## Known baseline
-- 1 pre-existing failing test: `tests/test_api_units_projects.py::test_get_units_with_sort` — sort order instability, not blocking
-- 1 pre-existing failing test: `tests/test_overrides.py::test_get_unit_applies_unit_overrides` — SQLAlchemy issue, not blocking
+- `tests/test_api_units_projects.py::test_get_units_with_sort` — known flaky, not blocking
+- `tests/test_overrides.py::test_get_unit_applies_unit_overrides` — SQLAlchemy issue, not blocking
 
 ---
 

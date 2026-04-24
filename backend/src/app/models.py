@@ -902,8 +902,29 @@ class FutureProjectInterest(Base):
     broker: Mapped["Broker"] = relationship()
 
 
+class OpsRun(Base):
+    """Audit log for automated/ad-hoc ops pipeline runs.
+
+    Each row = one invocation of the daily pipeline (import + recomputes).
+    `steps_json` is a list of dicts with `{name, status, started_at, finished_at,
+    duration_s, output?, error?}`.
+    """
+
+    __tablename__ = "ops_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    trigger: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'manual'"))
+    status: Mapped[str] = mapped_column(String(32), nullable=False, server_default=text("'running'"))
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    finished_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    steps_json: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    summary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
 # Indexes
 Index("ix_units_project_id", Unit.project_id)
+Index("ix_ops_runs_started_at_desc", OpsRun.started_at.desc())
 Index("ix_units_price_per_m2_czk", Unit.price_per_m2_czk)
 Index(
     "ix_unit_price_history_unit_id_captured_at_desc",

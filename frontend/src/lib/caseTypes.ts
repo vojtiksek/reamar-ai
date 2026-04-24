@@ -11,6 +11,9 @@ export type ClientSummary = {
   updated_at: string;
   recommendations_count: number;
   notes?: string | null;
+  profile_updated_at?: string | null;
+  recommendations_computed_at?: string | null;
+  recommendations_stale?: boolean;
 };
 
 export type ClientProfile = {

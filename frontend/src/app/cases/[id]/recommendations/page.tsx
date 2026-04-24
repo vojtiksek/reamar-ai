@@ -3,7 +3,7 @@
 import Link from "next/link";
 import clsx from "clsx";
 import dynamic from "next/dynamic";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 const RecommendationsMap = dynamic(() => import("./RecommendationsMap"), { ssr: false });
@@ -44,6 +44,158 @@ function PriceDiffBadge({ pct }: { pct?: number | null }) {
   if (pct <= -5) return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">{Math.round(pct)} %</span>;
   if (pct >= 5) return <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700">+{Math.round(pct)} %</span>;
   return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">±trh</span>;
+}
+
+function ComparisonModal({
+  units,
+  commuteLabels,
+  onClose,
+  onRemove,
+  onClear,
+}: {
+  units: RecommendationItem[];
+  commuteLabels: string[];
+  onClose: () => void;
+  onRemove: (recId: number) => void;
+  onClear: () => void;
+}) {
+  if (!units.length) return null;
+  const fmt = (n: number | null | undefined, suffix = "") =>
+    n == null ? "—" : `${Math.round(n).toLocaleString("cs-CZ")}${suffix}`;
+  const fmtCzk = (n: number | null | undefined) =>
+    n == null ? "—" : formatCurrencyCzk(n);
+  const getCommuteMin = (u: RecommendationItem, label: string): number | null => {
+    const details = (u.reason?.commute_details ?? []) as Array<{ label?: string; minutes?: number | null }>;
+    const d = details.find((x) => x.label === label);
+    return d?.minutes ?? null;
+  };
+
+  type Row = { label: string; render: (u: RecommendationItem) => React.ReactNode };
+  const rows: Row[] = [
+    { label: "Projekt", render: (u) => u.project_name ?? "—" },
+    { label: "Dispozice", render: (u) => u.layout_label ?? u.layout ?? "—" },
+    { label: "Patro", render: (u) => (u.floor == null ? "—" : `${u.floor}. p.`) },
+    { label: "Plocha", render: (u) => fmt(u.floor_area_m2, " m²") },
+    { label: "Exteriér", render: (u) => fmt(u.exterior_area_m2, " m²") },
+    { label: "Cena", render: (u) => fmtCzk(u.price_czk) },
+    { label: "Kč/m²", render: (u) => fmtCzk(u.price_per_m2_czk) },
+    { label: "Odchylka od trhu", render: (u) => (u.price_diff_pct == null ? "—" : `${Math.round(u.price_diff_pct)} %`) },
+    { label: "Shoda", render: (u) => `${Math.round(u.score)}` },
+    { label: "Rozpočet fit", render: (u) => `${Math.round(u.budget_fit)}` },
+    { label: "Lokalita fit", render: (u) => `${Math.round(u.location_fit)}` },
+    { label: "Dispozice fit", render: (u) => `${Math.round(u.layout_fit)}` },
+    { label: "Plocha fit", render: (u) => `${Math.round(u.area_fit)}` },
+    { label: "Exteriér fit", render: (u) => `${Math.round(u.outdoor_fit)}` },
+    { label: "Walkability", render: (u) => `${Math.round(u.walkability_fit)}` },
+    { label: "Dojezd", render: (u) => (u.commute_fit == null ? "—" : `${Math.round(u.commute_fit)}`) },
+    { label: "Okolí hluk", render: (u) => u.noise_label ?? "—" },
+    { label: "Dokončení", render: (u) => u.construction_completion ?? "—" },
+  ];
+  for (const cl of commuteLabels) {
+    rows.push({
+      label: `↦ ${cl}`,
+      render: (u) => {
+        const m = getCommuteMin(u, cl);
+        return m == null ? "—" : `${m} min`;
+      },
+    });
+  }
+
+  const body = (
+    <div
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-slate-900/50"
+      onClick={onClose}
+    >
+      <div
+        className="my-6 mx-4 flex w-full max-w-[1400px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-slate-200 px-4 py-3">
+          <div className="flex items-center gap-3">
+            <div className="font-semibold text-slate-900">Porovnání jednotek</div>
+            <span className="text-xs text-slate-500">{units.length} jednotek</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onClear}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              Vymazat výběr
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            >
+              Zavřít ✕
+            </button>
+          </div>
+        </div>
+        <div className="flex-1 overflow-auto">
+          <table className="w-full min-w-max border-collapse text-sm">
+            <thead>
+              <tr className="sticky top-0 z-10 bg-white border-b border-slate-200">
+                <th className="sticky left-0 z-20 bg-white px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500 w-[160px]">Atribut</th>
+                {units.map((u) => (
+                  <th
+                    key={u.rec_id}
+                    className="px-3 py-2 text-left font-semibold text-slate-800 min-w-[180px] border-l border-slate-100"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-[13px]">{u.project_name ?? "—"}</div>
+                        <div className="text-[11px] text-slate-500">{u.unit_external_id ?? ""}</div>
+                      </div>
+                      <button
+                        type="button"
+                        className="text-slate-400 hover:text-rose-600 text-xs"
+                        onClick={() => onRemove(u.rec_id)}
+                        title="Odebrat z porovnání"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row) => (
+                <tr key={row.label} className="border-b border-slate-100">
+                  <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-[11px] font-medium uppercase tracking-wide text-slate-500 w-[160px]">
+                    {row.label}
+                  </td>
+                  {units.map((u) => (
+                    <td key={u.rec_id} className="px-3 py-1.5 text-slate-800 border-l border-slate-100">
+                      {row.render(u)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+  if (typeof document === "undefined") return null;
+  return createPortal(body, document.body);
+}
+
+function RecsToast({ message, onClose }: { message: string | null; onClose: () => void }) {
+  if (!message) return null;
+  return (
+    <div
+      className="fixed bottom-6 right-6 z-50 flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 shadow-lg"
+      role="status"
+      aria-live="polite"
+    >
+      <span style={{ fontSize: 16 }}>✓</span>
+      <span>{message}</span>
+      <button onClick={onClose} className="text-slate-400 hover:text-slate-600" aria-label="Zavřít">✕</button>
+    </div>
+  );
 }
 
 function Tip({ text, children }: { text: string; children: React.ReactNode }) {
@@ -532,6 +684,8 @@ function UnitRow({
   onFeedback,
   onClearFeedback,
   saving,
+  compareChecked,
+  onToggleCompare,
 }: {
   r: RecommendationItem;
   thresholds: ScoringThresholds;
@@ -543,6 +697,8 @@ function UnitRow({
   onFeedback: (type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
   onClearFeedback: () => void;
   saving: boolean;
+  compareChecked?: boolean;
+  onToggleCompare?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [dislikeOpen, setDislikeOpen] = useState(false);
@@ -560,6 +716,18 @@ function UnitRow({
         )}
         onClick={() => setExpanded((v) => !v)}
       >
+        {/* Compare checkbox */}
+        {onToggleCompare && (
+          <td className="px-1 py-2.5 text-center" onClick={(e) => e.stopPropagation()}>
+            <input
+              type="checkbox"
+              checked={!!compareChecked}
+              onChange={onToggleCompare}
+              aria-label="Přidat do porovnání"
+              className="h-4 w-4 rounded border-slate-300 text-slate-700"
+            />
+          </td>
+        )}
         {/* Score */}
         <td className="px-3 py-2.5 text-center">
           <span className={cn("inline-flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold", match.cls)}>
@@ -664,7 +832,7 @@ function UnitRow({
       {/* Expanded detail row */}
       {expanded && (
         <tr className="border-b border-slate-100 bg-slate-50/50">
-          <td colSpan={10 + commuteLabels.length + (commuteLabels.length > 0 ? 1 : 0)} className="px-5 py-4">
+          <td colSpan={10 + commuteLabels.length + (commuteLabels.length > 0 ? 1 : 0) + (onToggleCompare ? 1 : 0)} className="px-5 py-4">
             <div className="grid gap-4 md:grid-cols-3">
               <div>
                 <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Proč je tady</p>
@@ -714,6 +882,8 @@ function UnitsTableView({
   onFeedback,
   onClearFeedback,
   feedbackSavingId,
+  compareIds,
+  onToggleCompare,
 }: {
   recs: RecommendationItem[];
   thresholds: ScoringThresholds;
@@ -724,6 +894,8 @@ function UnitsTableView({
   onFeedback: (item: RecommendationItem, type: RecommendationFeedbackType, options?: { dislikeReason?: RecommendationDislikeReason | null; note?: string | null }) => void;
   onClearFeedback: (item: RecommendationItem) => void;
   feedbackSavingId: number | null;
+  compareIds?: Set<number>;
+  onToggleCompare?: (recId: number) => void;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("score");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -781,6 +953,9 @@ function UnitsTableView({
         <table className="w-full min-w-[900px]">
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50/80">
+              {onToggleCompare && (
+                <th className="w-[32px] px-1 py-2 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500" title="Vybrat pro porovnání">⇌</th>
+              )}
               <SortableHeader label="Shoda" sortKey="score" currentSort={sortKey} currentDir={sortDir} onSort={handleSort} className="w-[70px] text-center" />
               <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Projekt</th>
               <th className="px-3 py-2 text-left text-[11px] font-semibold uppercase tracking-wide text-slate-500">Typ</th>
@@ -830,6 +1005,8 @@ function UnitsTableView({
                 onFeedback={(type, options) => onFeedback(r, type, options)}
                 onClearFeedback={() => onClearFeedback(r)}
                 saving={feedbackSavingId === r.rec_id}
+                compareChecked={compareIds?.has(r.rec_id)}
+                onToggleCompare={onToggleCompare ? () => onToggleCompare(r.rec_id) : undefined}
               />
             ))}
           </tbody>
@@ -1777,6 +1954,32 @@ export default function RecommendationsPage() {
   });
 
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [compareIds, setCompareIds] = useState<Set<number>>(new Set());
+  const [compareOpen, setCompareOpen] = useState(false);
+  const toggleCompare = (recId: number) => {
+    setCompareIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(recId)) next.delete(recId); else next.add(recId);
+      return next;
+    });
+  };
+  const [toast, setToast] = useState<string | null>(null);
+  const prevRecomputingRef = useRef(false);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    // Detekce dokončení přepočtu: recomputing true→false a bez chyby
+    if (prevRecomputingRef.current && !recomputing && !error) {
+      const count = recs.length;
+      setToast(`Přepočítáno · ${count} doporučení`);
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      toastTimerRef.current = setTimeout(() => setToast(null), 3500);
+    }
+    prevRecomputingRef.current = recomputing;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recomputing, error]);
+  useEffect(() => () => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+  }, []);
   const filteredRecs = useMemo(() => applyQuickFilter(recs, quickFilter), [recs, quickFilter]);
 
   const filterCounts = useMemo<Record<QuickFilter, number>>(() => ({
@@ -1856,6 +2059,74 @@ export default function RecommendationsPage() {
     return labels;
   }, [recs]);
 
+  // ── Klávesové zkratky ────────────────────────────────────────────────
+  // j/k navigace, p pin, l like, d dislike, Enter detail, Esc zavři
+  // ? zobrazí nápovědu; ? se ignoruje uvnitř input/textarea
+  const [shortcutsHelpOpen, setShortcutsHelpOpen] = useState(false);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // Ignore při psaní v input/textarea/contenteditable
+      const t = e.target as HTMLElement | null;
+      if (t) {
+        const tag = t.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || t.isContentEditable) return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Nápověda
+      if (e.key === "?" || (e.key === "/" && e.shiftKey)) {
+        e.preventDefault();
+        setShortcutsHelpOpen((v) => !v);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (shortcutsHelpOpen) { setShortcutsHelpOpen(false); return; }
+        if (selectedRecId != null) { setSelectedRecId(null); return; }
+        return;
+      }
+      if (!filteredRecs.length) return;
+      const currentIndex = selectedRecId == null
+        ? -1
+        : filteredRecs.findIndex((r) => r.rec_id === selectedRecId);
+
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const nextIdx = currentIndex < 0 ? 0 : Math.min(currentIndex + 1, filteredRecs.length - 1);
+        setSelectedRecId(filteredRecs[nextIdx].rec_id);
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const prevIdx = currentIndex <= 0 ? 0 : currentIndex - 1;
+        setSelectedRecId(filteredRecs[prevIdx].rec_id);
+        return;
+      }
+      if (currentIndex < 0) return;
+      const cur = filteredRecs[currentIndex];
+      if (e.key === "p") {
+        e.preventDefault();
+        handlePin(cur.rec_id, cur.pinned_by_broker);
+        return;
+      }
+      if (e.key === "l") {
+        e.preventDefault();
+        handleRecommendationFeedback(cur.rec_id, "liked");
+        return;
+      }
+      if (e.key === "d") {
+        e.preventDefault();
+        handleRecommendationFeedback(cur.rec_id, "disliked");
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        if (cur.unit_external_id) router.push(`/units/${encodeURIComponent(cur.unit_external_id)}`);
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filteredRecs, selectedRecId, shortcutsHelpOpen, handlePin, handleRecommendationFeedback, router]);
+
   if (!hydrated) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Načítání…</div></div>;
   if (!token) return <div className="flex items-center justify-center py-20"><div className="rounded-xl bg-white px-4 py-3 text-sm text-slate-700 shadow">Nejste přihlášen. Přejděte na <Link href="/login" className="text-slate-900 underline">/login</Link>.</div></div>;
   if (loading) return <p className="text-sm text-slate-600">Načítání…</p>;
@@ -1900,6 +2171,39 @@ export default function RecommendationsPage() {
 
     return (
       <div className="rv2-page">
+        {/* Stale banner — zadání klienta se změnilo po posledním výpočtu */}
+        {!recomputing && client?.recommendations_stale && (
+          <div
+            className="rv2-card"
+            style={{
+              padding: "var(--r-space-3) var(--r-space-4)",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--r-space-3)",
+              background: "var(--r-state-warning-soft, #fef3c7)",
+              color: "var(--r-state-warning, #92400e)",
+              borderColor: "transparent",
+              fontSize: "var(--r-font-13)",
+              marginBottom: "var(--r-space-2)",
+            }}
+          >
+            <span style={{ fontSize: 18 }}>⚠</span>
+            <span style={{ flex: 1 }}>
+              Zadání klienta bylo upraveno po posledním přepočtu doporučení.
+              Aktuální skóre nemusí odpovídat novému zadání.
+            </span>
+            <ReamarButton
+              type="button"
+              variant="primary"
+              size="sm"
+              onClick={handleRecompute}
+              disabled={recomputing}
+            >
+              Přepočítat teď
+            </ReamarButton>
+          </div>
+        )}
+
         {/* Progress banner */}
         {recomputing && (
           <div
@@ -1994,6 +2298,21 @@ export default function RecommendationsPage() {
             <button
               type="button"
               className="rv2-button rv2-button-secondary"
+              onClick={() => {
+                // Přepnout do Units view, kde jsou checkboxy pro výběr
+                if (viewMode !== "units") {
+                  setViewMode("units");
+                  try { localStorage.setItem("reamar_recs_view", "units"); } catch {}
+                }
+                if (compareIds.size >= 2) setCompareOpen(true);
+              }}
+              title="Zobrazit tabulku pro porovnání jednotek"
+            >
+              ⇌ Porovnat{compareIds.size ? ` (${compareIds.size})` : ""}
+            </button>
+            <button
+              type="button"
+              className="rv2-button rv2-button-secondary"
               onClick={handleRecompute}
               disabled={recomputing}
             >
@@ -2064,7 +2383,13 @@ export default function RecommendationsPage() {
               </div>
             )}
             {viewMode === "units" && (
-              <UnitsTableView recs={filteredRecs} commuteLabels={commuteLabels} {...v2SharedProps} />
+              <UnitsTableView
+                recs={filteredRecs}
+                commuteLabels={commuteLabels}
+                compareIds={compareIds}
+                onToggleCompare={toggleCompare}
+                {...v2SharedProps}
+              />
             )}
             {viewMode === "map" && (
               <RecommendationsMap
@@ -2075,6 +2400,68 @@ export default function RecommendationsPage() {
               />
             )}
           </>
+        )}
+        <RecsToast message={toast} onClose={() => setToast(null)} />
+        {compareIds.size >= 2 && !compareOpen && (
+          <div className="fixed bottom-6 left-1/2 z-40 -translate-x-1/2">
+            <button
+              type="button"
+              onClick={() => setCompareOpen(true)}
+              className="rounded-full bg-slate-900 px-4 py-2 text-sm font-medium text-white shadow-lg hover:bg-slate-800"
+            >
+              Porovnat ({compareIds.size})
+            </button>
+            <button
+              type="button"
+              onClick={() => setCompareIds(new Set())}
+              className="ml-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs text-slate-600 shadow hover:bg-slate-50"
+            >
+              Zrušit
+            </button>
+          </div>
+        )}
+        {compareOpen && (
+          <ComparisonModal
+            units={recs.filter((r) => compareIds.has(r.rec_id))}
+            commuteLabels={commuteLabels}
+            onClose={() => setCompareOpen(false)}
+            onRemove={(id) => {
+              setCompareIds((prev) => {
+                const n = new Set(prev);
+                n.delete(id);
+                return n;
+              });
+            }}
+            onClear={() => {
+              setCompareIds(new Set());
+              setCompareOpen(false);
+            }}
+          />
+        )}
+        {shortcutsHelpOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40"
+            onClick={() => setShortcutsHelpOpen(false)}
+          >
+            <div
+              className="rounded-xl bg-white p-5 text-sm text-slate-700 shadow-xl w-[320px]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="mb-3 flex items-center justify-between">
+                <div className="font-semibold text-slate-900">Klávesové zkratky</div>
+                <button onClick={() => setShortcutsHelpOpen(false)} className="text-slate-400 hover:text-slate-600" aria-label="Zavřít">✕</button>
+              </div>
+              <ul className="space-y-1.5">
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">j</kbd> <kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">k</kbd> — pohyb mezi jednotkami</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">p</kbd> — pin / unpin</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">l</kbd> — líbí se</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">d</kbd> — nelíbí se</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">Enter</kbd> — detail jednotky</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">Esc</kbd> — zavřít</li>
+                <li><kbd className="rounded border border-slate-300 bg-slate-50 px-1.5 py-0.5 text-[11px]">?</kbd> — tato nápověda</li>
+              </ul>
+            </div>
+          </div>
         )}
       </div>
     );

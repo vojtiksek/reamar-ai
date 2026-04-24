@@ -1,7 +1,47 @@
 "use client";
 
+import { useEffect, useState } from "react";
+import Link from "next/link";
 import { NotificationBell } from "./NotificationBell";
 import { UserMenu } from "./UserMenu";
+
+type LastClient = { id: number; name: string; at: number };
+
+function LastClientLink() {
+  const [last, setLast] = useState<LastClient | null>(null);
+  useEffect(() => {
+    const refresh = () => {
+      try {
+        const raw = localStorage.getItem("reamar_last_client");
+        if (raw) {
+          const parsed = JSON.parse(raw) as LastClient;
+          if (parsed?.id) setLast(parsed);
+        } else {
+          setLast(null);
+        }
+      } catch { /* ignore */ }
+    };
+    refresh();
+    window.addEventListener("storage", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.removeEventListener("storage", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+  if (!last) return null;
+  const label = last.name && last.name.length > 18 ? last.name.slice(0, 17) + "…" : last.name || `#${last.id}`;
+  return (
+    <Link
+      href={`/cases/${last.id}/recommendations`}
+      title={`Poslední klient: ${last.name || "#" + last.id} (⌘⇧L)`}
+      className="hidden md:inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+    >
+      <span aria-hidden>↶</span>
+      <span>{label}</span>
+    </Link>
+  );
+}
 
 type Props = {
   onMenuToggle: () => void;
@@ -46,6 +86,7 @@ export function TopbarV2({ onMenuToggle, onSearchOpen }: Props) {
         <kbd>⌘K</kbd>
       </button>
       <div className="rv2-topbar-actions" style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <LastClientLink />
         <NotificationBell />
         <UserMenu />
       </div>

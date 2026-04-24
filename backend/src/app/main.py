@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import threading
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Annotated, Any
 
 # ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ _progress_lock = threading.Lock()
 from decimal import Decimal
 import json
 
-from fastapi import Depends, FastAPI, File, HTTPException, Query, Header, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Header, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
@@ -306,6 +306,9 @@ class ClientSummary(BaseModel):
     updated_at: datetime
     recommendations_count: int = 0
     notes: str | None = None
+    profile_updated_at: datetime | None = None
+    recommendations_computed_at: datetime | None = None
+    recommendations_stale: bool = False
 
 
 class ClientCreateBody(BaseModel):
@@ -1134,6 +1137,7 @@ def get_client(
     rec_count = db.execute(
         select(func.count(ClientRecommendation.id)).where(ClientRecommendation.client_id == client.id)
     ).scalar_one()
+    freshness = _compute_recommendations_freshness(db, client.id)
     return ClientSummary(
         id=client.id,
         name=client.name,
@@ -1145,7 +1149,39 @@ def get_client(
         updated_at=client.updated_at,
         recommendations_count=int(rec_count or 0),
         notes=client.notes,
+        profile_updated_at=freshness["profile_updated_at"],
+        recommendations_computed_at=freshness["recommendations_computed_at"],
+        recommendations_stale=freshness["stale"],
     )
+
+
+def _compute_recommendations_freshness(db: Any, client_id: int) -> dict[str, Any]:
+    """Detect whether recommendations are older than the latest brief change.
+
+    Stale = profile.updated_at > max(ClientRecommendation.created_at) by at
+    least a small tolerance (to ignore sub-second clock skew during recompute).
+    """
+    profile = db.execute(
+        select(ClientProfile).where(ClientProfile.client_id == client_id)
+    ).scalar_one_or_none()
+    latest_rec_at = db.execute(
+        select(func.max(ClientRecommendation.created_at)).where(
+            ClientRecommendation.client_id == client_id
+        )
+    ).scalar_one_or_none()
+    profile_at = profile.updated_at if profile else None
+    stale = False
+    if profile_at and latest_rec_at:
+        # 60-second tolerance — a fresh recompute updates profile/recs close in time.
+        stale = (profile_at - latest_rec_at).total_seconds() > 60
+    elif profile_at and not latest_rec_at:
+        # Profile exists but no recs yet — not stale, just empty.
+        stale = False
+    return {
+        "profile_updated_at": profile_at,
+        "recommendations_computed_at": latest_rec_at,
+        "stale": stale,
+    }
 
 
 @app.patch("/clients/{client_id}", response_model=ClientSummary)
@@ -7400,6 +7436,148 @@ def run_builtmind_import() -> dict[str, Any]:
 def get_builtmind_import_status() -> dict[str, Any]:
     """Poll stav posledního BuiltMind importu."""
     return dict(_builtmind_import_state)
+
+
+# ---------------------------------------------------------------------------
+# Daily ops pipeline (cron + manual) + audit log
+# ---------------------------------------------------------------------------
+
+def _is_cron_request(request: Request) -> bool:
+    cron_secret = (os.environ.get("CRON_SECRET") or "").strip()
+    if not cron_secret:
+        return False
+    supplied = request.headers.get("x-cron-secret") or ""
+    if not supplied:
+        # Vercel Cron sends Authorization: Bearer $CRON_SECRET by default.
+        auth = request.headers.get("authorization") or ""
+        if auth.lower().startswith("bearer "):
+            supplied = auth[7:]
+    return bool(supplied) and supplied == cron_secret
+
+
+@app.post("/admin/ops/daily-run")
+def admin_ops_daily_run(
+    request: Request,
+    db: DbSession,
+    authorization: str | None = Header(default=None, alias=AUTH_HEADER),
+) -> dict[str, Any]:
+    """Kick off the nightly data pipeline (import + recomputes). Returns run_id.
+
+    Auth: either `x-cron-secret: $CRON_SECRET` header / `Authorization: Bearer
+    $CRON_SECRET` (for Vercel cron) or a logged-in broker (manual trigger).
+    """
+    from .ops_runner import start_pipeline
+
+    if _is_cron_request(request):
+        trigger = "cron"
+    else:
+        # Regular broker auth — reuse the existing dependency logic.
+        broker = get_current_broker(db=db, authorization=authorization)
+        trigger = f"manual:{broker.email}" if broker else "manual"
+
+    try:
+        run_id = start_pipeline(trigger=trigger)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    return {"ok": True, "run_id": run_id, "trigger": trigger}
+
+
+@app.get("/admin/ops/runs")
+def admin_ops_list_runs(
+    db: DbSession,
+    limit: int = 30,
+) -> list[dict[str, Any]]:
+    """Recent ops runs, newest first."""
+    from .models import OpsRun
+    rows = (
+        db.execute(
+            select(OpsRun).order_by(OpsRun.started_at.desc()).limit(max(1, min(limit, 200)))
+        )
+        .scalars()
+        .all()
+    )
+    return [_serialize_ops_run(r, include_steps=False) for r in rows]
+
+
+@app.get("/admin/ops/runs/{run_id}")
+def admin_ops_get_run(run_id: int, db: DbSession) -> dict[str, Any]:
+    from .models import OpsRun
+    run = db.get(OpsRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return _serialize_ops_run(run, include_steps=True)
+
+
+@app.get("/admin/ops/summary")
+def admin_ops_summary(db: DbSession) -> dict[str, Any]:
+    """Aggregate counters for the dashboard (today / 7d / 30d)."""
+    from datetime import timedelta
+    from .models import OpsRun
+
+    now = datetime.now(timezone.utc)
+    windows = {
+        "day": now - timedelta(days=1),
+        "week": now - timedelta(days=7),
+        "month": now - timedelta(days=30),
+    }
+
+    rows = (
+        db.execute(
+            select(OpsRun).where(OpsRun.started_at >= windows["month"]).order_by(OpsRun.started_at.desc())
+        )
+        .scalars()
+        .all()
+    )
+
+    def _bucket(rows_in: list[OpsRun]) -> dict[str, Any]:
+        total = len(rows_in)
+        ok = sum(1 for r in rows_in if r.status == "done")
+        err = sum(1 for r in rows_in if r.status in ("error", "partial"))
+        running = sum(1 for r in rows_in if r.status == "running")
+        units_created = 0
+        units_updated = 0
+        projects_created = 0
+        for r in rows_in:
+            s = r.summary_json or {}
+            units_created += int(s.get("units_created") or 0)
+            units_updated += int(s.get("units_updated") or 0)
+            projects_created += int(s.get("projects_created") or 0)
+        return {
+            "runs_total": total,
+            "runs_ok": ok,
+            "runs_err": err,
+            "runs_running": running,
+            "units_created": units_created,
+            "units_updated": units_updated,
+            "projects_created": projects_created,
+        }
+
+    return {
+        "day": _bucket([r for r in rows if r.started_at >= windows["day"]]),
+        "week": _bucket([r for r in rows if r.started_at >= windows["week"]]),
+        "month": _bucket(list(rows)),
+        "last_run": _serialize_ops_run(rows[0], include_steps=False) if rows else None,
+    }
+
+
+def _serialize_ops_run(run: Any, include_steps: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": run.id,
+        "trigger": run.trigger,
+        "status": run.status,
+        "started_at": run.started_at.isoformat() if run.started_at else None,
+        "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "summary": run.summary_json,
+        "error": run.error,
+    }
+    if include_steps:
+        out["steps"] = run.steps_json or []
+    else:
+        steps = run.steps_json or []
+        out["steps_count"] = len(steps)
+        out["steps_ok"] = sum(1 for s in steps if s.get("status") == "done")
+        out["steps_err"] = sum(1 for s in steps if s.get("status") == "error")
+    return out
 
 
 def _recompute_all_client_recommendations() -> dict[str, Any]:
