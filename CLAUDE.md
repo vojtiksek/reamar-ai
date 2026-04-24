@@ -22,9 +22,9 @@ It is a data-driven tool used by a consultant (broker) to:
 | **Case / Client** | A customer with preferences, budget, wizard answers |
 
 ### Stack
-- **Backend**: FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL (PostGIS)
-- **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind)
-- **DB**: PostgreSQL 16 + PostGIS, Docker on Mac mini, port 5433
+- **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind) — hostováno na **Vercel**
+- **Backend**: FastAPI + SQLAlchemy 2.0 + Alembic — hostováno na **Railway**
+- **DB**: PostgreSQL 16 + PostGIS — **Supabase** (managed)
 - **Python**: 3.11, venv at `backend/.venv`
 - JSONB columns carry wizard state, scoring config, and overrides
 - Project-level overrides always take precedence over unit base data
@@ -62,8 +62,8 @@ It is a data-driven tool used by a consultant (broker) to:
 
 ### Produkce
 - **Frontend**: Vercel (Next.js 16, `main` branch auto-deploy)
-- **Backend**: Mac mini (FastAPI, port 8001, za Tailscale)
-- **DB**: Mac mini Docker PostgreSQL 16 + PostGIS, port 5433
+- **Backend**: Railway (FastAPI, auto-deploy z `main`)
+- **DB**: Supabase (PostgreSQL 16 + PostGIS, managed)
 
 ### Daily automation (05:00 CEST / 04:00 CET)
 - Vercel Cron `vercel.json`: `0 3 * * *` UTC
@@ -81,7 +81,9 @@ It is a data-driven tool used by a consultant (broker) to:
 
 ### Environment proměnné
 - `CRON_SECRET` — Vercel project env (bearer token pro cron route)
-- `BACKEND_API_URL` — veřejná URL backendu (přes Tailscale / tunel)
+- `BACKEND_API_URL` — veřejná URL Railway backendu (např. `https://…railway.app`)
+- `DATABASE_URL` — Supabase connection string (pooler/direct)
+- Backend na Railway musí mít stejný `CRON_SECRET` v env (main.py kontroluje `x-cron-secret` header)
 
 ---
 
@@ -104,12 +106,27 @@ It is a data-driven tool used by a consultant (broker) to:
 
 ## 4. UX Principles
 
+Produkt má **dvě UX tváře** — různá pravidla pro různé části:
+
+### A) Broker power-tool — `/explorer`, `/admin/*`
+Optimalizuj pro **maximum dat na stránce**, rychlost a srovnatelnost.
 - **Dense, scannable layouts** — avoid large cards as primary list view
 - **Comparison over aesthetics** — show more items, not fewer
-- **Group by project** where useful (especially in recommendations)
 - **Fast, low-friction interactions** — minimize clicks per task
-- **Avoid unnecessary complexity** — every UI element must earn its place
 - Broker's time is scarce — optimize for speed of insight, not visual richness
+- Estetika ustupuje hustotě dat
+
+### B) Klientské & prezentační — `/clients`, `/cases/[id]/recommendations`, klientská zóna
+Musí **fungovat rychle, ale taky vypadat dobře** — broker to ukazuje klientovi.
+- Dense ale **čisté**; gridy místo stěn textu
+- **Group by project** where useful (especially in recommendations)
+- Jasná hierarchie, dost whitespace, čitelné fonty
+- Obrázky, ikony a barvy jsou součást hodnoty, ne dekorace
+- Klient má důvěřovat tomu, co vidí
+
+### Společné
+- **Avoid unnecessary complexity** — every UI element must earn its place
+- Consistent design tokens (rv2 CSS vars, ReamarUI komponenty)
 
 ---
 
@@ -167,10 +184,16 @@ For UI tasks:
 
 ---
 
-## 8. Machines
+## 8. Machines & hosting
 
-- **Mac mini** — primary coding, AI/Claude host, shared DB host, internal app server (`~/reamar-ai`)
+**Dev prostředí:**
+- **Mac mini** — primary coding, AI/Claude host (`~/reamar-ai`)
 - **MacBook** — secondary/mobile, review, fallback edits (`~/Desktop/reamar_ai`)
+
+**Produkce:**
+- **Frontend** → Vercel (auto-deploy z `main`)
+- **Backend** → Railway (auto-deploy z `main`)
+- **DB** → Supabase (managed PostgreSQL + PostGIS)
 
 ## Project layout
 ```
@@ -208,14 +231,16 @@ cd backend && source .venv/bin/activate && alembic upgrade head
 ```
 
 ## DATABASE_URL
-- Mac mini (local): `postgresql+psycopg://reamar:reamar_password@localhost:5433/reamar`
-- MacBook (Tailscale): `postgresql+psycopg://reamar:reamar_password@100.118.81.100:5433/reamar`
+- **Produkce** (Railway backend → Supabase): Supabase connection string v Railway env
+- **Dev** (local backend → Supabase): stejný Supabase string v `backend/.env`
+- Pozor na pooler vs direct connection — pro Alembic migrace použij direct, pro app pooler
 
 ## DB migrations
 - New migration = new file in `backend/alembic/versions/`
 - Command: `alembic revision --autogenerate -m "describe_change"`
 - Always review generated migration before applying
-- Never run `alembic downgrade` on shared DB without explicit confirmation
+- Supabase = shared DB → **nikdy** `alembic upgrade head` ani `downgrade` bez explicitního potvrzení
+- Produkční migrace se spouští cíleně, ne automaticky při Railway deploy
 
 ## Git
 - Commit often, push when checks pass
