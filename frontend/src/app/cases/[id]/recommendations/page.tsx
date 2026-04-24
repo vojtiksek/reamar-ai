@@ -24,7 +24,6 @@ import type { WorkingFilters } from "@/lib/clientMode";
 import type { WalkabilityPreferences, WalkabilityPreferenceValue } from "@/lib/walkabilityPreferences";
 import { DEFAULT_PREFERENCES as WALK_DEFAULTS, getNonDefaultChips, savePreferences as saveWalkPrefs } from "@/lib/walkabilityPreferences";
 import { QuickEdit } from "../brief/QuickEdit";
-import { useUiVersion } from "@/components/v2/useUiVersion";
 import { UnitInspectorV2 } from "./UnitInspectorV2";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
@@ -1760,7 +1759,6 @@ export default function RecommendationsPage() {
     locationPolygons,
     projectsInsidePolygon,
   } = useCaseData();
-  const uiVersion = useUiVersion();
   const [selectedRecId, setSelectedRecId] = useState<number | null>(null);
   const thresholds = useThresholds(token);
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -1892,8 +1890,8 @@ export default function RecommendationsPage() {
     feedbackSavingId,
   };
 
-  /* ─── V2 shell branch ─── */
-  if (uiVersion === "v2") {
+  /* ─── Render ─── */
+  {
     const selectedRec = recs.find((r) => r.rec_id === selectedRecId) ?? null;
     const v2SharedProps = {
       ...sharedProps,
@@ -2081,208 +2079,4 @@ export default function RecommendationsPage() {
       </div>
     );
   }
-
-  return (
-    <div className="space-y-3">
-      {/* Přepočítávám — progress banner */}
-      {recomputing && (
-        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          <svg className="h-4 w-4 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span>
-            {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
-              ? <>Počítám dojezdy… <span className="font-medium">({recomputeProgress.done}/{recomputeProgress.total} projektů)</span></>
-              : recomputeProgress && recomputeProgress.total > 0
-              ? <>Skóruji projekty… <span className="font-medium text-blue-600">({recomputeProgress.total} projektů)</span></>
-              : "Počítám doporučení…"
-            }
-          </span>
-        </div>
-      )}
-
-      {/* Filters — portalled into layout tabs row */}
-      {typeof document !== "undefined" && document.getElementById("case-tabs-slot") && profile && createPortal(
-        <>
-          <span className="text-[11px] text-slate-400 font-medium">Filtry:</span>
-          {profile.budget_max != null && profile.budget_min == null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {formatCurrencyCzk(profile.budget_max)}</span>
-          )}
-          {profile.budget_min != null && profile.budget_max != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{formatCurrencyCzk(profile.budget_min)} – {formatCurrencyCzk(profile.budget_max)}</span>
-          )}
-          {profile.area_min != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">od {profile.area_min} m²</span>
-          )}
-          {profile.area_max != null && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">do {profile.area_max} m²</span>
-          )}
-          {selectedLayouts.length > 0 && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{selectedLayouts.join(", ")}</span>
-          )}
-          {profile.property_type && profile.property_type !== "any" && (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">{profile.property_type === "flat" ? "Byt" : "Dům"}</span>
-          )}
-          {hasEstimatedCommute && !recomputing && (
-            <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700">⚠ odhady</span>
-          )}
-        </>,
-        document.getElementById("case-tabs-slot")!
-      )}
-
-      {/* Stats boxes — portalled into layout stats slot */}
-      {typeof document !== "undefined" && document.getElementById("case-stats-slot") && createPortal(
-        <>
-          <div className="flex items-center gap-1.5 rounded-lg bg-slate-50 px-3 py-1.5">
-            <span className="text-[11px] uppercase tracking-wide text-slate-500">Doporučení</span>
-            <span className="text-base font-bold text-slate-900">{recs.length}</span>
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-3 py-1.5">
-            <span className="text-[11px] text-amber-700">★ Ve výběru</span>
-            <span className="text-base font-bold text-amber-900">{pinnedCount}</span>
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5">
-            <span className="text-[11px] text-emerald-700">♥ Líbí se</span>
-            <span className="text-base font-bold text-emerald-900">{likedCount}</span>
-          </div>
-          <div className="flex items-center gap-1.5 rounded-lg bg-rose-50 px-3 py-1.5">
-            <span className="text-[11px] text-rose-700">✕ Nechci</span>
-            <span className="text-base font-bold text-rose-900">{dislikedCount}</span>
-          </div>
-        </>,
-        document.getElementById("case-stats-slot")!
-      )}
-
-
-
-      {/* Quick filters + count + view toggle on one row */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <QuickFilterBar filter={quickFilter} onChange={(f) => { setQuickFilter(f); localStorage.setItem("reamar_recs_filter", f); }} counts={filterCounts} />
-          <span className="text-xs text-slate-400">{filteredRecs.length} z {recs.length}</span>
-        </div>
-        <ViewToggle mode={viewMode} onChange={(m) => { setViewMode(m); localStorage.setItem("reamar_recs_view", m); }} />
-      </div>
-
-      {/* Preference quick-edit bars */}
-      <StandardsBar
-        wizardExtras={wizardExtras}
-        onChange={(section, key, value) => {
-          setWizardExtras((prev) => ({
-            ...prev,
-            [section]: { ...((prev as Record<string, any>)[section] ?? {}), [key]: value },
-          }));
-        }}
-        onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
-        recomputing={recomputing}
-      />
-      {walkPrefs && setWalkPrefs && (
-        <WalkabilityBar
-          walkPrefs={walkPrefs}
-          onChange={(key, value) => setWalkPrefs((prev) => ({ ...prev, [key]: value }))}
-          onApply={async () => { await handleSaveProfile(); await handleRecompute(); }}
-          recomputing={recomputing}
-        />
-      )}
-
-      {/* Units table view */}
-      {viewMode === "units" && (
-        <UnitsTableView recs={filteredRecs} commuteLabels={commuteLabels} {...sharedProps} />
-      )}
-
-      {/* Projects grouped view */}
-      {viewMode === "projects" && (
-        <ProjectsGroupedView recs={filteredRecs} {...sharedProps} onBulkPin={handleBulkPin} onBulkDislike={handleBulkDislike} onBulkClearFeedback={handleBulkClearFeedback} />
-      )}
-
-      {/* Map view */}
-      {viewMode === "map" && (
-        <RecommendationsMap
-          recs={filteredRecs}
-          onProjectFeedback={(recIds, type) => {
-            for (const id of recIds) handleRecommendationFeedback(id, type);
-          }}
-        />
-      )}
-
-      {/* Original cards view */}
-      {viewMode === "cards" && (
-        <>
-          <RecommendationSection
-            title="Nejlepší shoda"
-            subtitle="Nejsilnější kandidáti — vhodní do výběru."
-            items={grouped.strong}
-            thresholds={thresholds}
-            onPin={(r) => handlePin(r.rec_id, r.pinned_by_broker)}
-            onOpen={(r) => r.unit_external_id && router.push(`/units/${encodeURIComponent(r.unit_external_id)}`)}
-            onFeedback={(r, type, options) => handleRecommendationFeedback(r.rec_id, type, options)}
-            onClearFeedback={(r) => clearRecommendationFeedback(r.rec_id)}
-            feedbackSavingId={feedbackSavingId}
-          />
-
-          <RecommendationSection
-            title="K prověření"
-            subtitle="Dobré varianty, ale s jedním nebo dvěma otazníky."
-            items={grouped.review}
-            thresholds={thresholds}
-            onPin={(r) => handlePin(r.rec_id, r.pinned_by_broker)}
-            onOpen={(r) => r.unit_external_id && router.push(`/units/${encodeURIComponent(r.unit_external_id)}`)}
-            onFeedback={(r, type, options) => handleRecommendationFeedback(r.rec_id, type, options)}
-            onClearFeedback={(r) => clearRecommendationFeedback(r.rec_id)}
-            feedbackSavingId={feedbackSavingId}
-          />
-
-          <RecommendationSection
-            title="Alternativy"
-            subtitle="Záložní varianty pro případ, že hlavní výběr nevyjde."
-            items={grouped.fallback}
-            thresholds={thresholds}
-            onPin={(r) => handlePin(r.rec_id, r.pinned_by_broker)}
-            onOpen={(r) => r.unit_external_id && router.push(`/units/${encodeURIComponent(r.unit_external_id)}`)}
-            onFeedback={(r, type, options) => handleRecommendationFeedback(r.rec_id, type, options)}
-            onClearFeedback={(r) => clearRecommendationFeedback(r.rec_id)}
-            feedbackSavingId={feedbackSavingId}
-          />
-        </>
-      )}
-
-      {/* Hidden recommendations */}
-      <div className="mt-6 border-t border-slate-200 pt-4">
-        <button
-          className="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700"
-          onClick={() => { setShowHidden((v) => !v); if (!showHidden && hiddenRecs.length === 0) fetchHidden(); }}
-        >
-          <span>{showHidden ? "▾" : "▸"}</span>
-          <span>Skryté jednotky</span>
-          {hiddenRecs.length > 0 && <span className="rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium">{hiddenRecs.length}</span>}
-        </button>
-        {showHidden && (
-          <div className="mt-3 space-y-2">
-            {hiddenLoading && <p className="text-xs text-slate-400">Načítám…</p>}
-            {!hiddenLoading && hiddenRecs.length === 0 && <p className="text-xs text-slate-400">Žádné skryté jednotky.</p>}
-            {hiddenRecs.map((hr) => (
-              <div key={hr.rec_id} className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-700 truncate">{hr.project_name}</p>
-                  <p className="text-xs text-slate-500">
-                    {hr.layout && <span>{hr.layout} · </span>}
-                    {hr.floor_area_m2 && <span>{hr.floor_area_m2} m² · </span>}
-                    {hr.price_czk && <span>{formatCurrencyCzk(hr.price_czk)} · </span>}
-                    <span>Skóre: {hr.score.toFixed(0)}</span>
-                  </p>
-                </div>
-                <button
-                  className="ml-4 shrink-0 rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
-                  onClick={() => handleUnhide(hr.rec_id)}
-                >
-                  Odkrýt
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
 }

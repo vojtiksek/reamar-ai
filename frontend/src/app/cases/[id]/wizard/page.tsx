@@ -30,7 +30,6 @@ import {
   useWizardMetadata,
   getFieldOptions,
 } from "@/hooks/useWizardMetadata";
-import { useUiVersion } from "@/components/v2/useUiVersion";
 import { WizardV2Chrome } from "./WizardV2Chrome";
 
 const cn = (...classes: Parameters<typeof clsx>) => clsx(...classes);
@@ -402,7 +401,6 @@ export default function ClientWizardPage() {
   } = useCaseData();
 
   const { fields: wizardMeta } = useWizardMetadata();
-  const uiVersion = useUiVersion();
   const [step, setStep] = useState(1);
   const [finishing, setFinishing] = useState(false);
   const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
@@ -1507,165 +1505,38 @@ export default function ClientWizardPage() {
     9: renderStep9,
   };
 
-  /* ─── V2 shell branch ─── */
-
-  if (uiVersion === "v2") {
-    return (
-      <WizardV2Chrome
-        clientName={client.name}
-        step={step}
-        totalSteps={TOTAL_STEPS}
-        stepLabels={STEP_LABELS}
-        onStepChange={setStep}
-        onPrev={goPrev}
-        onNext={goNext}
-        onFinish={handleFinish}
-        onClose={handleClose}
-        profileDirty={profileDirty}
-        profileSaving={profileSaving}
-        onSave={handleExplicitSave}
-        finishing={finishing}
-        recomputeStatus={recomputeStatus}
-        preview={{
-          profile: (profile as {
-            budget_max?: number | null;
-            area_min?: number | null;
-            purchase_purpose?: string | null;
-          } | null) ?? null,
-          wizardExtras,
-          selectedLayouts,
-          walkPrefs,
-          locationProjectsCount: locationProjects?.length ?? 0,
-          recomputeMatchCount: matchCount,
-        }}
-      >
-        {stepRenderers[step]?.()}
-      </WizardV2Chrome>
-    );
-  }
-
-  /* ─── Render (V1) ─── */
+  /* ─── Render ─── */
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-50">
-      {/* Top bar */}
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/95 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-3">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-slate-900">Reamar AI</p>
-            <p className="text-xs text-slate-500">{client.name}</p>
-          </div>
-          <div className="flex items-center gap-3">
-            {profileDirty && (
-              <span className="text-[11px] text-amber-600">Neuložené změny</span>
-            )}
-            <span className="text-xs text-slate-400">
-              {step}/{TOTAL_STEPS}
-            </span>
-          </div>
-        </div>
-
-        {/* Progress bar */}
-        <div className="h-1 bg-slate-100">
-          <div
-            className="h-full bg-sky-500 transition-all duration-300"
-            style={{ width: `${(step / TOTAL_STEPS) * 100}%` }}
-          />
-        </div>
-      </header>
-
-      {/* Step navigation pills */}
-      <div className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-4xl px-4 py-2">
-          <div className="flex flex-wrap gap-1">
-            {Array.from({ length: TOTAL_STEPS }, (_, i) => i + 1).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setStep(s)}
-                className={cn(
-                  "rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors",
-                  s === step
-                    ? "bg-sky-100 text-sky-800"
-                    : s < step
-                      ? "text-slate-600 hover:bg-slate-100"
-                      : "text-slate-400 hover:bg-slate-50",
-                )}
-              >
-                {s < step ? "✓ " : ""}
-                {STEP_LABELS[s]}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Content */}
-      <main className="mx-auto w-full max-w-3xl flex-1 px-6 py-8">
-        <div className="mb-6">
-          <h2 className="text-xl font-bold text-slate-900">{STEP_LABELS[step]}</h2>
-        </div>
-        {stepRenderers[step]?.()}
-      </main>
-
-      {/* Bottom navigation */}
-      <footer className="sticky bottom-0 border-t border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-3xl items-center justify-between px-6 py-4">
-          <button
-            type="button"
-            onClick={goPrev}
-            disabled={step === 1}
-            className={cn(
-              "rounded-xl px-5 py-2.5 text-sm font-medium transition-colors",
-              step === 1
-                ? "cursor-not-allowed text-slate-300"
-                : "text-slate-600 hover:bg-slate-100",
-            )}
-          >
-            ← Zpět
-          </button>
-
-          {step < TOTAL_STEPS ? (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleExplicitSave}
-                disabled={!profileDirty || profileSaving}
-                className={cn(
-                  "rounded-xl px-5 py-2.5 text-sm font-medium transition-colors",
-                  profileDirty ? "text-sky-600 hover:bg-sky-50" : "text-slate-300 cursor-not-allowed",
-                )}
-              >
-                {profileSaving ? "Ukládám…" : "Uložit"}
-              </button>
-              <button
-                type="button"
-                onClick={goNext}
-                className="rounded-xl bg-sky-500 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-sky-600"
-              >
-                Další →
-              </button>
-            </div>
-          ) : recomputeStatus === "done" ? (
-            <button
-              type="button"
-              onClick={handleClose}
-              className="rounded-xl bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-600"
-            >
-              Zobrazit výsledky →
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleFinish}
-              disabled={finishing || recomputeStatus === "loading"}
-              className="rounded-xl bg-emerald-500 px-6 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-emerald-600 disabled:opacity-50"
-            >
-              {finishing ? "Ukládám..." : recomputeStatus === "loading" ? "Počítám…" : "Dokončit a uložit"}
-            </button>
-          )}
-        </div>
-      </footer>
-    </div>
+    <WizardV2Chrome
+      clientName={client.name}
+      step={step}
+      totalSteps={TOTAL_STEPS}
+      stepLabels={STEP_LABELS}
+      onStepChange={setStep}
+      onPrev={goPrev}
+      onNext={goNext}
+      onFinish={handleFinish}
+      onClose={handleClose}
+      profileDirty={profileDirty}
+      profileSaving={profileSaving}
+      onSave={handleExplicitSave}
+      finishing={finishing}
+      recomputeStatus={recomputeStatus}
+      preview={{
+        profile: (profile as {
+          budget_max?: number | null;
+          area_min?: number | null;
+          purchase_purpose?: string | null;
+        } | null) ?? null,
+        wizardExtras,
+        selectedLayouts,
+        walkPrefs,
+        locationProjectsCount: locationProjects?.length ?? 0,
+        recomputeMatchCount: matchCount,
+      }}
+    >
+      {stepRenderers[step]?.()}
+    </WizardV2Chrome>
   );
 }

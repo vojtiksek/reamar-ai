@@ -3,19 +3,11 @@
 import Link from "next/link";
 import { useState, useEffect, useCallback } from "react";
 import { useCaseData } from "@/hooks/useCaseData";
-import { formatCurrencyCzk, formatAreaM2 } from "@/lib/format";
 import type { Priority } from "@/lib/caseTypes";
 import { FunnelCard } from "@/components/case/FunnelCard";
 import { WalkabilityPreferencesDrawer } from "@/components/WalkabilityPreferencesDrawer";
 import { QuickEdit } from "./QuickEdit";
-import {
-  ReamarButton,
-  ReamarCard,
-  ReamarSubtleCard,
-  StatCard,
-} from "@/components/ui/reamar-ui";
 import { getDefaultPreferences } from "@/lib/walkabilityPreferences";
-import { useUiVersion } from "@/components/v2/useUiVersion";
 import { BriefV2Chrome } from "./BriefV2Chrome";
 
 /* ─── Main page ─── */
@@ -48,20 +40,13 @@ export default function BriefPage() {
     marketFit,
     LAYOUT_OPTIONS,
     clientId,
-    router,
     activeClient,
-    handleSaveProfile,
     handleRecompute,
     handleActivate,
-    handleNextStep,
     saveWalkPrefs,
   } = useCaseData();
 
-  const [wizardStep, setWizardStep] = useState<number>(1);
   const [showAnalytics, setShowAnalytics] = useState(false);
-  const [mapMode, setMapMode] = useState<"polygon" | "commute">("polygon");
-  const [nextCommuteLabel, setNextCommuteLabel] = useState<string>("");
-  const uiVersion = useUiVersion();
 
   // Legacy: clear any previously persisted view-mode so old "wizard" sessions
   // don't force users back into the removed inline wizard.
@@ -143,89 +128,6 @@ export default function BriefPage() {
       else if (value === "reject") preferSummary.push(`${label}: nechci`);
     });
   }
-
-  /* ── Summary rail component ── */
-
-  const summaryRail = (
-    <div className="space-y-4 text-xs">
-      <h3 className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Živé shrnutí</h3>
-
-      {/* Budget */}
-      {profile?.budget_max != null && (
-        <div>
-          <p className="font-semibold text-slate-700">Rozpočet</p>
-          <p className="text-slate-600">Max: {formatCurrencyCzk(profile.budget_max)}</p>
-          {wizardExtras.budget?.max_price_tolerance_pct != null && <p className="text-slate-600">Tolerance: +{wizardExtras.budget.max_price_tolerance_pct}%</p>}
-        </div>
-      )}
-
-      {/* Area */}
-      {profile?.area_min != null && (
-        <div>
-          <p className="font-semibold text-slate-700">Plocha</p>
-          <p className="text-slate-600">Min: {formatAreaM2(profile.area_min)}</p>
-          {wizardExtras.budget?.max_area_tolerance_pct != null && <p className="text-slate-600">Tolerance: -{wizardExtras.budget.max_area_tolerance_pct}%</p>}
-        </div>
-      )}
-
-      {/* Layouts */}
-      {selectedLayouts.length > 0 && (
-        <div>
-          <p className="font-semibold text-slate-700">Dispozice</p>
-          <p className="text-slate-600">{selectedLayouts.join(", ")}</p>
-        </div>
-      )}
-
-      {/* Location */}
-      {(wizardExtras.location?.method_polygon || wizardExtras.location?.method_commute || wizardExtras.location?.method_admin) && (
-        <div>
-          <p className="font-semibold text-slate-700">Lokalita</p>
-          <ul className="text-slate-600">
-            {wizardExtras.location?.method_polygon && <li>Polygon</li>}
-            {wizardExtras.location?.method_commute && <li>Dojíždění</li>}
-            {wizardExtras.location?.method_admin && <li>Preferované oblasti jako striktní požadavek</li>}
-          </ul>
-          {locationPolygons.some((p) => p.length >= 3) && (
-            <p className="text-slate-500">{projectsInsidePolygon} projektů v oblasti</p>
-          )}
-        </div>
-      )}
-
-      {/* Must-haves */}
-      {mustHaveSummary.length > 0 && (
-        <div>
-          <p className="font-semibold text-emerald-700">Musí být</p>
-          <ul className="space-y-0.5">
-            {mustHaveSummary.map((item, idx) => (
-              <li key={idx} className="flex items-start gap-1.5 text-emerald-800">
-                <span className="mt-px text-emerald-500">✓</span>{item}
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Preferences */}
-      {preferSummary.length > 0 && (
-        <div>
-          <p className="font-semibold text-violet-700">Preference</p>
-          <ul className="space-y-0.5">
-            {preferSummary.map((item, idx) => (
-              <li key={idx} className="text-violet-800">· {item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      {/* Market */}
-      {areaMarket && (
-        <div>
-          <p className="font-semibold text-slate-700">Trh</p>
-          <p className="text-slate-600">{areaMarket.projects_count} projektů · {areaMarket.matching_units_count} odpovídá</p>
-        </div>
-      )}
-    </div>
-  );
 
   /* ── Render ── */
 
@@ -344,10 +246,9 @@ export default function BriefPage() {
     </div>
   );
 
-  if (uiVersion === "v2") {
-    return (
-      <>
-        <BriefV2Chrome
+  return (
+    <>
+      <BriefV2Chrome
           clientName={client.name}
           clientId={clientId}
           isActiveClient={activeClient?.clientId === client.id}
@@ -408,198 +309,6 @@ export default function BriefPage() {
             </div>
           )}
         </BriefV2Chrome>
-        <WalkabilityPreferencesDrawer
-          open={walkPrefsOpen}
-          value={walkPrefs}
-          onChange={setWalkPrefs}
-          onClose={() => setWalkPrefsOpen(false)}
-          onApply={() => { saveWalkPrefs(walkPrefs); setWalkPrefsOpen(false); }}
-          onReset={() => { const def = getDefaultPreferences(); setWalkPrefs(def); saveWalkPrefs(def); }}
-        />
-      </>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      {recomputing && (
-        <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-          <svg className="h-4 w-4 shrink-0 animate-spin" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          <span>
-            {recomputeProgress && recomputeProgress.total > 0 && recomputeProgress.done < recomputeProgress.total
-              ? <>Počítám dojezdy… <span className="font-medium">({recomputeProgress.done}/{recomputeProgress.total} projektů)</span></>
-              : recomputeProgress && recomputeProgress.total > 0
-              ? <>Skóruji projekty… <span className="font-medium text-blue-600">({recomputeProgress.total} projektů)</span></>
-              : "Počítám doporučení…"
-            }
-          </span>
-        </div>
-      )}
-
-      <section className="w-full">
-        <ReamarCard className="px-6 py-5 md:px-10 md:py-6">
-          {/* Header */}
-          <div className="mb-4 flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <nav className="text-sm text-slate-500">
-                <Link href="/clients" className="hover:underline">Klienti</Link>{" / "}
-                <span className="font-semibold text-slate-900">{client.name}</span>
-              </nav>
-              {profileSavedMessage && (
-                <p className="text-xs text-emerald-600">{profileSavedMessage}</p>
-              )}
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="hidden items-center gap-2 md:flex">
-                {activeClient?.clientId === client.id ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-3 py-1.5 text-xs font-medium text-emerald-700">
-                    <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    Aktivní klient
-                  </span>
-                ) : (
-                  <ReamarButton type="button" variant="ghost" size="sm" onClick={handleActivate} disabled={!profile} title="Aktivovat klientský mód">
-                    Aktivovat klienta
-                  </ReamarButton>
-                )}
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={() => window.open(`/cases/${clientId}/wizard`, "_blank")}>
-                  Spustit wizard
-                </ReamarButton>
-                <ReamarButton type="button" variant="ghost" size="sm" onClick={handleExplicitSave} disabled={!profileDirty || profileSaving}>
-                  {profileSaving ? "Ukládám…" : profileDirty ? "Uložit" : "Uloženo"}
-                </ReamarButton>
-              </div>
-            </div>
-          </div>
-
-          {/* Main editing surface — Quick Edit.
-              The legacy inline step-wizard was removed from the normal flow;
-              users open the full-screen wizard via the "Spustit wizard" button. */}
-          <QuickEdit
-            profile={profile}
-            setProfile={setProfile}
-            wizardExtras={wizardExtras}
-            setWizardExtras={setWizardExtras}
-            selectedLayouts={selectedLayouts}
-            setSelectedLayouts={setSelectedLayouts}
-            LAYOUT_OPTIONS={LAYOUT_OPTIONS}
-            locationPolygons={locationPolygons}
-            projectsInsidePolygon={projectsInsidePolygon}
-            recs={recs}
-            profileDirty={profileDirty}
-            recomputing={recomputing}
-            handleRecompute={handleRecompute}
-            mustHaveSummary={mustHaveSummary}
-            preferSummary={preferSummary}
-            onSwitchToWizard={openFullscreenWizard}
-            walkPrefs={walkPrefs}
-            setWalkPrefs={setWalkPrefs}
-          />
-          {profileDirty && (
-            <div className="mt-4 flex items-center justify-end">
-              <span className="text-[11px] text-amber-600">Neuložené změny</span>
-            </div>
-          )}
-        </ReamarCard>
-
-        {/* Filter funnel (Phase 7b) */}
-        {recsFunnel && <FunnelCard funnel={recsFunnel} />}
-      </section>
-
-      {/* Analytics collapsible section */}
-      <section className="w-full space-y-3">
-        <button type="button"
-          className="flex w-full items-center justify-between rounded-lg bg-white px-6 py-4 text-left shadow-sm ring-1 ring-slate-200 hover:ring-slate-300"
-          onClick={() => setShowAnalytics((prev) => !prev)}>
-          <span className="text-sm font-semibold text-slate-800">Analytika a podklady</span>
-          <span className="text-xs text-slate-400">{showAnalytics ? "▲ Skrýt" : "▼ Zobrazit"}</span>
-        </button>
-
-        {showAnalytics && (
-          <div className="grid gap-4 md:grid-cols-3">
-            <ReamarSubtleCard className="col-span-1 p-4">
-              <div className="mb-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Trh v hledané oblasti</h3>
-                <p className="mt-1 text-[11px] text-slate-600">Přehled projektů a jednotek v zakreslené oblasti.</p>
-              </div>
-              {locationPolygons.length === 0 || locationPolygons[0].length < 3 ? (
-                <p className="text-[11px] text-slate-500">Pro zobrazení trhu vyberte oblast v kroku &quot;Lokalita&quot; a uložte profil klienta.</p>
-              ) : !areaMarket ? (
-                <p className="text-[11px] text-slate-500">Načítám data o trhu v hledané oblasti…</p>
-              ) : areaMarket.projects_count === 0 ? (
-                <p className="text-[11px] text-slate-500">V aktuálně zvolené oblasti nejsou žádné aktivní projekty.</p>
-              ) : (
-                <div className="space-y-2 text-[11px] text-slate-700">
-                  <StatCard label="Projekty v oblasti" value={areaMarket.projects_count} sublabel="s aktivními jednotkami" className="mb-2" />
-                  <p><span className="font-semibold text-slate-900">{areaMarket.active_units_count}</span> aktivních jednotek, z toho <span className="font-semibold text-slate-900">{areaMarket.matching_units_count}</span> odpovídá profilu klienta.</p>
-                  <p className="mt-1 font-semibold text-slate-900">Ceny v oblasti</p>
-                  <p>Průměrná cena: {areaMarket.avg_price_czk != null ? `${areaMarket.avg_price_czk.toLocaleString("cs-CZ")} Kč` : "—"}</p>
-                  <p>Průměrná cena/m²: {areaMarket.avg_price_per_m2_czk != null ? `${areaMarket.avg_price_per_m2_czk.toLocaleString("cs-CZ")} Kč/m²` : "—"}</p>
-                  <p>Rozptyl cen: {areaMarket.min_price_czk != null ? `${areaMarket.min_price_czk.toLocaleString("cs-CZ")} Kč` : "—"} – {areaMarket.max_price_czk != null ? `${areaMarket.max_price_czk.toLocaleString("cs-CZ")} Kč` : "—"}</p>
-                </div>
-              )}
-            </ReamarSubtleCard>
-
-            <ReamarSubtleCard className="col-span-1 p-4">
-              <div className="mb-3">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Analýza nabídky</h3>
-                <p className="mt-1 text-[11px] text-slate-600">Jak současná nabídka odpovídá profilu klienta.</p>
-              </div>
-              {!marketFit ? (
-                <p className="text-[11px] text-slate-500">Analýza zatím není k dispozici.</p>
-              ) : (
-                <div className="space-y-3 text-[11px] text-slate-700">
-                  <p>Aktuálně odpovídá profilu <span className="font-semibold text-slate-900">{marketFit.matching_units_count}</span> jednotek z <span className="font-semibold text-slate-900">{marketFit.available_units_count}</span> dostupných.</p>
-                  <div>
-                    <p className="text-[11px] font-semibold text-slate-900">Hlavní blokující faktory</p>
-                    <ul className="mt-1 space-y-1">
-                      {marketFit.top_blockers.length === 0 ? (
-                        <li>Žádný výrazný blokující faktor.</li>
-                      ) : (
-                        marketFit.top_blockers.slice(0, 3).map((b) => (
-                          <li key={b.key}><span className="font-semibold">{b.label}:</span> {Math.round(b.blocked_percentage * 100)} % jednotek vypadá.</li>
-                        ))
-                      )}
-                    </ul>
-                  </div>
-                  <div>
-                    <p className="text-[11px] font-semibold text-slate-900">Jak odemknout více jednotek</p>
-                    {marketFit.relaxation_suggestions.length === 0 ? (
-                      <p className="mt-1">Změny profilu by nepřinesly významné zvýšení.</p>
-                    ) : (
-                      <ul className="mt-1 space-y-1">
-                        {marketFit.relaxation_suggestions.slice(0, 5).map((s) => (
-                          <li key={s.label} className="flex items-center justify-between gap-2">
-                            <span>{s.label}</span>
-                            <span className="text-[10px] font-semibold text-slate-900">{s.delta_vs_current >= 0 ? "+" : ""}{s.delta_vs_current} jednotek</span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
-            </ReamarSubtleCard>
-
-            <ReamarSubtleCard className="col-span-1 p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">Doporučené jednotky</h3>
-                <span className="text-[11px] text-slate-500">{recs.length} jednotek</span>
-              </div>
-              {recs.length === 0 ? (
-                <p className="text-[11px] text-slate-600">Zatím žádná doporučení. Klikněte na &quot;Potvrdit zadání&quot;.</p>
-              ) : (
-                <div className="max-h-[480px] overflow-y-auto overflow-hidden rounded-lg border border-slate-200/70">
-                  <p className="px-3 py-2 text-[11px] text-slate-500">{recs.length} jednotek — přejděte na záložku Doporučení pro detail.</p>
-                </div>
-              )}
-            </ReamarSubtleCard>
-          </div>
-        )}
-      </section>
-
       <WalkabilityPreferencesDrawer
         open={walkPrefsOpen}
         value={walkPrefs}
@@ -608,6 +317,6 @@ export default function BriefPage() {
         onApply={() => { saveWalkPrefs(walkPrefs); setWalkPrefsOpen(false); }}
         onReset={() => { const def = getDefaultPreferences(); setWalkPrefs(def); saveWalkPrefs(def); }}
       />
-    </div>
+    </>
   );
 }

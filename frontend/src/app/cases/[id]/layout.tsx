@@ -105,7 +105,7 @@ export default function CaseLayout({ children }: { children: React.ReactNode }) 
           <div id="case-tabs-slot" className="ml-auto flex flex-wrap items-center gap-1.5" />
         </div>
         {/* Portal target for page-specific stats row (Doporučení, Ve výběru, ...) */}
-        <div id="case-stats-slot" className="flex items-center gap-2 empty:hidden mt-2 border-t border-slate-100 pt-2" />
+        <div id="case-stats-slot" className="flex flex-wrap items-center gap-2 empty:hidden mt-2 border-t border-slate-100 pt-2" />
       </div>
 
       <div className="mb-2" />

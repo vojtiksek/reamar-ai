@@ -166,7 +166,7 @@ export function ClientsListV2() {
             <div className="rv2-empty">V tomto filtru není žádný případ.</div>
           ) : (
             <div className="rv2-card-scroll">
-            <table className="rv2-table" style={{ minWidth: 640 }}>
+            <table className="rv2-table rv2-clients-table">
               <thead>
                 <tr>
                   <th aria-hidden style={{ width: 4 }} />

@@ -138,22 +138,6 @@ body {
   background: var(--background);
 }
 
-.app-shell {
-  position: relative;
-  z-index: 1;
-  width: 100%;
-  margin: 0;
-  padding: 1.25rem 1.25rem 2.5rem;
-}
-
-/* Fullscreen wizard: hide global nav and remove app-shell padding */
-.app-shell:has(.wizard-fullscreen) {
-  padding: 0;
-}
-.app-shell:has(.wizard-fullscreen) > .glass-header {
-  display: none;
-}
-
 @layer components {
   .glass-header {
     background: #FFFFFF;
@@ -208,22 +192,12 @@ body {
 }
 
 /* ============================================================
-   UI v2 — new shell (sidebar + content). Gated by data-ui="v2".
-   Additive: v1 layout is untouched.
+   UI v2 — app shell (sidebar + content).
    ============================================================ */
 
-html[data-ui="v2"] body {
+body {
   background: var(--r-surface-0);
   color: var(--r-text-primary);
-}
-
-html[data-ui="v2"] .app-shell {
-  padding: 0;
-  min-height: 100vh;
-}
-
-html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
-  padding: 0;
 }
 
 /* Layout grid: sidebar + main */
@@ -235,18 +209,6 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
 }
 .rv2-layout[data-sidebar="collapsed"] {
   grid-template-columns: var(--r-sidebar-w-collapsed) 1fr;
-}
-
-/* Wizard fullscreen: collapse sidebar + topbar, like v1 */
-.rv2-layout:has(.wizard-fullscreen) {
-  grid-template-columns: 1fr;
-}
-.rv2-layout:has(.wizard-fullscreen) .rv2-sidebar,
-.rv2-layout:has(.wizard-fullscreen) .rv2-topbar {
-  display: none;
-}
-.rv2-layout:has(.wizard-fullscreen) .rv2-main-inner {
-  padding: 0;
 }
 
 .rv2-main {
@@ -819,6 +781,14 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
     max-width: 100vw;
     z-index: 50;
     box-shadow: var(--r-shadow-lg);
+  }
+}
+@media (max-width: 640px) {
+  .rv2-with-drawer[data-drawer-open="true"] .rv2-drawer {
+    top: 0;
+    left: 0;
+    width: 100vw;
+    height: 100dvh;
   }
 }
 
@@ -1629,33 +1599,163 @@ html[data-ui="v2"] .app-shell:has(.wizard-fullscreen) {
   box-shadow: var(--r-shadow-sm);
 }
 
-/* Floating UI-version toggle */
-.rv2-version-toggle {
-  position: fixed;
-  right: var(--r-space-4);
-  bottom: var(--r-space-4);
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  gap: var(--r-space-2);
-  padding: 6px var(--r-space-3);
-  background: var(--r-surface-inverse);
-  color: var(--r-text-on-inverse);
-  border-radius: var(--r-radius-pill);
-  font-size: var(--r-font-12);
-  font-weight: 500;
-  box-shadow: var(--r-shadow-lg);
-  cursor: pointer;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+
+/* ============================================================
+   Mobile refinements (≤ 640px)
+   "V autě" použití — nemá to být pretty, ale fungovat.
+   ============================================================ */
+
+@media (max-width: 640px) {
+  /* Def-list: label + value na vlastním řádku */
+  .rv2-def-list {
+    grid-template-columns: 1fr;
+    row-gap: 2px;
+    font-size: var(--r-font-14);
+  }
+  .rv2-def-list dt {
+    font-size: var(--r-font-11);
+    text-transform: uppercase;
+    letter-spacing: var(--r-tracking-wider);
+  }
+  .rv2-def-list dd {
+    margin-bottom: 8px;
+  }
+
+  /* Sidebar labels — bump čitelnost */
+  .rv2-sidebar-section-label {
+    font-size: var(--r-font-12);
+  }
+
+  /* Tabulka header — bump čitelnost */
+  .rv2-table thead th {
+    font-size: var(--r-font-12);
+  }
+  .rv2-table tbody td {
+    font-size: var(--r-font-13);
+  }
+
+  /* Topbar: zjednodušit */
+  .rv2-topbar {
+    padding: 0 var(--r-space-2);
+  }
+
+  /* Main content padding zmenšit, ať máme víc místa */
+  .rv2-main-inner {
+    padding: var(--r-space-2) var(--r-space-2) var(--r-space-4);
+  }
+
+  /* Analytics cards — 1 column */
+  .rv2-analytics-grid {
+    grid-template-columns: 1fr !important;
+  }
 }
 
-.rv2-version-toggle:hover {
-  background: var(--r-brand-hover);
+/* Mobile tap-target helper: zajišťuje ≥ 44px klikatelné plochy */
+@media (max-width: 640px) {
+  .rv2-btn,
+  .rv2-btn-sm,
+  button.rv2-btn-ghost,
+  .rv2-tab {
+    min-height: 44px;
+  }
 }
 
-.rv2-version-toggle-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--r-state-success);
+/* ============================================================
+   Wizard — mobile step picker + sticky footer
+   Desktop: skryto (rail slouží k navigaci).
+   ≤900px: rail je skrytý → zobraz select jako náhradu.
+   ============================================================ */
+.rv2-wizard-mobile-nav {
+  display: none;
+  margin-top: var(--r-space-3);
+}
+@media (max-width: 900px) {
+  .rv2-wizard-mobile-nav {
+    display: block;
+  }
+  /* Sticky footer — tlačítka Zpět/Další vždy na dosah */
+  .rv2-wizard-main-footer {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+  }
+}
+@media (max-width: 640px) {
+  /* Hlavní tělo kroku trochu vzdušnější na mobilu */
+  .rv2-wizard-main-body {
+    padding: var(--r-space-3);
+  }
+  .rv2-wizard-main-header {
+    padding: var(--r-space-3);
+  }
+  .rv2-wizard-main-footer {
+    padding: var(--r-space-2) var(--r-space-3);
+  }
+  .rv2-wizard-main-title {
+    font-size: var(--r-font-18);
+  }
+}
+
+/* ============================================================
+   Clients table — mobile "karty místo tabulky"
+   Desktop: klasická tabulka s min-width 640.
+   Mobile (≤640): řádek = karta, thead skryto, dekorativní sloupce off.
+   ============================================================ */
+.rv2-clients-table {
+  min-width: 640px;
+}
+
+@media (max-width: 640px) {
+  .rv2-clients-table {
+    min-width: 0;
+    border-collapse: collapse;
+  }
+  .rv2-clients-table thead {
+    display: none;
+  }
+  .rv2-clients-table,
+  .rv2-clients-table tbody,
+  .rv2-clients-table tr,
+  .rv2-clients-table td {
+    display: block;
+    width: 100%;
+  }
+  .rv2-clients-table tr {
+    position: relative;
+    padding: var(--r-space-3) var(--r-space-2);
+    border-bottom: 1px solid var(--r-border-subtle);
+    border-left: 3px solid transparent;
+  }
+  .rv2-clients-table tr[data-priority="high"] {
+    border-left-color: var(--r-state-danger);
+  }
+  .rv2-clients-table tr[data-priority="medium"] {
+    border-left-color: var(--r-state-warning);
+  }
+  .rv2-clients-table tr[data-selected="true"] {
+    background: var(--r-surface-sunken);
+  }
+  .rv2-clients-table td {
+    padding: 2px 0;
+    border: none;
+  }
+  /* Dekorativní pruh (barvu má už border-left na tr) + chevron pryč */
+  .rv2-clients-table td.rv2-col-priority {
+    display: none;
+  }
+  .rv2-clients-table td.rv2-col-chevron {
+    position: absolute;
+    top: var(--r-space-3);
+    right: var(--r-space-2);
+    width: auto;
+    padding: 4px;
+  }
+  /* Skupinový label (Vyžaduje pozornost / Ostatní případy) */
+  .rv2-clients-table .rv2-group-label {
+    padding: var(--r-space-3) 0 var(--r-space-1);
+    font-size: var(--r-font-11);
+    text-transform: uppercase;
+    letter-spacing: var(--r-tracking-wider);
+    color: var(--r-text-tertiary);
+  }
 }

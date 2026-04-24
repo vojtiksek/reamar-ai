@@ -330,7 +330,7 @@ export function QuickEdit({
 
       {/* Row 2: Platby + Termíny — one row */}
       <div className={cn(cardClass, "flex flex-wrap divide-x divide-slate-100")}>
-        <div className="flex-1 min-w-[200px] px-3 py-2 space-y-2">
+        <div className="flex-1 sm:min-w-[200px] px-3 py-2 space-y-2">
           <p className={cn(cardHeaderClass, "px-0 py-0")}>Platby</p>
           <div className="flex gap-3">
             <div className="flex-1">
@@ -353,7 +353,7 @@ export function QuickEdit({
             </div>
           </div>
         </div>
-        <div className="flex-1 min-w-[200px] px-3 py-2 space-y-2">
+        <div className="flex-1 sm:min-w-[200px] px-3 py-2 space-y-2">
           <p className={cn(cardHeaderClass, "px-0 py-0")}>Termíny nastěhování</p>
           <div className="flex gap-3">
             <div className="flex-1">

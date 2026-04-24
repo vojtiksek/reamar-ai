@@ -107,6 +107,34 @@ export function WizardV2Chrome(props: Props) {
           <div className="rv2-wizard-main-subtitle">
             {clientName} · {profileDirty ? "Neuložené změny" : "Uloženo"}
           </div>
+          {/* Mobile step picker — viditelný když je rail skrytý (≤900px) */}
+          <div className="rv2-wizard-mobile-nav" aria-label="Navigace mezi kroky">
+            <div className="rv2-wizard-rail-bar" aria-hidden style={{ marginBottom: 6 }}>
+              <div style={{ width: `${progressPct}%` }} />
+            </div>
+            <select
+              value={step}
+              onChange={(e) => onStepChange(Number(e.target.value))}
+              aria-label={`Krok ${step} z ${totalSteps}`}
+              style={{
+                width: "100%",
+                padding: "10px 12px",
+                fontSize: "var(--r-font-14)",
+                borderRadius: "var(--r-radius-sm)",
+                border: "1px solid var(--r-border-default)",
+                background: "var(--r-surface-1)",
+                color: "var(--r-text-primary)",
+                minHeight: 44,
+              }}
+            >
+              {Array.from({ length: totalSteps }, (_, i) => i + 1).map((n) => (
+                <option key={n} value={n}>
+                  {n < step ? "✓ " : ""}
+                  {n}. {stepLabels[n]}
+                </option>
+              ))}
+            </select>
+          </div>
         </header>
 
         <div className="rv2-wizard-main-body">{children}</div>
