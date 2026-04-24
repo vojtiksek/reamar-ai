@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ActiveClientProvider } from "@/contexts/ActiveClientContext";
 import { LayoutSwitcher } from "@/components/v2/LayoutSwitcher";
+import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -58,6 +59,7 @@ export default function RootLayout({
         <ActiveClientProvider>
           <LayoutSwitcher>{children}</LayoutSwitcher>
         </ActiveClientProvider>
+        <ServiceWorkerRegister />
       </body>
     </html>
   );
