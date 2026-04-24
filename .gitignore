@@ -51,6 +51,7 @@ backend/data/scrape/
 
 # Screenshots / temp images in root
 *.png
+!frontend/public/icons/*.png
 screenshots/
 tmp/
 debug/
