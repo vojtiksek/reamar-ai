@@ -6500,6 +6500,7 @@ def list_projects(
     limit: Annotated[int, Query(ge=1, le=2000)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
     include_archived: Annotated[bool, Query(description="Include fully sold projects older than 6 months")] = False,
+    with_count: Annotated[bool, Query(description="Compute total row count. Skip for map/scroll views to halve query time.")] = True,
     sort_by: Annotated[str, Query(description="Sort column key (catalog or computed)")] = "avg_price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="asc or desc")] = "asc",
     min_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude >= value")] = None,
@@ -6733,16 +6734,26 @@ def list_projects(
             max_distance_to_train_station_m=max_distance_to_train_station_m,
         )
         u_sub = units_base.subquery()
-        matching_project_ids = select(u_sub.c.project_id).distinct()
-        stmt = stmt.where(Project.id.in_(matching_project_ids))
+        # EXISTS short-circuits on first match per project — much faster than
+        # materializing a DISTINCT subquery and checking `Project.id IN (...)`.
+        stmt = stmt.where(
+            select(1)
+            .select_from(u_sub)
+            .where(u_sub.c.project_id == Project.id)
+            .exists()
+        )
     order = _projects_order_clause(agg_subq, sort_by, sort_dir)
     if order is not None:
         stmt = stmt.order_by(order, Project.id.asc())
     # Count: re-use WHERE/JOIN of `stmt` but replace the SELECT list with COUNT
-    # and drop ORDER BY. This avoids materializing 100+ columns × N rows just
-    # to count them, which previously hit Supabase's statement_timeout.
-    count_stmt = stmt.with_only_columns(func.count(Project.id)).order_by(None)
-    total = db.execute(count_stmt).scalar_one()
+    # and drop ORDER BY. Skip entirely when `with_count=false` — map view and
+    # infinite-scroll callers don't need it and the count query is the slowest
+    # part of /projects.
+    if with_count:
+        count_stmt = stmt.with_only_columns(func.count(Project.id)).order_by(None)
+        total = db.execute(count_stmt).scalar_one()
+    else:
+        total = -1
     stmt = stmt.offset(offset).limit(limit)
     rows = db.execute(stmt).all()
     items: list[dict[str, Any]] = []

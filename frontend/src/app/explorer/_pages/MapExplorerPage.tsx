@@ -127,7 +127,6 @@ export default function ProjectsMapPage() {
         const limit = 500;
         let offset = 0;
         let all: ProjectMapItem[] = [];
-        let total = Infinity;
 
         // Z URL si načteme aktuální filtry (stejně jako na /units a /projects)
         // a pomocí buildUnitsQuery z nich postavíme dotaz na backend.
@@ -152,7 +151,7 @@ export default function ProjectsMapPage() {
           }
         }
 
-        while (!cancelled && offset < total) {
+        while (!cancelled) {
           // Pro každý chunk znovu postavíme dotaz, aby:
           // - filtry byly zapsané stejně jako pro /units (availability=…&availability=…),
           // - backend viděl úplně stejné parametry jako list jednotek.
@@ -163,6 +162,8 @@ export default function ProjectsMapPage() {
             { sort_by: "avg_price_per_m2_czk", sort_dir: "asc" }
           );
           const coreParams = new URLSearchParams(coreQuery);
+          // Map view doesn't need a row count — skip the slow COUNT(*) on the backend.
+          coreParams.set("with_count", "false");
           geoParams.forEach((v, k) => {
             coreParams.set(k, v);
           });
@@ -174,7 +175,6 @@ export default function ProjectsMapPage() {
           const data: ProjectsResponse = await res.json();
           const items = data.items ?? [];
           all = all.concat(items);
-          total = data.total ?? items.length;
           if (items.length < limit) break;
           offset += limit;
         }
