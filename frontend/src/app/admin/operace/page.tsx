@@ -1,8 +1,64 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { ReamarButton, ReamarCard } from "@/components/ui/reamar-ui";
+
+function ErrorsHealthBanner() {
+  const [unresolved, setUnresolved] = useState<number | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+        const res = await fetch(`${API_BASE}/admin/errors?since_hours=24&only_unresolved=true&limit=1`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (cancelled) return;
+        setUnresolved(json.unresolved ?? 0);
+        setCounts(json.counts ?? {});
+      } catch {
+        // silent
+      }
+    };
+    void load();
+    const id = window.setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
+  if (unresolved == null) return null;
+  const tone = unresolved > 0 ? "border-rose-200 bg-rose-50 text-rose-900" : "border-emerald-200 bg-emerald-50 text-emerald-900";
+  return (
+    <Link
+      href="/admin/errors"
+      className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 transition hover:opacity-90 ${tone}`}
+    >
+      <div className="flex items-center gap-3">
+        <span className="text-lg">{unresolved > 0 ? "⚠" : "✓"}</span>
+        <div>
+          <div className="text-sm font-semibold">
+            {unresolved > 0
+              ? `${unresolved} nevyřešených chyb za 24 h`
+              : "Žádné chyby za posledních 24 h"}
+          </div>
+          {unresolved > 0 && (
+            <div className="text-xs opacity-80">
+              backend {counts.server ?? 0} · frontend {counts.client ?? 0} · probe {counts.probe ?? 0}
+            </div>
+          )}
+        </div>
+      </div>
+      <span className="text-xs opacity-70">Otevřít →</span>
+    </Link>
+  );
+}
 
 type ActionStatus = "idle" | "running" | "done" | "error";
 
@@ -396,6 +452,7 @@ export default function OperacePage() {
 
   return (
     <div className="space-y-6">
+      <ErrorsHealthBanner />
       {/* Daily pipeline header */}
       <ReamarCard className="p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">

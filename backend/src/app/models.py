@@ -4,6 +4,7 @@ from datetime import date, datetime
 from decimal import Decimal
 
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     Date,
     Float,
@@ -922,9 +923,39 @@ class OpsRun(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class ErrorLog(Base):
+    """Captured runtime errors from server, client, and periodic probes.
+
+    `source` = 'server' | 'client' | 'probe'.
+    Used by the /admin/errors dashboard for monitoring.
+    """
+
+    __tablename__ = "error_logs"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    source: Mapped[str] = mapped_column(String(16), nullable=False)
+    level: Mapped[str] = mapped_column(String(16), nullable=False, server_default=text("'error'"))
+    status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    method: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    path: Mapped[str | None] = mapped_column(Text, nullable=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    traceback: Mapped[str | None] = mapped_column(Text, nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    broker_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    extra_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+
+
 # Indexes
 Index("ix_units_project_id", Unit.project_id)
 Index("ix_ops_runs_started_at_desc", OpsRun.started_at.desc())
+Index("ix_error_logs_ts_desc", ErrorLog.ts.desc())
+Index("ix_error_logs_source", ErrorLog.source)
+Index("ix_error_logs_status", ErrorLog.status)
+Index("ix_error_logs_resolved_at", ErrorLog.resolved_at)
 Index("ix_units_price_per_m2_czk", Unit.price_per_m2_czk)
 Index(
     "ix_unit_price_history_unit_id_captured_at_desc",

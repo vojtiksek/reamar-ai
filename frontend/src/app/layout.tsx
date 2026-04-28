@@ -4,6 +4,7 @@ import "./globals.css";
 import { ActiveClientProvider } from "@/contexts/ActiveClientContext";
 import { LayoutSwitcher } from "@/components/v2/LayoutSwitcher";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
+import { ErrorReporter } from "@/components/ErrorReporter";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -60,6 +61,7 @@ export default function RootLayout({
           <LayoutSwitcher>{children}</LayoutSwitcher>
         </ActiveClientProvider>
         <ServiceWorkerRegister />
+        <ErrorReporter />
       </body>
     </html>
   );

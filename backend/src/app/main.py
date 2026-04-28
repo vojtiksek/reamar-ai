@@ -54,6 +54,7 @@ from .models import (
     FutureProjectInterest,
     ClientMagicLink,
     ClientPortalSession,
+    ErrorLog,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -116,6 +117,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from .error_logging import ErrorLoggingMiddleware  # noqa: E402
+
+app.add_middleware(ErrorLoggingMiddleware)
 
 
 class ProjectInfo(BaseModel):
@@ -7455,6 +7460,42 @@ def _is_cron_request(request: Request) -> bool:
     return bool(supplied) and supplied == cron_secret
 
 
+_PROBE_ENDPOINTS = [
+    "/filters",
+    "/notifications?days=7",
+    "/projects?limit=10&offset=0&sort_by=avg_price_per_m2_czk&sort_dir=asc",
+    "/units?limit=10&offset=0",
+    "/columns?view=projects",
+    "/columns?view=units",
+]
+
+
+@app.post("/admin/probe/run")
+def admin_probe_run(
+    request: Request,
+    db: DbSession,
+    authorization: str | None = Header(default=None, alias=AUTH_HEADER),
+) -> dict[str, Any]:
+    """Hit critical endpoints and log any 4xx/5xx as 'probe' errors.
+
+    Triggered by Vercel cron every 5 minutes (or manually by a broker).
+    """
+    from .error_logging import run_endpoint_probe
+
+    if not _is_cron_request(request):
+        # Manual trigger — require broker auth.
+        get_current_broker(db=db, authorization=authorization)
+
+    base_url = (os.environ.get("PROBE_BASE_URL") or "").strip()
+    if not base_url:
+        # Hit ourselves on localhost (Railway internal).
+        port = os.environ.get("PORT") or "8001"
+        base_url = f"http://127.0.0.1:{port}"
+
+    summary = run_endpoint_probe(db, base_url=base_url, endpoints=_PROBE_ENDPOINTS)
+    return {"ok": True, **summary}
+
+
 @app.post("/admin/ops/daily-run")
 def admin_ops_daily_run(
     request: Request,
@@ -7578,6 +7619,192 @@ def _serialize_ops_run(run: Any, include_steps: bool) -> dict[str, Any]:
         out["steps_ok"] = sum(1 for s in steps if s.get("status") == "done")
         out["steps_err"] = sum(1 for s in steps if s.get("status") == "error")
     return out
+
+
+# ----------------------------------------------------------------------
+# Error logs (server / client / probe) — used by /admin/errors dashboard.
+# ----------------------------------------------------------------------
+
+
+class ClientErrorPayload(BaseModel):
+    """Payload from frontend errorReporter. All fields optional except message."""
+    message: str
+    source: str | None = None  # 'window' | 'unhandledrejection' | 'fetch' | 'react'
+    stack: str | None = None
+    url: str | None = None  # full window.location at time of error
+    method: str | None = None  # for fetch errors
+    status: int | None = None  # for fetch errors
+    user_agent: str | None = None
+    extra: dict[str, Any] | None = None
+
+
+@app.post("/admin/client-errors")
+def post_client_error(
+    payload: ClientErrorPayload,
+    request: Request,
+    db: DbSession,
+) -> dict[str, Any]:
+    """Receive a single client-side error report. No auth (anonymous reporting)."""
+    from .error_logging import write_error
+
+    # Parse path/query out of the reported URL if present.
+    path: str | None = None
+    query: str | None = None
+    if payload.url:
+        try:
+            from urllib.parse import urlparse
+            u = urlparse(payload.url)
+            path = u.path or None
+            query = u.query or None
+        except Exception:
+            path = payload.url[:1000]
+
+    extra: dict[str, Any] = {}
+    if payload.source:
+        extra["source"] = payload.source
+    if payload.extra:
+        extra.update(payload.extra)
+
+    err_id = write_error(
+        db,
+        source="client",
+        message=payload.message or "(empty)",
+        status=payload.status,
+        method=payload.method,
+        path=path,
+        query=query,
+        traceback=payload.stack,
+        user_agent=payload.user_agent or request.headers.get("user-agent"),
+        extra=extra or None,
+    )
+    return {"ok": True, "id": err_id}
+
+
+@app.get("/admin/errors")
+def admin_list_errors(
+    db: DbSession,
+    broker: Annotated[Broker, Depends(get_current_broker)],
+    since_hours: Annotated[int, Query(ge=1, le=24 * 14)] = 24,
+    source: Annotated[str | None, Query()] = None,  # 'server' | 'client' | 'probe'
+    status: Annotated[int | None, Query()] = None,
+    only_unresolved: Annotated[bool, Query()] = True,
+    limit: Annotated[int, Query(ge=1, le=2000)] = 500,
+) -> dict[str, Any]:
+    """Recent error_logs rows for the admin dashboard."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    stmt = select(ErrorLog).where(ErrorLog.ts >= cutoff)
+    if source:
+        stmt = stmt.where(ErrorLog.source == source)
+    if status is not None:
+        stmt = stmt.where(ErrorLog.status == status)
+    if only_unresolved:
+        stmt = stmt.where(ErrorLog.resolved_at.is_(None))
+    stmt = stmt.order_by(ErrorLog.ts.desc()).limit(limit)
+    rows = db.execute(stmt).scalars().all()
+
+    items = [
+        {
+            "id": r.id,
+            "ts": r.ts.isoformat() if r.ts else None,
+            "source": r.source,
+            "level": r.level,
+            "status": r.status,
+            "method": r.method,
+            "path": r.path,
+            "query": r.query,
+            "message": r.message,
+            "user_agent": r.user_agent,
+            "request_id": r.request_id,
+            "resolved_at": r.resolved_at.isoformat() if r.resolved_at else None,
+        }
+        for r in rows
+    ]
+
+    # Aggregate counts (so the page can show buckets without a 2nd request).
+    from sqlalchemy import func as _f
+    counts_stmt = (
+        select(ErrorLog.source, _f.count(ErrorLog.id))
+        .where(ErrorLog.ts >= cutoff)
+        .group_by(ErrorLog.source)
+    )
+    counts = {row[0]: row[1] for row in db.execute(counts_stmt).all()}
+    unresolved_count = db.execute(
+        select(_f.count(ErrorLog.id)).where(
+            ErrorLog.ts >= cutoff, ErrorLog.resolved_at.is_(None)
+        )
+    ).scalar_one()
+
+    return {
+        "items": items,
+        "counts": counts,
+        "unresolved": unresolved_count,
+        "since_hours": since_hours,
+    }
+
+
+@app.get("/admin/errors/{error_id}")
+def admin_get_error(
+    error_id: int,
+    db: DbSession,
+    broker: Annotated[Broker, Depends(get_current_broker)],
+) -> dict[str, Any]:
+    row = db.get(ErrorLog, error_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Error not found")
+    return {
+        "id": row.id,
+        "ts": row.ts.isoformat() if row.ts else None,
+        "source": row.source,
+        "level": row.level,
+        "status": row.status,
+        "method": row.method,
+        "path": row.path,
+        "query": row.query,
+        "message": row.message,
+        "traceback": row.traceback,
+        "user_agent": row.user_agent,
+        "request_id": row.request_id,
+        "broker_id": row.broker_id,
+        "extra": row.extra_json,
+        "resolved_at": row.resolved_at.isoformat() if row.resolved_at else None,
+    }
+
+
+@app.post("/admin/errors/{error_id}/resolve")
+def admin_resolve_error(
+    error_id: int,
+    db: DbSession,
+    broker: Annotated[Broker, Depends(get_current_broker)],
+) -> dict[str, Any]:
+    row = db.get(ErrorLog, error_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="Error not found")
+    row.resolved_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    return {"ok": True, "id": row.id}
+
+
+@app.post("/admin/errors/resolve-bulk")
+def admin_resolve_errors_bulk(
+    request: Request,
+    db: DbSession,
+    broker: Annotated[Broker, Depends(get_current_broker)],
+    since_hours: Annotated[int, Query(ge=1, le=24 * 14)] = 24,
+    source: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Mark all unresolved errors in the window as resolved (one-click cleanup)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+    from sqlalchemy import update as _update
+    stmt = _update(ErrorLog).where(
+        ErrorLog.ts >= cutoff, ErrorLog.resolved_at.is_(None)
+    )
+    if source:
+        stmt = stmt.where(ErrorLog.source == source)
+    stmt = stmt.values(resolved_at=datetime.now(timezone.utc))
+    res = db.execute(stmt)
+    db.commit()
+    return {"ok": True, "resolved": res.rowcount or 0}
 
 
 def _recompute_all_client_recommendations() -> dict[str, Any]:

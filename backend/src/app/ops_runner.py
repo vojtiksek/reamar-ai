@@ -174,12 +174,25 @@ def _step_location_metrics() -> dict[str, Any]:
         db.close()
 
 
+def _step_error_log_cleanup() -> dict[str, Any]:
+    """Delete error_logs older than 14 days to keep the table bounded."""
+    from .error_logging import cleanup_old_error_logs
+
+    db = SessionLocal()
+    try:
+        deleted = cleanup_old_error_logs(db, days=14)
+        return {"deleted": deleted}
+    finally:
+        db.close()
+
+
 DEFAULT_STEPS: list[tuple[str, Callable[[], dict[str, Any]]]] = [
     ("builtmind_import", _step_builtmind_import),
     ("walkability_refresh", _step_walkability),
     ("derived_floors", _step_derived_floors),
     ("local_price_diffs", _step_local_price_diffs),
     ("location_metrics", _step_location_metrics),
+    ("error_log_cleanup", _step_error_log_cleanup),
 ]
 
 
