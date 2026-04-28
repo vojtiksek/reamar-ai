@@ -119,10 +119,13 @@ export function installErrorReporter(): void {
 
     // Don't loop: never report errors from the reporter endpoint itself.
     const isReporter = urlStr.includes("/admin/client-errors");
+    // Only report failures from our own backend — skip third-party services
+    // (Supabase auth, OSM tiles, GA, etc.) which we don't control.
+    const isOurBackend = isOwnBackend(urlStr);
 
     try {
       const res = await originalFetch(input, init);
-      if (!isReporter && res.status >= 500) {
+      if (!isReporter && isOurBackend && res.status >= 500) {
         // Clone and read text best-effort for the report body.
         let bodySnippet = "";
         try {
@@ -142,7 +145,7 @@ export function installErrorReporter(): void {
       }
       return res;
     } catch (err: unknown) {
-      if (!isReporter) {
+      if (!isReporter && isOurBackend) {
         const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         send({
           message: `Network error on ${method} ${shortPath(urlStr)}: ${message}`,
@@ -155,6 +158,26 @@ export function installErrorReporter(): void {
       throw err;
     }
   };
+}
+
+function isOwnBackend(url: string): boolean {
+  try {
+    const u = new URL(url, typeof window !== "undefined" ? window.location.origin : "http://x");
+    // Same origin = always our app (Next.js routes).
+    if (typeof window !== "undefined" && u.origin === window.location.origin) return true;
+    // Match the configured API base (Railway backend URL).
+    if (API_BASE) {
+      try {
+        const apiUrl = new URL(API_BASE);
+        if (u.origin === apiUrl.origin) return true;
+      } catch {
+        // ignore
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 function shortPath(url: string): string {

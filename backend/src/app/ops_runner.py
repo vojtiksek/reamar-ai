@@ -110,7 +110,7 @@ def _step_builtmind_import() -> dict[str, Any]:
 
 
 def _step_walkability() -> dict[str, Any]:
-    from .location_sources import refresh_walkability_sources_and_recompute
+    from .walkability_sources import refresh_walkability_sources_and_recompute
 
     db = SessionLocal()
     try:
