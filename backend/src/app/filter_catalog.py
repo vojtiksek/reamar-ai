@@ -236,8 +236,29 @@ def get_filter_specs() -> list[dict]:
     return _load_specs()
 
 
+# In-process TTL cache for enum option lookups. /filters is called on
+# every page load and previously did 10–20 sequential SELECT DISTINCT
+# queries against the units table, hitting Supabase's statement_timeout
+# under load. Enum values only change when an import runs (daily), so a
+# 15-minute TTL is well within freshness requirements.
+_ENUM_OPTIONS_TTL_S = 900
+_enum_options_cache: dict[tuple[str, str], tuple[float, list[str]]] = {}
+
+
+def _enum_cache_clear() -> None:
+    """Invalidate after data imports. Called from ops_runner."""
+    _enum_options_cache.clear()
+
+
 def _get_enum_options(db: Session, entity: str, attr: str) -> list[str]:
     """Query distinct non-null values; full string values; exclude nulls; sort case-insensitive; limit OPTIONS_LIMIT."""
+    import time as _time
+    cache_key = (entity, attr)
+    now = _time.monotonic()
+    cached = _enum_options_cache.get(cache_key)
+    if cached is not None and now - cached[0] < _ENUM_OPTIONS_TTL_S:
+        return cached[1]
+
     if entity == "Unit":
         col = getattr(Unit, attr, None)
         if col is None:
@@ -263,7 +284,9 @@ def _get_enum_options(db: Session, entity: str, attr: str) -> list[str]:
         )
     rows = db.execute(stmt).scalars().all()
     values = [str(r) for r in rows if r is not None]
-    return sorted(set(values), key=str.casefold)
+    result = sorted(set(values), key=str.casefold)
+    _enum_options_cache[cache_key] = (now, result)
+    return result
 
 
 def get_filter_groups(db: Session) -> dict:

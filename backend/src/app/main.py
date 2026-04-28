@@ -6738,7 +6738,10 @@ def list_projects(
     order = _projects_order_clause(agg_subq, sort_by, sort_dir)
     if order is not None:
         stmt = stmt.order_by(order, Project.id.asc())
-    count_stmt = select(func.count()).select_from(stmt.subquery())
+    # Count: re-use WHERE/JOIN of `stmt` but replace the SELECT list with COUNT
+    # and drop ORDER BY. This avoids materializing 100+ columns × N rows just
+    # to count them, which previously hit Supabase's statement_timeout.
+    count_stmt = stmt.with_only_columns(func.count(Project.id)).order_by(None)
     total = db.execute(count_stmt).scalar_one()
     stmt = stmt.offset(offset).limit(limit)
     rows = db.execute(stmt).all()
@@ -7462,7 +7465,6 @@ def _is_cron_request(request: Request) -> bool:
 
 _PROBE_ENDPOINTS = [
     "/filters",
-    "/notifications?days=7",
     "/projects?limit=10&offset=0&sort_by=avg_price_per_m2_czk&sort_dir=asc",
     "/units?limit=10&offset=0",
     "/columns?view=projects",

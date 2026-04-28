@@ -102,6 +102,10 @@ def _step_builtmind_import() -> dict[str, Any]:
     from .main import _recompute_all_client_recommendations  # lazy to avoid cycle
     recompute = _recompute_all_client_recommendations()
 
+    # Invalidate /filters enum options cache — new import may bring new values.
+    from .filter_catalog import _enum_cache_clear
+    _enum_cache_clear()
+
     return {
         "fetched_units": len(units),
         "import_stats": stats,
