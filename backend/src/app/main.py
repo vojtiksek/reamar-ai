@@ -4687,6 +4687,8 @@ def _build_units_query(
     max_distance_to_tram_stop_m: float | None = None,
     max_distance_to_bus_stop_m: float | None = None,
     max_distance_to_train_station_m: float | None = None,
+    min_completion_date: date | None = None,
+    max_completion_date: date | None = None,
 ):
     """Build base select(Unit) with filters applied only when param is not None.
     Primárně filtruje na Unit, volitelně se přidávají joiny na Project.
@@ -4921,6 +4923,14 @@ def _build_units_query(
             clauses = [Project.name.ilike(f"%{n}%") for n in names if n]
             if clauses:
                 base = base.join(Project, Project.id == Unit.project_id).where(or_(*clauses))
+
+    # Datum dokončení projektu — Project.completion_date. Vyžaduje join.
+    if min_completion_date is not None or max_completion_date is not None:
+        base = base.join(Project, Project.id == Unit.project_id)
+        if min_completion_date is not None:
+            base = base.where(Project.completion_date >= min_completion_date)
+        if max_completion_date is not None:
+            base = base.where(Project.completion_date <= max_completion_date)
     if min_latitude is not None:
         base = base.where(Unit.gps_latitude >= min_latitude)
     if max_latitude is not None:
@@ -5141,6 +5151,8 @@ def list_units(
     max_distance_to_tram_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_tram_stop_m <= value (m)")] = None,
     max_distance_to_bus_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_bus_stop_m <= value (m)")] = None,
     max_distance_to_train_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_train_station_m <= value (m)")] = None,
+    min_completion_date: Annotated[date | None, Query(description="Filter units whose project completion_date >= value (YYYY-MM-DD)")] = None,
+    max_completion_date: Annotated[date | None, Query(description="Filter units whose project completion_date <= value (YYYY-MM-DD)")] = None,
     include_archived: Annotated[bool, Query(description="Include units from fully sold projects older than 6 months")] = False,
     pending_api: Annotated[bool, Query(description="Return only units that have pending API update proposals")] = False,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
@@ -5229,6 +5241,8 @@ def list_units(
         max_distance_to_tram_stop_m=max_distance_to_tram_stop_m,
         max_distance_to_bus_stop_m=max_distance_to_bus_stop_m,
         max_distance_to_train_station_m=max_distance_to_train_station_m,
+        min_completion_date=min_completion_date,
+        max_completion_date=max_completion_date,
     )
     if pending_api:
         pending_subq = select(UnitApiPending.unit_id).where(UnitApiPending.unit_id == Unit.id)
@@ -6575,6 +6589,8 @@ def list_projects(
     max_distance_to_tram_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_tram_stop_m <= value (m)")] = None,
     max_distance_to_bus_stop_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_bus_stop_m <= value (m)")] = None,
     max_distance_to_train_station_m: Annotated[float | None, Query(ge=0, description="Filter by project distance_to_train_station_m <= value (m)")] = None,
+    min_completion_date: Annotated[date | None, Query(description="Filter projects with completion_date >= value (YYYY-MM-DD)")] = None,
+    max_completion_date: Annotated[date | None, Query(description="Filter projects with completion_date <= value (YYYY-MM-DD)")] = None,
 ) -> ProjectsListResponse:
     allowed_sort = get_projects_sort_keys()
     if sort_by not in allowed_sort:
@@ -6603,6 +6619,10 @@ def list_projects(
         stmt = stmt.where(Project.gps_longitude >= min_longitude)
     if max_longitude is not None:
         stmt = stmt.where(Project.gps_longitude <= max_longitude)
+    if min_completion_date is not None:
+        stmt = stmt.where(Project.completion_date >= min_completion_date)
+    if max_completion_date is not None:
+        stmt = stmt.where(Project.completion_date <= max_completion_date)
 
     # Archivace: standardně skrýváme projekty, které nemají žádné dostupné jednotky
     # a jejich poslední sold_date je starší než 6 měsíců.

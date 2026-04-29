@@ -10,7 +10,7 @@ type Props = {
   onClose: () => void;
   filterGroups: FilterGroup[];
   currentFilters: CurrentFilters;
-  onChange: (key: string, value: number | number[] | string[] | boolean | undefined) => void;
+  onChange: (key: string, value: number | number[] | string | string[] | boolean | undefined) => void;
   onReset: () => void;
   onApply: () => void;
 };
@@ -206,7 +206,7 @@ const DEFAULT_COLLAPSED_GROUPS = new Set([
 function countActiveFiltersInGroup(group: FilterGroup, currentFilters: CurrentFilters): number {
   let count = 0;
   for (const spec of group.filters) {
-    if (spec.type === "range") {
+    if (spec.type === "range" || spec.type === "date") {
       if (currentFilters[`${spec.key}_min`] != null) count++;
       if (currentFilters[`${spec.key}_max`] != null) count++;
     } else {
@@ -244,7 +244,7 @@ export function FiltersDrawer({
 
   const resetGroup = (group: FilterGroup) => {
     for (const spec of group.filters) {
-      if (spec.type === "range") {
+      if (spec.type === "range" || spec.type === "date") {
         onChange(`${spec.key}_min`, undefined);
         onChange(`${spec.key}_max`, undefined);
       } else {
@@ -431,7 +431,7 @@ function NearbyTransportSection({
   onChange,
 }: {
   currentFilters: CurrentFilters;
-  onChange: (key: string, value: number | number[] | string[] | boolean | undefined) => void;
+  onChange: (key: string, value: number | number[] | string | string[] | boolean | undefined) => void;
 }) {
   const activeCount = NEARBY_TRANSPORT_TOGGLES.reduce(
     (acc, { key }) => (currentFilters[`${key}_max`] != null ? acc + 1 : acc),
@@ -488,11 +488,46 @@ function FilterField({
 }: {
   spec: FilterSpec;
   currentFilters: CurrentFilters;
-  onChange: (key: string, value: number | number[] | string[] | boolean | undefined) => void;
+  onChange: (key: string, value: number | number[] | string | string[] | boolean | undefined) => void;
 }) {
   const disabled = !spec.backend_supported;
   const label = spec.alias || spec.key;
   const unitLabel = spec.unit ? ` (${spec.unit})` : "";
+
+  if (spec.type === "date") {
+    const minVal = (currentFilters[`${spec.key}_min`] as string | undefined) ?? "";
+    const maxVal = (currentFilters[`${spec.key}_max`] as string | undefined) ?? "";
+    return (
+      <div className="space-y-2">
+        <label className="block text-xs font-semibold uppercase tracking-wide text-slate-600">
+          {label}
+          {disabled && <span className="ml-1 text-[11px] text-amber-600">(nepodporovano)</span>}
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="date"
+            value={minVal}
+            onChange={(e) =>
+              onChange(`${spec.key}_min`, e.target.value || undefined)
+            }
+            disabled={disabled}
+            className="w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 sm:py-2"
+            placeholder="Od"
+          />
+          <input
+            type="date"
+            value={maxVal}
+            onChange={(e) =>
+              onChange(`${spec.key}_max`, e.target.value || undefined)
+            }
+            disabled={disabled}
+            className="w-full rounded-md border border-slate-300 px-3 py-2.5 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-500 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10 sm:py-2"
+            placeholder="Do"
+          />
+        </div>
+      </div>
+    );
+  }
 
   if (spec.type === "range") {
     const minVal = currentFilters[`${spec.key}_min`] as number | undefined;
@@ -697,7 +732,7 @@ function EnumSearchField({
 }: {
   spec: FilterSpec;
   currentFilters: CurrentFilters;
-  onChange: (key: string, value: number | number[] | string[] | boolean | undefined) => void;
+  onChange: (key: string, value: number | number[] | string | string[] | boolean | undefined) => void;
   disabled: boolean;
 }) {
   const [search, setSearch] = useState("");

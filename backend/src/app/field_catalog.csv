@@ -52,7 +52,7 @@ sort_priority;Group;Entity;column;Alias;Zobrazit na webu;Filterable;Editable;uni
 4012;Obecné;Jednotka;reservation_duration_days;Délka rezervace (dny);ANO;NE;ANO;;0;integer;
 4013;Obecné;Jednotka;is_stale_reservation;Stará rezervace;ANO;NE;ANO;;;boolean;
 4007;Obecné;Projekt;completion_date;Datum dokončení;ANO;ANO;ANO;;;date;
-4009;Obecné;Projekt;construction_completion;Dokončení výstavby (API);ANO;ANO;NE;;;text;
+4009;Obecné;Projekt;construction_completion;Dokončení výstavby (API);NE;ANO;NE;;;text;
 4008;Obecné;Projekt;energy_class;Energetická třída;ANO;ANO;ANO;;;enum;
 4002;Obecné;Projekt;max_days_on_market;Dní na trhu;ANO;NE;NE;;0;integer;
 4003;Obecné;Projekt;project_first_seen;První výskyt;ANO;NE;NE;;;date;

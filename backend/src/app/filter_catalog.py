@@ -192,6 +192,8 @@ def _display_format_to_type(display_format: str) -> str:
         return "enum_search"
     if display_format == BOOLEAN_FORMAT:
         return "boolean"
+    if display_format == "date":
+        return "date"
     return "range"
 
 

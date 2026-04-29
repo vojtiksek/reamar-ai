@@ -27,7 +27,7 @@ export function useFilterDrawer(seedFilters: CurrentFilters) {
   const onReset = useCallback(() => setCurrentFilters({}), []);
 
   const onChangeFilter = useCallback(
-    (key: string, value: number | number[] | string[] | boolean | undefined) => {
+    (key: string, value: number | number[] | string | string[] | boolean | undefined) => {
       setCurrentFilters((prev) => ({ ...prev, [key]: value }));
     },
     []

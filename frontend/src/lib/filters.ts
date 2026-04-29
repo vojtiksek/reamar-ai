@@ -8,7 +8,7 @@ export type FilterSpec = {
   alias: string;
   entity: string;
   display_format: string;
-  type: "range" | "enum" | "enum_search" | "boolean";
+  type: "range" | "enum" | "enum_search" | "boolean" | "date";
   unit: string | null;
   decimals: number | null;
   backend_supported: boolean;
@@ -21,13 +21,13 @@ export type FiltersResponse = { groups: FilterGroup[] };
 
 export type CurrentFilters = Record<
   string,
-  number | number[] | string[] | boolean | undefined
+  number | number[] | string | string[] | boolean | undefined
 >;
 
 /** Catalog key -> API param names for GET /units. Only keys that backend actually supports. */
 const CATALOG_TO_UNITS_API: Record<
   string,
-  { min?: string; max?: string; list?: string; bool?: string }
+  { min?: string; max?: string; list?: string; bool?: string; date_min?: string; date_max?: string }
 > = {
   price: { min: "min_price", max: "max_price" },
   price_per_sm: { min: "min_price_per_m2", max: "max_price_per_m2" },
@@ -78,6 +78,8 @@ const CATALOG_TO_UNITS_API: Record<
   payment_contract: { min: "min_payment_contract", max: "max_payment_contract" },
   payment_construction: { min: "min_payment_construction", max: "max_payment_construction" },
   payment_occupancy: { min: "min_payment_occupancy", max: "max_payment_occupancy" },
+  // Datum dokončení projektu (Project.completion_date). Hodnoty jsou ISO YYYY-MM-DD řetězce.
+  completion_date: { date_min: "min_completion_date", date_max: "max_completion_date" },
   // „Blízko dopravy" toggles — ukládají se jako <key>_max = 500 (m)
   distance_to_metro_station_m: { max: "max_distance_to_metro_station_m" },
   distance_to_tram_stop_m: { max: "max_distance_to_tram_stop_m" },
@@ -122,6 +124,12 @@ export function filtersToUnitsParams(
       if (v === true) out[api.bool] = "true";
       if (v === false) out[api.bool] = "false";
     }
+    if (api.date_min != null || api.date_max != null) {
+      const vMin = filters[`${key}_min`] as string | undefined;
+      const vMax = filters[`${key}_max`] as string | undefined;
+      if (api.date_min && vMin && vMin.trim() !== "") out[api.date_min] = vMin;
+      if (api.date_max && vMax && vMax.trim() !== "") out[api.date_max] = vMax;
+    }
   }
   return out;
 }
@@ -157,7 +165,7 @@ export function flattenFilterSpecsByKey(groups: FilterGroup[]): Map<string, Filt
 }
 
 /** API param name -> catalog key + suffix for reading URL/searchParams */
-const API_TO_CATALOG: Record<string, { key: string; suffix?: string }> = {
+const API_TO_CATALOG: Record<string, { key: string; suffix?: string; date?: boolean }> = {
   min_price: { key: "price", suffix: "min" },
   max_price: { key: "price", suffix: "max" },
   min_price_per_m2: { key: "price_per_sm", suffix: "min" },
@@ -229,6 +237,8 @@ const API_TO_CATALOG: Record<string, { key: string; suffix?: string }> = {
   max_distance_to_tram_stop_m: { key: "distance_to_tram_stop_m", suffix: "max" },
   max_distance_to_bus_stop_m: { key: "distance_to_bus_stop_m", suffix: "max" },
   max_distance_to_train_station_m: { key: "distance_to_train_station_m", suffix: "max" },
+  min_completion_date: { key: "completion_date", suffix: "min", date: true },
+  max_completion_date: { key: "completion_date", suffix: "max", date: true },
 };
 
 /** List-type API params (multi-select, repeated in URL) */
@@ -273,10 +283,20 @@ export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFi
     if (v === "false") return false;
     return undefined;
   };
-  for (const [apiKey, { key, suffix }] of Object.entries(API_TO_CATALOG)) {
+  const str = (k: string) => {
+    const v = params.get(k);
+    if (v === null || v === "") return undefined;
+    return v.trim();
+  };
+  for (const [apiKey, { key, suffix, date }] of Object.entries(API_TO_CATALOG)) {
     if (suffix) {
-      const v = num(apiKey);
-      if (v !== undefined) filters[`${key}_${suffix}`] = v;
+      if (date) {
+        const v = str(apiKey);
+        if (v !== undefined) filters[`${key}_${suffix}`] = v;
+      } else {
+        const v = num(apiKey);
+        if (v !== undefined) filters[`${key}_${suffix}`] = v;
+      }
     } else if (API_LIST_PARAMS.has(apiKey)) {
       const v = arr(apiKey);
       if (v?.length) filters[key] = v;
