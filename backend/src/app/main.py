@@ -8657,7 +8657,7 @@ def get_future_project_by_slug(
     return _fp_summary(fp, count)
 
 
-@app.get("/future-projects/{fp_id}", response_model=FutureProjectSummary)
+@app.get("/future-projects/{fp_id:int}", response_model=FutureProjectSummary)
 def get_future_project(
     fp_id: int,
     db: DbSession,
@@ -8697,7 +8697,7 @@ def create_future_project(
     return _fp_summary(fp)
 
 
-@app.patch("/future-projects/{fp_id}", response_model=FutureProjectSummary)
+@app.patch("/future-projects/{fp_id:int}", response_model=FutureProjectSummary)
 def update_future_project(
     fp_id: int,
     body: FutureProjectUpdateBody,
@@ -8727,7 +8727,7 @@ def update_future_project(
     return _fp_summary(fp, count)
 
 
-@app.delete("/future-projects/{fp_id}", status_code=204)
+@app.delete("/future-projects/{fp_id:int}", status_code=204)
 def delete_future_project(
     fp_id: int,
     db: DbSession,
@@ -9128,7 +9128,7 @@ class InterestCreateBody(BaseModel):
     note: str | None = None
 
 
-@app.get("/future-projects/{fp_id}/interests", response_model=list[InterestItem])
+@app.get("/future-projects/{fp_id:int}/interests", response_model=list[InterestItem])
 def list_interests(
     fp_id: int,
     db: DbSession,
@@ -9154,7 +9154,7 @@ def list_interests(
     ]
 
 
-@app.post("/future-projects/{fp_id}/interests", response_model=InterestItem, status_code=201)
+@app.post("/future-projects/{fp_id:int}/interests", response_model=InterestItem, status_code=201)
 def create_interest(
     fp_id: int,
     body: InterestCreateBody,
@@ -9183,7 +9183,7 @@ def create_interest(
     )
 
 
-@app.delete("/future-projects/{fp_id}/interests/{interest_id}", status_code=204)
+@app.delete("/future-projects/{fp_id:int}/interests/{interest_id:int}", status_code=204)
 def delete_interest(
     fp_id: int,
     interest_id: int,
