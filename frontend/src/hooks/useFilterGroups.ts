@@ -1,33 +1,29 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { API_BASE } from "@/lib/api";
 import { type FilterGroup, type FiltersResponse } from "@/lib/filters";
 
-/** Module-level cache shared across all hook instances. Keyed by path. */
-const cache = new Map<string, FilterGroup[]>();
-
 /**
  * Fetches filter group metadata from the given API path and returns the groups array.
- * Results are cached in memory for the lifetime of the page — subsequent calls with
- * the same path return immediately from cache without refetching.
+ * Backed by TanStack Query: shared across all hook instances, deduplicates concurrent
+ * fetches, kept in cache across navigations (staleTime/gcTime from QueryProvider).
+ *
+ * Filter metadata changes only on backend redeploy / data import, so a 30-min staleTime
+ * is conservative — first navigation hits the network, every page swap thereafter is
+ * instant from cache.
  *
  * @param path - path relative to API_BASE, e.g. "filters" or "projects/filters"
  */
 export function useFilterGroups(path: string): FilterGroup[] {
-  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>(
-    () => cache.get(path) ?? []
-  );
-
-  useEffect(() => {
-    if (cache.has(path)) return;
-    fetch(`${API_BASE}/${path}`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: FiltersResponse) => {
-        const groups = data?.groups ?? [];
-        cache.set(path, groups);
-        setFilterGroups(groups);
-      })
-      .catch(() => setFilterGroups([]));
-  }, [path]);
-
-  return filterGroups;
+  const { data } = useQuery({
+    queryKey: ["filter-groups", path],
+    queryFn: async () => {
+      const res = await fetch(`${API_BASE}/${path}`);
+      if (!res.ok) throw new Error(res.statusText || `HTTP ${res.status}`);
+      const json = (await res.json()) as FiltersResponse;
+      return json?.groups ?? [];
+    },
+    staleTime: 30 * 60_000,
+    gcTime: 60 * 60_000,
+  });
+  return data ?? [];
 }

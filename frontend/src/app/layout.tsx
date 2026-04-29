@@ -5,6 +5,7 @@ import { ActiveClientProvider } from "@/contexts/ActiveClientContext";
 import { LayoutSwitcher } from "@/components/v2/LayoutSwitcher";
 import { ServiceWorkerRegister } from "@/components/ServiceWorkerRegister";
 import { ErrorReporter } from "@/components/ErrorReporter";
+import { QueryProvider } from "@/components/QueryProvider";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -57,9 +58,11 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} app-root`}
       >
-        <ActiveClientProvider>
-          <LayoutSwitcher>{children}</LayoutSwitcher>
-        </ActiveClientProvider>
+        <QueryProvider>
+          <ActiveClientProvider>
+            <LayoutSwitcher>{children}</LayoutSwitcher>
+          </ActiveClientProvider>
+        </QueryProvider>
         <ServiceWorkerRegister />
         <ErrorReporter />
       </body>

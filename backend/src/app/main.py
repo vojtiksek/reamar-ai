@@ -6501,6 +6501,7 @@ def list_projects(
     offset: Annotated[int, Query(ge=0)] = 0,
     include_archived: Annotated[bool, Query(description="Include fully sold projects older than 6 months")] = False,
     with_count: Annotated[bool, Query(description="Compute total row count. Skip for map/scroll views to halve query time.")] = True,
+    mode: Annotated[str, Query(description="Response shape. 'full' = all catalog + computed fields. 'map' = id, name, location, gps, units_available/reserved, avg_price — ~10× smaller payload, ~50% faster query.")] = "full",
     sort_by: Annotated[str, Query(description="Sort column key (catalog or computed)")] = "avg_price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="asc or desc")] = "asc",
     min_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude >= value")] = None,
@@ -6757,6 +6758,32 @@ def list_projects(
     stmt = stmt.offset(offset).limit(limit)
     rows = db.execute(stmt).all()
     items: list[dict[str, Any]] = []
+
+    if mode == "map":
+        # Slim path: skip per-project ProjectAggregates lookup and the heavy
+        # _project_row_to_item (which iterates ~100 catalog columns). Map view
+        # only needs identity, location, and a couple of headline aggregates.
+        for row in rows:
+            project = row[0]
+            agg = getattr(row, "_mapping", {}) or {}
+            if "units_total" not in agg and len(row) > 1 and row[1] is not None:
+                agg = getattr(row[1], "_mapping", {}) or {}
+            lat = project.gps_latitude or agg.get("project_gps_latitude")
+            lon = project.gps_longitude or agg.get("project_gps_longitude")
+            avg_pm2 = agg.get("avg_price_per_m2_czk")
+            items.append({
+                "id": project.id,
+                "project": project.name,
+                "municipality": project.municipality,
+                "city": project.city,
+                "district": project.district,
+                "gps_latitude": float(lat) if lat is not None else None,
+                "gps_longitude": float(lon) if lon is not None else None,
+                "avg_price_per_m2_czk": float(avg_pm2) if avg_pm2 is not None else None,
+                "units_available": agg.get("units_available"),
+                "units_reserved": agg.get("units_reserved"),
+            })
+        return ProjectsListResponse(items=items, total=total, limit=limit, offset=offset)
 
     # Načti cached project_aggregates pro všechny projekty na této stránce,
     # abychom pro přehled /projects používali stejné hodnoty jako units list.

@@ -164,6 +164,8 @@ export default function ProjectsMapPage() {
           const coreParams = new URLSearchParams(coreQuery);
           // Map view doesn't need a row count — skip the slow COUNT(*) on the backend.
           coreParams.set("with_count", "false");
+          // Slim response: ~10 fields per project instead of ~100. ~10× smaller payload.
+          coreParams.set("mode", "map");
           geoParams.forEach((v, k) => {
             coreParams.set(k, v);
           });
