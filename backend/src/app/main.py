@@ -8785,6 +8785,184 @@ class CsvImportResult(BaseModel):
     errors: list[str]
 
 
+# --- One-shot CSV upsert (preferred — used by /admin/future-projects/import) ---
+#
+# CSV header → FutureProject column mapping. Anything not listed here goes to
+# public_data_json[<csv_header>] verbatim. Empty cells are skipped (don't
+# overwrite existing values with blanks).
+_FP_COLUMN_ALIASES: dict[str, str] = {
+    "project": "name",
+    "name": "name",
+    "developer": "developer",
+    "address": "address",
+    "city": "city",
+    "region": "region",
+    "stage": "stage",
+    "total_number_of_units": "total_units",
+    "total_units": "total_units",
+    "date_sale_start": "date_sale_start",
+    "construction_completion": "construction_completion",
+    "type": "project_type",
+    "project_type": "project_type",
+    "url": "url",
+    "renovation": "renovation",
+    "gps_latitude": "gps_latitude",
+    "gps_longitude": "gps_longitude",
+    "municipal_district": "municipal_district",
+}
+
+_FP_BOOL_TRUE = {"true", "1", "yes", "ano", "y"}
+_FP_BOOL_FALSE = {"false", "0", "no", "ne", "n"}
+
+
+def _coerce_fp_value(target: str, raw: str) -> Any:
+    """Coerce a CSV cell to the FutureProject column's expected python type."""
+    s = (raw or "").strip()
+    if s == "":
+        return None
+    if target == "total_units":
+        try:
+            return int(float(s))
+        except ValueError:
+            return None
+    if target in ("gps_latitude", "gps_longitude"):
+        try:
+            return float(s)
+        except ValueError:
+            return None
+    if target == "renovation":
+        low = s.lower()
+        if low in _FP_BOOL_TRUE:
+            return True
+        if low in _FP_BOOL_FALSE:
+            return False
+        # Source CSV has values like 'newly_built' / 'renovation' — treat
+        # 'renovation' as True, anything else (when set) as False so the bool
+        # column is informative rather than null.
+        if low == "renovation":
+            return True
+        return False
+    return s
+
+
+@app.post("/future-projects/import-csv", response_model=CsvImportResult)
+async def fp_import_csv(
+    db: DbSession,
+    file: UploadFile = File(...),
+    broker: Any = Depends(get_current_broker),
+):
+    """Single-step upsert: upload one CSV and the backend handles the rest.
+
+    - Header columns are auto-mapped via _FP_COLUMN_ALIASES; the rest are
+      stored under public_data_json[<header>].
+    - Match by case-insensitive trimmed `name`. If the project exists we
+      update non-empty cells (existing values preserved when CSV cell is empty).
+    - public_data_json is merged shallowly (new keys overwrite, untouched keys
+      preserved).
+    """
+    import csv as _csv
+    import io as _io
+
+    raw = await file.read()
+    text = raw.decode("utf-8-sig", errors="replace")
+    sample = text[:2000]
+    delimiter = ";" if sample.count(";") > sample.count(",") else ","
+    reader = _csv.reader(_io.StringIO(text), delimiter=delimiter)
+    all_rows = list(reader)
+    if not all_rows:
+        raise HTTPException(status_code=400, detail="CSV is empty")
+    headers = [(h or "").strip() for h in all_rows[0]]
+    data_rows = all_rows[1:]
+
+    # Find name column index — required.
+    name_col_idx: int | None = None
+    for i, h in enumerate(headers):
+        if h.lower() in ("name", "project"):
+            name_col_idx = i
+            break
+    if name_col_idx is None:
+        raise HTTPException(status_code=400, detail="CSV must have a 'project' or 'name' column")
+
+    created = 0
+    updated = 0
+    skipped = 0
+    errors: list[str] = []
+
+    for row_num, row in enumerate(data_rows, start=2):
+        try:
+            # Normalize row length.
+            if len(row) < len(headers):
+                row = row + [""] * (len(headers) - len(row))
+            name = (row[name_col_idx] or "").strip()
+            if not name:
+                skipped += 1
+                continue
+
+            core_updates: dict[str, Any] = {}
+            public_updates: dict[str, Any] = {}
+
+            for i, h in enumerate(headers):
+                if i == name_col_idx:
+                    continue
+                val_raw = row[i] if i < len(row) else ""
+                cell = (val_raw or "").strip()
+                if cell == "":
+                    continue
+                target = _FP_COLUMN_ALIASES.get(h.lower())
+                if target is not None:
+                    coerced = _coerce_fp_value(target, cell)
+                    if coerced is not None:
+                        core_updates[target] = coerced
+                else:
+                    # Goes to public_data_json under the original CSV header key.
+                    public_updates[h] = cell
+
+            # Match existing by case-insensitive name.
+            existing = db.execute(
+                select(FutureProject).where(func.lower(FutureProject.name) == name.lower())
+            ).scalars().first()
+
+            if existing is not None:
+                for k, v in core_updates.items():
+                    setattr(existing, k, v)
+                # Always keep authoritative `name` exactly as CSV (handles case fixes).
+                existing.name = name
+                if public_updates:
+                    merged = dict(existing.public_data_json or {})
+                    merged.update(public_updates)
+                    existing.public_data_json = merged
+                db.add(existing)
+                updated += 1
+            else:
+                base_slug = _slugify(name) or f"project-{row_num}"
+                slug = base_slug
+                # Resolve slug collisions deterministically.
+                n = 2
+                while db.execute(select(FutureProject.id).where(FutureProject.slug == slug)).first() is not None:
+                    slug = f"{base_slug}-{n}"
+                    n += 1
+                fp = FutureProject(
+                    name=name,
+                    slug=slug,
+                    is_visible=True,
+                    sort_order=0,
+                    public_data_json=public_updates or None,
+                    **core_updates,
+                )
+                db.add(fp)
+                created += 1
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"Řádek {row_num}: {exc.__class__.__name__}: {exc}")
+
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        errors.append(f"Commit failed: {exc.__class__.__name__}: {exc}")
+
+    return CsvImportResult(created=created, updated=updated, skipped=skipped, errors=errors)
+
+
 @app.post("/future-projects/import-preview", response_model=CsvPreviewResponse)
 async def fp_import_preview(
     file: UploadFile = File(...),
