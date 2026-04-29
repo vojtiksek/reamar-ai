@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api";
 import { ReamarButton, ReamarCard } from "@/components/ui/reamar-ui";
+import { readLocalErrors, clearLocalErrors, type LocalErrorRecord } from "@/lib/errorReporter";
 
 type ErrorItem = {
   id: number;
@@ -144,6 +145,13 @@ export default function AdminErrorsPage() {
   const [selected, setSelected] = useState<ErrorDetail | null>(null);
   const [drawerLoading, setDrawerLoading] = useState(false);
   const [copied, setCopied] = useState<number | null>(null);
+  const [localErrors, setLocalErrors] = useState<LocalErrorRecord[]>([]);
+
+  // Re-read localStorage on mount + on every refresh tick so the fallback
+  // table picks up new errors captured by errorReporter while backend is down.
+  useEffect(() => {
+    setLocalErrors(readLocalErrors());
+  }, []);
 
   const refreshTimer = useRef<number | null>(null);
 
@@ -165,6 +173,9 @@ export default function AdminErrorsPage() {
       setData(json);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Chyba načítání");
+      // Backend unreachable → make sure the local-storage fallback is fresh
+      // so the user sees their session errors instead of a blank page.
+      setLocalErrors(readLocalErrors());
     } finally {
       setLoading(false);
     }
@@ -358,8 +369,102 @@ export default function AdminErrorsPage() {
 
       {error && (
         <div className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-          {error}
+          <div className="font-semibold">Backend nedostupný: {error}</div>
+          <div className="mt-1 text-xs">
+            Zobrazují se pouze chyby z této session prohlížeče (níže). Po obnovení
+            backendu klikni na „Obnovit".
+          </div>
         </div>
+      )}
+
+      {(error || localErrors.length > 0) && (
+        <ReamarCard className="overflow-hidden p-0">
+          <div className="flex items-center justify-between border-b border-slate-100 bg-amber-50 px-4 py-2 text-sm">
+            <div>
+              <span className="font-semibold text-amber-900">Lokální fallback</span>
+              <span className="ml-2 text-amber-800">
+                {localErrors.length} chyb z této session (uloženo v prohlížeči)
+              </span>
+            </div>
+            <button
+              className="rounded border border-amber-300 bg-white px-2 py-1 text-xs hover:bg-amber-100"
+              onClick={() => {
+                if (confirm("Vymazat lokální chyby?")) {
+                  clearLocalErrors();
+                  setLocalErrors([]);
+                }
+              }}
+              disabled={localErrors.length === 0}
+            >
+              Vymazat
+            </button>
+          </div>
+          <div className="max-h-[40vh] overflow-auto">
+            <table className="w-full table-fixed text-sm">
+              <thead className="sticky top-0 z-10 bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-600">
+                <tr>
+                  <th className="w-[140px] px-3 py-2">Čas</th>
+                  <th className="w-[100px] px-3 py-2">Zdroj</th>
+                  <th className="w-[60px] px-3 py-2">Stav</th>
+                  <th className="w-[260px] px-3 py-2">Path</th>
+                  <th className="px-3 py-2">Message</th>
+                  <th className="w-[100px] px-3 py-2 text-right">Akce</th>
+                </tr>
+              </thead>
+              <tbody>
+                {localErrors.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
+                      Žádné lokální chyby. (Reportér je aktivní — nově vzniklé chyby se objeví zde.)
+                    </td>
+                  </tr>
+                )}
+                {[...localErrors].reverse().map((it) => (
+                  <tr key={it.id} className="border-t border-slate-100 hover:bg-slate-50">
+                    <td className="px-3 py-2 font-mono text-xs">{fmtTs(it.ts)}</td>
+                    <td className="px-3 py-2">
+                      <span className="rounded bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-900">
+                        local · {it.source ?? "?"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`rounded px-2 py-0.5 text-xs font-mono ${statusBadge(it.status ?? null)}`}>
+                        {it.status ?? "—"}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs" title={it.url ?? ""}>
+                      {truncate(it.url ?? "", 40)}
+                    </td>
+                    <td className="px-3 py-2 text-xs" title={it.message}>
+                      {truncate(it.message, 120)}
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button
+                        className="rounded border border-slate-200 bg-white px-2 py-1 text-xs hover:bg-slate-50"
+                        onClick={async () => {
+                          const text = [
+                            `Local error #${it.id}`,
+                            `Time:    ${it.ts}`,
+                            `Source:  ${it.source ?? "?"}`,
+                            `Status:  ${it.status ?? "—"}`,
+                            `Method:  ${it.method ?? "—"}`,
+                            `URL:     ${it.url ?? "—"}`,
+                            `Message: ${it.message}`,
+                            it.stack ? "\nStack:" : "",
+                            it.stack ?? "",
+                          ].filter(Boolean).join("\n");
+                          await navigator.clipboard.writeText(text);
+                        }}
+                      >
+                        Kopírovat
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </ReamarCard>
       )}
 
       <ReamarCard className="overflow-hidden p-0">

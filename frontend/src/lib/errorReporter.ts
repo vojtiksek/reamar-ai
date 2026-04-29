@@ -7,6 +7,10 @@
  *   - unhandledrejection          (uncaught Promise rejections)
  *   - fetch() failures            (non-2xx responses + network errors)
  *
+ * Every captured error is ALSO mirrored into localStorage so /admin/errors
+ * can display recent issues even when the backend / database is down (which
+ * is exactly when the user wants to see what broke).
+ *
  * All sends are best-effort (sendBeacon → fetch fallback) and never throw.
  * A simple per-minute rate limit prevents floods.
  */
@@ -24,7 +28,15 @@ type ClientErrorPayload = {
   extra?: Record<string, unknown>;
 };
 
+export type LocalErrorRecord = ClientErrorPayload & {
+  id: string;
+  ts: string;
+};
+
 const RATE_LIMIT_PER_MIN = 50;
+const LOCAL_STORAGE_KEY = "reamar_local_errors";
+const LOCAL_STORAGE_MAX = 100;
+
 let recentTimestamps: number[] = [];
 let installed = false;
 
@@ -36,8 +48,51 @@ function rateLimited(): boolean {
   return false;
 }
 
+function appendLocal(payload: ClientErrorPayload): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+    const arr: LocalErrorRecord[] = raw ? JSON.parse(raw) : [];
+    arr.push({
+      ...payload,
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      ts: new Date().toISOString(),
+    });
+    while (arr.length > LOCAL_STORAGE_MAX) arr.shift();
+    window.localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(arr));
+  } catch {
+    // localStorage may be full or disabled — ignore
+  }
+}
+
+export function readLocalErrors(): LocalErrorRecord[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(LOCAL_STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+export function clearLocalErrors(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(LOCAL_STORAGE_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 function send(payload: ClientErrorPayload): void {
   if (rateLimited()) return;
+
+  // Always mirror locally — survives backend/DB outage so the user can still
+  // see what broke from /admin/errors local fallback.
+  appendLocal(payload);
+
   const url = `${API_BASE}/admin/client-errors`;
   const body = JSON.stringify({
     ...payload,
