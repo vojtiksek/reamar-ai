@@ -13,6 +13,11 @@ import { type FilterGroup, type FiltersResponse } from "@/lib/filters";
  *
  * @param path - path relative to API_BASE, e.g. "filters" or "projects/filters"
  */
+// Stable empty-array fallback. Returning a fresh `[]` per render would change
+// reference every time, breaking downstream useMemo/useEffect dep arrays and
+// causing infinite refetch loops in consumers (e.g. UnitsExplorerPage).
+const EMPTY_GROUPS: FilterGroup[] = [];
+
 export function useFilterGroups(path: string): FilterGroup[] {
   const { data } = useQuery({
     queryKey: ["filter-groups", path],
@@ -25,5 +30,5 @@ export function useFilterGroups(path: string): FilterGroup[] {
     staleTime: 30 * 60_000,
     gcTime: 60 * 60_000,
   });
-  return data ?? [];
+  return data ?? EMPTY_GROUPS;
 }
