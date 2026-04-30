@@ -6878,18 +6878,26 @@ def list_projects(
                 int("".join(ch for ch in (u["layout"] or "") if ch.isdigit()) or "99"),
                 u["layout"] or "",
             ))
+            min_p = agg.get("min_price_czk")
+            max_p = agg.get("max_price_czk")
+            max_dom = agg.get("max_days_on_market")
             items.append({
                 "id": project.id,
                 "project": project.name,
+                "developer": project.developer,
+                "address": project.address,
                 "municipality": project.municipality,
                 "city": project.city,
                 "district": project.district,
                 "gps_latitude": float(lat) if lat is not None else None,
                 "gps_longitude": float(lon) if lon is not None else None,
                 "avg_price_per_m2_czk": float(avg_pm2) if avg_pm2 is not None else None,
+                "min_price_czk": int(min_p) if min_p is not None else None,
+                "max_price_czk": int(max_p) if max_p is not None else None,
                 "units_total": agg.get("units_total"),
                 "units_available": agg.get("units_available"),
                 "units_reserved": agg.get("units_reserved"),
+                "max_days_on_market": int(max_dom) if max_dom is not None else None,
                 # Meta for popup
                 "completion_date": project.completion_date.isoformat() if project.completion_date else None,
                 "construction_completion": getattr(project, "construction_completion", None),
@@ -6897,6 +6905,9 @@ def list_projects(
                 "public_transport_to_center_min": float(project.public_transport_to_center_min) if project.public_transport_to_center_min is not None else None,
                 "walkability_score": project.walkability_score,
                 "walkability_label": project.walkability_label,
+                "distance_to_metro_station_m": project.distance_to_metro_station_m,
+                "distance_to_tram_stop_m": project.distance_to_tram_stop_m,
+                "energy_class": getattr(project, "energy_class", None),
                 "project_url": getattr(project, "project_url", None),
                 "cheapest_units_by_layout": cheapest,
             })

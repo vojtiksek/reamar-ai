@@ -1759,3 +1759,16 @@ body {
     color: var(--r-text-tertiary);
   }
 }
+
+
+/* Edge-to-edge popup for the rich Explorer map popup. Leaflet adds 13px/20px
+   inline padding on .leaflet-popup-content; this class on <Popup> removes it
+   so the gradient header + slate footer can fill the full popup width. */
+.leaflet-popup.reamar-rich-popup .leaflet-popup-content-wrapper {
+  padding: 0;
+  overflow: hidden;
+}
+.leaflet-popup.reamar-rich-popup .leaflet-popup-content {
+  margin: 0;
+  width: auto !important;
+}

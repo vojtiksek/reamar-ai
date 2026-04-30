@@ -20,24 +20,38 @@ type CheapestUnit = {
 type ProjectPoint = {
   id: number;
   project: string | null;
+  developer?: string | null;
+  address?: string | null;
   municipality?: string | null;
   city?: string | null;
   district?: string | null;
   avg_price_per_m2_czk?: number | null;
+  min_price_czk?: number | null;
+  max_price_czk?: number | null;
   gps_latitude?: number | null;
   gps_longitude?: number | null;
   units_total?: number | null;
   units_available?: number | null;
   units_reserved?: number | null;
+  max_days_on_market?: number | null;
   completion_date?: string | null;
   construction_completion?: string | null;
   ride_to_center_min?: number | null;
   public_transport_to_center_min?: number | null;
   walkability_score?: number | null;
   walkability_label?: string | null;
+  distance_to_metro_station_m?: number | null;
+  distance_to_tram_stop_m?: number | null;
+  energy_class?: string | null;
   project_url?: string | null;
   cheapest_units_by_layout?: CheapestUnit[];
 };
+
+function formatDistance(m: number | null | undefined): string | null {
+  if (m == null) return null;
+  if (m >= 1000) return `${(m / 1000).toFixed(1)} km`;
+  return `${Math.round(m)} m`;
+}
 
 function formatCzk(value: number | null | undefined): string {
   if (value == null) return "—";
@@ -234,9 +248,14 @@ function ProjectsLeafletMap({
                 : undefined
             }
           >
-            <Popup minWidth={300} maxWidth={400}>
-              <div className="min-w-[280px] max-w-[380px] -m-3 overflow-hidden rounded-lg">
-                {/* Header — accent strip + project name */}
+            <Popup
+              minWidth={320}
+              maxWidth={400}
+              className="reamar-rich-popup"
+              autoPan={true}
+            >
+              <div className="w-[320px] overflow-hidden">
+                {/* Header — gradient strip edge-to-edge */}
                 <div className="bg-gradient-to-r from-slate-900 to-slate-700 px-4 py-3 text-white">
                   <Link
                     href={`/projects/${p.id}`}
@@ -244,132 +263,192 @@ function ProjectsLeafletMap({
                   >
                     {p.project ?? "Projekt bez názvu"}
                   </Link>
-                  <div className="mt-0.5 text-[11px] text-slate-300">
-                    {[p.city, p.municipality, p.district].filter(Boolean).join(" · ") || "—"}
+                  <div className="mt-0.5 truncate text-[11px] text-slate-300" title={p.address ?? undefined}>
+                    {p.developer ||
+                      [p.city, p.municipality, p.district].filter(Boolean).join(" · ") ||
+                      "—"}
                   </div>
                 </div>
 
-                {/* Stat chips */}
-                <div className="flex flex-wrap gap-1.5 px-4 pt-3 text-[10px]">
-                  {p.units_available != null && (
-                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                      {p.units_available} volných
-                      {p.units_total != null && ` z ${p.units_total}`}
-                    </span>
-                  )}
-                  {(() => {
-                    const c = formatCompletion(p);
-                    return c ? (
-                      <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
-                        <span>📅</span>
-                        {c}
+                {/* Body */}
+                <div className="space-y-3 px-4 py-3">
+                  {/* Stat chips */}
+                  <div className="flex flex-wrap gap-1.5 text-[10px]">
+                    {p.units_available != null && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        {p.units_available} volných
+                        {p.units_total != null && ` z ${p.units_total}`}
                       </span>
-                    ) : null;
-                  })()}
-                  {/* Walkability — show only when truthy AND non-zero. Backend pipeline
-                      currently outputs 0 for every project, which is wrong; hide until fixed. */}
-                  {p.walkability_score != null && p.walkability_score > 0 && (
-                    <span
-                      className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 font-medium text-amber-700"
-                      title={p.walkability_label ?? undefined}
-                    >
-                      <span>🚶</span>
-                      Walk {p.walkability_score}
-                    </span>
+                    )}
+                    {(() => {
+                      const c = formatCompletion(p);
+                      return c ? (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 font-medium text-sky-700">
+                          <span>📅</span>
+                          {c}
+                        </span>
+                      ) : null;
+                    })()}
+                    {p.walkability_score != null && (
+                      <span
+                        className={
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium " +
+                          (p.walkability_score > 0
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-slate-100 text-slate-500")
+                        }
+                        title={p.walkability_label ?? undefined}
+                      >
+                        <span>🚶</span>
+                        Walk {p.walkability_score}
+                        {p.walkability_label ? ` · ${p.walkability_label}` : ""}
+                      </span>
+                    )}
+                    {p.energy_class && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-lime-50 px-2 py-0.5 font-medium text-lime-700">
+                        ⚡ {p.energy_class}
+                      </span>
+                    )}
+                    {p.max_days_on_market != null && p.max_days_on_market <= 30 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 px-2 py-0.5 font-medium text-rose-700">
+                        🆕 {p.max_days_on_market} dní
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Price block: avg + range */}
+                  {(p.avg_price_per_m2_czk != null ||
+                    (p.min_price_czk != null && p.max_price_czk != null)) && (
+                    <div className="grid grid-cols-2 gap-2">
+                      {p.avg_price_per_m2_czk != null && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                            Průměrná cena
+                          </div>
+                          <div className="text-base font-semibold tabular-nums leading-tight text-slate-900">
+                            {new Intl.NumberFormat("cs-CZ", {
+                              maximumFractionDigits: 0,
+                            }).format(Math.round(p.avg_price_per_m2_czk))}
+                          </div>
+                          <div className="text-[10px] text-slate-500">Kč/m²</div>
+                        </div>
+                      )}
+                      {p.min_price_czk != null && p.max_price_czk != null && (
+                        <div>
+                          <div className="text-[10px] uppercase tracking-wider text-slate-400">
+                            Rozsah cen
+                          </div>
+                          <div className="text-[12px] font-semibold tabular-nums leading-tight text-slate-900">
+                            {formatCzk(p.min_price_czk)}
+                          </div>
+                          <div className="text-[10px] text-slate-500">
+                            až {formatCzk(p.max_price_czk)}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Commute */}
+                  {(p.ride_to_center_min != null ||
+                    p.public_transport_to_center_min != null) && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400">
+                        Do centra Prahy
+                      </p>
+                      <div className="mt-1 grid grid-cols-2 gap-2">
+                        {p.public_transport_to_center_min != null && (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                            <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                              <span>🚌</span>
+                              <span>MHD</span>
+                            </div>
+                            <div className="text-sm font-semibold tabular-nums text-slate-800">
+                              ~{Math.round(p.public_transport_to_center_min)} min
+                            </div>
+                          </div>
+                        )}
+                        {p.ride_to_center_min != null && (
+                          <div className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
+                            <div className="flex items-center gap-1 text-[11px] text-slate-500">
+                              <span>🚗</span>
+                              <span>Auto</span>
+                            </div>
+                            <div className="text-sm font-semibold tabular-nums text-slate-800">
+                              ~{Math.round(p.ride_to_center_min)} min
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Public transport stops */}
+                  {(p.distance_to_metro_station_m != null ||
+                    p.distance_to_tram_stop_m != null) && (
+                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
+                      {p.distance_to_metro_station_m != null && (
+                        <span>
+                          🚇 metro{" "}
+                          <span className="font-medium tabular-nums">
+                            {formatDistance(p.distance_to_metro_station_m)}
+                          </span>
+                        </span>
+                      )}
+                      {p.distance_to_tram_stop_m != null && (
+                        <span>
+                          🚊 tram{" "}
+                          <span className="font-medium tabular-nums">
+                            {formatDistance(p.distance_to_tram_stop_m)}
+                          </span>
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Cheapest unit per layout (volné) */}
+                  {p.cheapest_units_by_layout && p.cheapest_units_by_layout.length > 0 && (
+                    <div>
+                      <p className="text-[10px] uppercase tracking-wider text-slate-400">
+                        Nejlevnější volná
+                      </p>
+                      <div className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
+                        {p.cheapest_units_by_layout.slice(0, 8).map((u) => (
+                          <a
+                            key={u.unit_external_id ?? u.layout ?? Math.random()}
+                            href={
+                              u.unit_external_id
+                                ? `/units/${encodeURIComponent(u.unit_external_id)}`
+                                : "#"
+                            }
+                            className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 text-xs transition-colors hover:bg-slate-50"
+                          >
+                            <span className="flex min-w-0 items-baseline gap-1.5 truncate">
+                              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
+                                {formatLayout(u.layout)}
+                              </span>
+                              {u.floor_area_m2 != null && (
+                                <span className="text-slate-600">{u.floor_area_m2} m²</span>
+                              )}
+                              {u.exterior_area_m2 != null && u.exterior_area_m2 > 0 && (
+                                <span className="text-[10px] text-slate-400">
+                                  ext {u.exterior_area_m2} m²
+                                </span>
+                              )}
+                            </span>
+                            <span className="shrink-0 font-semibold tabular-nums text-slate-900">
+                              {formatCzk(u.price_czk)}
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
                   )}
                 </div>
 
-                {/* Average price — hero number */}
-                {p.avg_price_per_m2_czk != null && (
-                  <div className="px-4 pt-3">
-                    <div className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Průměrná cena
-                    </div>
-                    <div className="text-lg font-semibold tabular-nums text-slate-900">
-                      {new Intl.NumberFormat("cs-CZ", {
-                        maximumFractionDigits: 0,
-                      }).format(Math.round(p.avg_price_per_m2_czk))}{" "}
-                      <span className="text-xs font-medium text-slate-500">Kč/m²</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Commute */}
-                {(p.ride_to_center_min != null ||
-                  p.public_transport_to_center_min != null) && (
-                  <div className="px-4 pt-3">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Do centra Prahy
-                    </p>
-                    <div className="mt-1 grid grid-cols-2 gap-2">
-                      {p.public_transport_to_center_min != null && (
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                          <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                            <span>🚌</span>
-                            <span>MHD</span>
-                          </div>
-                          <div className="text-sm font-semibold tabular-nums text-slate-800">
-                            ~{Math.round(p.public_transport_to_center_min)} min
-                          </div>
-                        </div>
-                      )}
-                      {p.ride_to_center_min != null && (
-                        <div className="rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5">
-                          <div className="flex items-center gap-1 text-[11px] text-slate-500">
-                            <span>🚗</span>
-                            <span>Auto</span>
-                          </div>
-                          <div className="text-sm font-semibold tabular-nums text-slate-800">
-                            ~{Math.round(p.ride_to_center_min)} min
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {/* Cheapest unit per layout (volné) */}
-                {p.cheapest_units_by_layout && p.cheapest_units_by_layout.length > 0 && (
-                  <div className="px-4 pt-3">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-400">
-                      Nejlevnější volná
-                    </p>
-                    <div className="mt-1 divide-y divide-slate-100 overflow-hidden rounded-md border border-slate-200">
-                      {p.cheapest_units_by_layout.slice(0, 8).map((u) => (
-                        <a
-                          key={u.unit_external_id ?? u.layout ?? Math.random()}
-                          href={
-                            u.unit_external_id
-                              ? `/units/${encodeURIComponent(u.unit_external_id)}`
-                              : "#"
-                          }
-                          className="flex items-center justify-between gap-2 bg-white px-2.5 py-1.5 text-xs transition-colors hover:bg-slate-50"
-                        >
-                          <span className="flex min-w-0 items-baseline gap-1.5 truncate">
-                            <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-700">
-                              {formatLayout(u.layout)}
-                            </span>
-                            {u.floor_area_m2 != null && (
-                              <span className="text-slate-600">{u.floor_area_m2} m²</span>
-                            )}
-                            {u.exterior_area_m2 != null && u.exterior_area_m2 > 0 && (
-                              <span className="text-[10px] text-slate-400">
-                                ext {u.exterior_area_m2} m²
-                              </span>
-                            )}
-                          </span>
-                          <span className="shrink-0 font-semibold tabular-nums text-slate-900">
-                            {formatCzk(u.price_czk)}
-                          </span>
-                        </a>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Footer actions */}
-                <div className="mt-3 flex items-center gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2.5 text-[11px]">
+                {/* Footer actions — edge-to-edge */}
+                <div className="flex items-center gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-[11px]">
                   {onProjectSelect && (
                     <button
                       type="button"
