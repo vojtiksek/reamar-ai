@@ -45,7 +45,11 @@ type FlatItem =
 function getHref(fi: FlatItem): string | null {
   if (fi.type === "client") return `/cases/${fi.item.id}/brief`;
   if (fi.type === "unit") return `/units/${encodeURIComponent(fi.item.external_id)}`;
-  return null; // projects have no dedicated broker page
+  if (fi.type === "project") {
+    // Show this exact project in the projects explorer (filter by name).
+    return `/explorer/projects?project=${encodeURIComponent(fi.item.name)}`;
+  }
+  return null;
 }
 
 // ── Component ──────────────────────────────────────────────────────────
@@ -255,9 +259,11 @@ export function GlobalSearchPalette({ open, onClose }: Props) {
                   const idx = results.clients.length + i;
                   const active = selectedIdx === idx;
                   return (
-                    <div
+                    <Link
                       key={p.id}
-                      className={`flex items-center gap-3 px-4 py-2.5 ${active ? "bg-slate-100" : ""}`}
+                      href={`/explorer/projects?project=${encodeURIComponent(p.name)}`}
+                      onClick={onClose}
+                      className={`flex items-center gap-3 px-4 py-2.5 hover:bg-slate-50 ${active ? "bg-slate-100" : ""}`}
                     >
                       <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-100 text-[11px] font-semibold text-blue-600">
                         P
@@ -272,7 +278,7 @@ export function GlobalSearchPalette({ open, onClose }: Props) {
                           </p>
                         )}
                       </div>
-                    </div>
+                    </Link>
                   );
                 })}
               </section>

@@ -6643,9 +6643,25 @@ def list_projects(
     if max_completion_date is not None:
         stmt = stmt.where(Project.completion_date <= max_completion_date)
 
+    # Explicit project name filter applies directly at Project level so we
+    # match the project even when it has zero on-market units (otherwise the
+    # unit-EXISTS subquery below would filter it out).
+    if project is not None and len(project) > 0:
+        name_clauses = [Project.name.ilike(f"%{n.strip()}%") for n in project if n and n.strip()]
+        if name_clauses:
+            stmt = stmt.where(or_(*name_clauses))
+
     # Archivace: standardně skrýváme projekty, které nemají žádné dostupné jednotky
-    # a jejich poslední sold_date je starší než 6 měsíců.
-    if not include_archived:
+    # a jejich poslední sold_date je starší než 6 měsíců. Ale když broker ručně
+    # filtruje podle jména/textu (q nebo project=…), explicitní volba má přednost
+    # — chce ten konkrétní projekt vidět i kdyby byl archived.
+    explicit_name_filter = bool(
+        (q and q.strip())
+        or (project is not None and len(project) > 0)
+        or (developer is not None and len(developer) > 0)
+        or (building is not None and len(building) > 0)
+    )
+    if not include_archived and not explicit_name_filter:
         recent_sold_cutoff = date.today() - timedelta(days=183)  # ~6 měsíců
         first_seen_cutoff = date.today() - timedelta(days=365 * 2)  # ~2 roky
         stmt = stmt.where(
@@ -6669,7 +6685,12 @@ def list_projects(
         )
 
     # Pokud jsou nastaveny filtry na jednotky, zobrazíme jen projekty, které mají alespoň jednu jednotku vyhovující filtrům.
-    if _has_unit_filters(
+    # Výjimka: explicit filtr `project=` znamená „chci tenhle konkrétní projekt"
+    # — neořezávat ho dále podle availability/price filtrů (často default
+    # availability=['available','unseen','reserved'] by ho jinak schoval, např.
+    # už-vyprodaný Triple House).
+    project_explicit = project is not None and len(project) > 0
+    if not project_explicit and _has_unit_filters(
         available, availability,
         min_price, max_price,
         min_price_change, max_price_change,
