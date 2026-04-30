@@ -839,6 +839,27 @@ def import_units(
         if not project_name:
             print(f"Warning: Unit {idx} (unique_id={unique_id}) missing project name, skipping")
             continue
+
+        # Junk guard: developers' catalog pages occasionally render their "no
+        # results" placeholder ("No matching products", "Zadaným parametrům
+        # neodpovídá žádný byt") as a fake row. The scraper picks them up as
+        # available units with no price / no area / no layout — they then
+        # light up the project on the map. Drop them at intake.
+        if (
+            unit_data.get("price") is None
+            and unit_data.get("price_per_sm") is None
+            and unit_data.get("floor_area") is None
+            and unit_data.get("layout") in (None, "", "unknown")
+        ):
+            unit_name_raw = (unit_data.get("unit_name") or "").strip()
+            looks_like_unit = bool(unit_name_raw) and any(ch.isdigit() for ch in unit_name_raw)
+            if not looks_like_unit:
+                print(
+                    f"Warning: Unit {idx} (unique_id={unique_id}) looks like a "
+                    f"scraper placeholder (name={unit_name_raw!r}, no price/area/layout), skipping"
+                )
+                continue
+
         key = project_key(
             unit_data.get("developer"),
             project_name,
