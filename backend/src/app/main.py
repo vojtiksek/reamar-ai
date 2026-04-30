@@ -6052,6 +6052,15 @@ def _project_agg_subquery():
         Unit.public_transport_to_center_min.asc()
     ).label("median_public_transport_to_center_min")
     layouts = func.array_agg(Unit.layout).filter(Unit.layout.isnot(None)).label("layouts_present_raw")
+    # max_days_on_market: BuiltMind sometimes leaves Unit.days_on_market NULL on
+    # brand-new units. Without a fallback those projects sort to the very end of
+    # /projects by 'Dní na trhu' even though they are the freshest. Coalesce to
+    # the gap between today and the project's earliest first_seen so we always
+    # have a meaningful value.
+    max_days_on_market_expr = func.coalesce(
+        func.max(Unit.days_on_market),
+        func.current_date() - func.min(Unit.first_seen),
+    ).label("max_days_on_market")
     return (
         select(
             Unit.project_id,
@@ -6086,7 +6095,7 @@ def _project_agg_subquery():
             # Time / status
             func.min(Unit.first_seen).label("project_first_seen"),
             func.max(Unit.last_seen).label("project_last_seen"),
-            func.max(Unit.days_on_market).label("max_days_on_market"),
+            max_days_on_market_expr,
             # Financing (fractions 0–1)
             func.min(Unit.payment_contract).label("min_payment_contract"),
             func.max(Unit.payment_contract).label("max_payment_contract"),
@@ -6775,7 +6784,14 @@ def list_projects(
         )
     order = _projects_order_clause(agg_subq, sort_by, sort_dir)
     if order is not None:
-        stmt = stmt.order_by(order, Project.id.asc())
+        # Secondary tiebreak: projects with available units bubble up over
+        # archived zombies (often share max_days_on_market=1 from old imports).
+        # Project.id keeps results deterministic when both prior keys match.
+        stmt = stmt.order_by(
+            order,
+            agg_subq.c.units_available.desc().nullslast(),
+            Project.id.asc(),
+        )
     # Count: re-use WHERE/JOIN of `stmt` but replace the SELECT list with COUNT
     # and drop ORDER BY. Skip entirely when `with_count=false` — map view and
     # infinite-scroll callers don't need it and the count query is the slowest
