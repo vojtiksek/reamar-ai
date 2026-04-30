@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { API_BASE } from "@/lib/api";
 
@@ -7,12 +8,27 @@ type Notification = {
   id: number;
   type: string;
   unit_external_id?: string | null;
+  project_id?: number | null;
   project_name?: string | null;
   old_value?: string | null;
   new_value?: string | null;
   affected_clients: string[];
   created_at: string;
 };
+
+function notificationHref(n: Notification): string | null {
+  if (n.type === "new_project") {
+    if (n.project_name) {
+      return `/explorer/projects?project=${encodeURIComponent(n.project_name)}`;
+    }
+    return null;
+  }
+  // price_change / availability_change → unit detail
+  if (n.unit_external_id) {
+    return `/units/${encodeURIComponent(n.unit_external_id)}`;
+  }
+  return null;
+}
 
 export function NotificationBell() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -83,58 +99,77 @@ export function NotificationBell() {
                 Žádné nové události
               </p>
             ) : (
-              notifications.slice(0, 20).map((n) => (
-                <div
-                  key={n.id}
-                  className="border-b border-slate-50 px-3 py-2 last:border-0"
-                >
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`inline-block h-2 w-2 rounded-full ${
-                        n.type === "price_change"
-                          ? "bg-blue-500"
+              notifications.slice(0, 20).map((n) => {
+                const href = notificationHref(n);
+                const inner = (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      <span
+                        className={`inline-block h-2 w-2 rounded-full ${
+                          n.type === "price_change"
+                            ? "bg-blue-500"
+                            : n.type === "availability_change"
+                              ? "bg-emerald-500"
+                              : "bg-violet-500"
+                        }`}
+                      />
+                      <span className="text-[11px] font-medium text-slate-800">
+                        {n.type === "price_change"
+                          ? "Změna ceny"
                           : n.type === "availability_change"
-                            ? "bg-emerald-500"
-                            : "bg-violet-500"
-                      }`}
-                    />
-                    <span className="text-[11px] font-medium text-slate-800">
-                      {n.type === "price_change"
-                        ? "Změna ceny"
-                        : n.type === "availability_change"
-                          ? "Změna dostupnosti"
-                          : "Nový projekt"}
-                    </span>
-                    <span className="ml-auto text-[10px] text-slate-400">
-                      {new Date(n.created_at).toLocaleDateString("cs-CZ")}
-                    </span>
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-slate-600">
-                    {n.type === "new_project"
-                      ? n.project_name
-                      : `${n.unit_external_id ?? "?"} — ${n.project_name ?? ""}`}
-                    {n.old_value && n.new_value && n.type === "price_change" && (
-                      <span className="text-slate-400">
-                        {" "}
-                        ({n.old_value} → {n.new_value})
+                            ? "Změna dostupnosti"
+                            : "Nový projekt"}
                       </span>
-                    )}
-                    {n.old_value &&
-                      n.new_value &&
-                      n.type === "availability_change" && (
+                      <span className="ml-auto text-[10px] text-slate-400">
+                        {new Date(n.created_at).toLocaleDateString("cs-CZ")}
+                      </span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-600">
+                      {n.type === "new_project"
+                        ? n.project_name
+                        : `${n.unit_external_id ?? "?"} — ${n.project_name ?? ""}`}
+                      {n.old_value && n.new_value && n.type === "price_change" && (
                         <span className="text-slate-400">
                           {" "}
                           ({n.old_value} → {n.new_value})
                         </span>
                       )}
-                  </p>
-                  {n.affected_clients.length > 0 && (
-                    <p className="mt-0.5 text-[10px] text-slate-400">
-                      Klienti: {n.affected_clients.join(", ")}
+                      {n.old_value &&
+                        n.new_value &&
+                        n.type === "availability_change" && (
+                          <span className="text-slate-400">
+                            {" "}
+                            ({n.old_value} → {n.new_value})
+                          </span>
+                        )}
                     </p>
-                  )}
-                </div>
-              ))
+                    {n.affected_clients.length > 0 && (
+                      <p className="mt-0.5 text-[10px] text-slate-400">
+                        Klienti: {n.affected_clients.join(", ")}
+                      </p>
+                    )}
+                  </>
+                );
+                const cls =
+                  "block border-b border-slate-50 px-3 py-2 last:border-0 transition-colors";
+                if (href) {
+                  return (
+                    <Link
+                      key={n.id}
+                      href={href}
+                      onClick={() => setOpen(false)}
+                      className={`${cls} hover:bg-slate-50 cursor-pointer`}
+                    >
+                      {inner}
+                    </Link>
+                  );
+                }
+                return (
+                  <div key={n.id} className={cls}>
+                    {inner}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>

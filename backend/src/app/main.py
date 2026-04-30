@@ -3781,27 +3781,37 @@ def broker_notifications(
                 created_at=ev.created_at,
             ))
 
-    # New projects (added recently)
-    new_projects = db.execute(
-        select(Project)
-        .where(Project.id.in_(
-            select(Unit.project_id).where(
-                Unit.first_seen >= since.date(),
-            ).group_by(Unit.project_id)
-            .having(func.min(Unit.first_seen) >= since.date())
-        ))
+    # New projects (added recently). Compute the actual project_first_seen
+    # (= min of its units' first_seen) so the notification's timestamp reflects
+    # when the project actually appeared in the DB instead of "now".
+    new_project_rows = db.execute(
+        select(
+            Project.id,
+            Project.name,
+            func.min(Unit.first_seen).label("project_first_seen"),
+        )
+        .join(Unit, Unit.project_id == Project.id)
+        .where(Unit.first_seen >= since.date())
+        .group_by(Project.id, Project.name)
+        .having(func.min(Unit.first_seen) >= since.date())
+        .order_by(func.min(Unit.first_seen).desc())
         .limit(20)
-    ).scalars().all()
+    ).all()
 
-    for p in new_projects:
+    for proj_id, proj_name, proj_first_seen in new_project_rows:
+        ts = (
+            datetime.combine(proj_first_seen, datetime.min.time(), tzinfo=timezone.utc)
+            if proj_first_seen is not None
+            else datetime.now(timezone.utc)
+        )
         notifications.append(BrokerNotification(
-            id=-p.id,  # negative to distinguish
+            id=-proj_id,  # negative to distinguish
             type="new_project",
-            project_id=p.id,
-            project_name=p.name,
-            new_value=p.name,
+            project_id=proj_id,
+            project_name=proj_name,
+            new_value=proj_name,
             affected_clients=[],
-            created_at=datetime.utcnow(),
+            created_at=ts,
         ))
 
     # Fill project names
