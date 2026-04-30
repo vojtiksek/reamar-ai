@@ -7,6 +7,15 @@ import Link from "next/link";
 import "leaflet/dist/leaflet.css";
 import type { LatLng } from "@/lib/geo";
 import { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS } from "@/lib/poiConfig";
+import { formatLayout } from "@/lib/format";
+
+type CheapestUnit = {
+  layout: string | null;
+  unit_external_id: string | null;
+  price_czk: number | null;
+  floor_area_m2: number | null;
+  exterior_area_m2: number | null;
+};
 
 type ProjectPoint = {
   id: number;
@@ -17,7 +26,39 @@ type ProjectPoint = {
   avg_price_per_m2_czk?: number | null;
   gps_latitude?: number | null;
   gps_longitude?: number | null;
+  units_total?: number | null;
+  units_available?: number | null;
+  units_reserved?: number | null;
+  completion_date?: string | null;
+  construction_completion?: string | null;
+  ride_to_center_min?: number | null;
+  public_transport_to_center_min?: number | null;
+  walkability_score?: number | null;
+  walkability_label?: string | null;
+  project_url?: string | null;
+  cheapest_units_by_layout?: CheapestUnit[];
 };
+
+function formatCzk(value: number | null | undefined): string {
+  if (value == null) return "—";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} M Kč`;
+  return `${value.toLocaleString("cs-CZ")} Kč`;
+}
+
+function formatCompletion(item: ProjectPoint): string | null {
+  if (item.construction_completion) return item.construction_completion;
+  if (item.completion_date) {
+    // YYYY-MM-DD → YYYY-MM
+    return item.completion_date.slice(0, 7);
+  }
+  return null;
+}
+
+function pluralizeUnits(n: number): string {
+  if (n === 1) return "jednotka";
+  if (n < 5) return "jednotky";
+  return "jednotek";
+}
 
 export type PoiOverviewItem = {
   name: string | null;
@@ -193,39 +234,152 @@ function ProjectsLeafletMap({
                 : undefined
             }
           >
-            <Popup>
-              <div className="space-y-1 text-xs">
-                <div className="font-semibold text-gray-900">
-                  {p.project ?? "Projekt bez názvu"}
+            <Popup minWidth={280} maxWidth={380}>
+              <div className="min-w-[260px] max-w-[360px] space-y-2.5 text-sm">
+                {/* Project header */}
+                <div>
+                  <Link
+                    href={`/projects/${p.id}`}
+                    className="block text-base font-semibold text-blue-700 hover:underline"
+                  >
+                    {p.project ?? "Projekt bez názvu"}
+                  </Link>
+                  <div className="mt-0.5 text-[11px] text-slate-500">
+                    {[p.city, p.municipality, p.district].filter(Boolean).join(" · ") || "—"}
+                  </div>
                 </div>
-                <div className="text-gray-700">
-                  {[p.city, p.municipality, p.district].filter(Boolean).join(", ") || "—"}
+
+                {/* Project meta — units / completion / walkability */}
+                <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-500">
+                  {p.units_available != null && (
+                    <span>
+                      {p.units_available} volných
+                      {p.units_total != null && ` / ${p.units_total}`}
+                    </span>
+                  )}
+                  {(() => {
+                    const c = formatCompletion(p);
+                    return c ? <span>Dokončení: {c}</span> : null;
+                  })()}
+                  {p.walkability_score != null && (
+                    <span title={p.walkability_label ?? undefined}>
+                      Walkability: {p.walkability_score}
+                      {p.walkability_label ? ` · ${p.walkability_label}` : ""}
+                    </span>
+                  )}
                 </div>
+
+                {/* Avg price */}
                 {p.avg_price_per_m2_czk != null && (
-                  <div className="text-gray-800">
+                  <div className="text-[12px] text-slate-700">
                     Průměrná cena m²:{" "}
-                    {new Intl.NumberFormat("cs-CZ", {
-                      maximumFractionDigits: 0,
-                      minimumFractionDigits: 0,
-                    }).format(p.avg_price_per_m2_czk)}{" "}
-                    Kč/m²
+                    <span className="font-medium tabular-nums">
+                      {new Intl.NumberFormat("cs-CZ", {
+                        maximumFractionDigits: 0,
+                      }).format(Math.round(p.avg_price_per_m2_czk))}{" "}
+                      Kč/m²
+                    </span>
                   </div>
                 )}
-                {onProjectSelect && (
-                  <button
-                    type="button"
-                    onClick={() => onProjectSelect(selectedProjectId === p.id ? null : p.id)}
-                    className="mt-1 block rounded border border-slate-300 bg-slate-100 px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-200"
-                  >
-                    {selectedProjectId === p.id ? "Skrýt POI" : "Zobrazit nejbližší POI"}
-                  </button>
+
+                {/* Commute */}
+                {(p.ride_to_center_min != null ||
+                  p.public_transport_to_center_min != null) && (
+                  <div className="space-y-0.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Do centra Prahy
+                    </p>
+                    {p.public_transport_to_center_min != null && (
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex items-center gap-1 text-slate-600">
+                          <span>🚌</span>
+                          <span>MHD</span>
+                        </span>
+                        <span className="font-semibold tabular-nums text-slate-700">
+                          ~{Math.round(p.public_transport_to_center_min)} min
+                        </span>
+                      </div>
+                    )}
+                    {p.ride_to_center_min != null && (
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="flex items-center gap-1 text-slate-600">
+                          <span>🚗</span>
+                          <span>Auto</span>
+                        </span>
+                        <span className="font-semibold tabular-nums text-slate-700">
+                          ~{Math.round(p.ride_to_center_min)} min
+                        </span>
+                      </div>
+                    )}
+                  </div>
                 )}
-                <Link
-                  href={`/projects/${p.id}`}
-                  className="mt-1 inline-block text-blue-600 hover:underline"
-                >
-                  Detail projektu
-                </Link>
+
+                {/* Cheapest unit per layout (volné) */}
+                {p.cheapest_units_by_layout && p.cheapest_units_by_layout.length > 0 && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                      Nejlevnější volná podle dispozice
+                    </p>
+                    <div className="space-y-0 divide-y divide-slate-100 text-xs text-slate-600">
+                      {p.cheapest_units_by_layout.slice(0, 8).map((u) => (
+                        <a
+                          key={u.unit_external_id ?? u.layout ?? Math.random()}
+                          href={
+                            u.unit_external_id
+                              ? `/units/${encodeURIComponent(u.unit_external_id)}`
+                              : "#"
+                          }
+                          className="flex items-center justify-between gap-2 rounded px-1 py-0.5 transition-colors hover:bg-slate-50"
+                        >
+                          <span className="min-w-0 truncate">
+                            <span className="font-medium text-slate-800">
+                              {formatLayout(u.layout)}
+                            </span>
+                            {u.floor_area_m2 ? ` · ${u.floor_area_m2} m²` : ""}
+                            {u.exterior_area_m2 != null && u.exterior_area_m2 > 0
+                              ? ` · ext ${u.exterior_area_m2} m²`
+                              : ""}
+                          </span>
+                          <span className="shrink-0 font-medium text-slate-800">
+                            {formatCzk(u.price_czk)}
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Footer actions */}
+                <div className="flex items-center gap-2 pt-1 text-[11px]">
+                  {onProjectSelect && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onProjectSelect(selectedProjectId === p.id ? null : p.id)
+                      }
+                      className="rounded border border-slate-300 bg-slate-100 px-2 py-1 font-medium text-slate-700 hover:bg-slate-200"
+                    >
+                      {selectedProjectId === p.id ? "Skrýt POI" : "Nejbližší POI"}
+                    </button>
+                  )}
+                  {p.project_url && (
+                    <a
+                      href={p.project_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-600 hover:underline"
+                      title="Otevře web developera"
+                    >
+                      Web developera ↗
+                    </a>
+                  )}
+                  <Link
+                    href={`/projects/${p.id}`}
+                    className="ml-auto font-medium text-blue-600 hover:underline"
+                  >
+                    Detail →
+                  </Link>
+                </div>
               </div>
             </Popup>
           </Marker>

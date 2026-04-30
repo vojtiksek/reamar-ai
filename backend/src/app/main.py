@@ -18,7 +18,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Query, Header, Reques
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import asc, case, desc, func, or_, and_, select
+from sqlalchemy import asc, case, desc, func, or_, and_, select, text
 import sqlalchemy as sa
 from sqlalchemy.sql.functions import coalesce
 from sqlalchemy.exc import SQLAlchemyError
@@ -6829,7 +6829,41 @@ def list_projects(
     if mode == "map":
         # Slim path: skip per-project ProjectAggregates lookup and the heavy
         # _project_row_to_item (which iterates ~100 catalog columns). Map view
-        # only needs identity, location, and a couple of headline aggregates.
+        # only needs identity, location, headline aggregates, and a per-layout
+        # cheapest-available preview for the popup.
+        page_project_ids = [row[0].id for row in rows]
+
+        # One DISTINCT-ON query → cheapest available unit per (project, layout)
+        # for the whole page. With ix_units_project_id_availability_status and
+        # ix_units_project_id_price_per_m2 indexes this is a few ms.
+        cheapest_by_project: dict[int, list[dict[str, Any]]] = {}
+        if page_project_ids:
+            cheapest_rows = db.execute(
+                text(
+                    """
+                    SELECT DISTINCT ON (project_id, layout)
+                           project_id, layout,
+                           external_id AS unit_external_id,
+                           price_czk, floor_area_m2, exterior_area_m2
+                    FROM units
+                    WHERE project_id = ANY(:pids)
+                      AND lower(availability_status) = 'available'
+                      AND price_czk IS NOT NULL
+                      AND layout IS NOT NULL
+                    ORDER BY project_id, layout, price_czk ASC NULLS LAST
+                    """
+                ),
+                {"pids": page_project_ids},
+            ).mappings().all()
+            for r in cheapest_rows:
+                cheapest_by_project.setdefault(r["project_id"], []).append({
+                    "layout": r["layout"],
+                    "unit_external_id": r["unit_external_id"],
+                    "price_czk": int(r["price_czk"]) if r["price_czk"] is not None else None,
+                    "floor_area_m2": float(r["floor_area_m2"]) if r["floor_area_m2"] is not None else None,
+                    "exterior_area_m2": float(r["exterior_area_m2"]) if r["exterior_area_m2"] is not None else None,
+                })
+
         for row in rows:
             project = row[0]
             agg = getattr(row, "_mapping", {}) or {}
@@ -6838,6 +6872,12 @@ def list_projects(
             lat = project.gps_latitude or agg.get("project_gps_latitude")
             lon = project.gps_longitude or agg.get("project_gps_longitude")
             avg_pm2 = agg.get("avg_price_per_m2_czk")
+            cheapest = cheapest_by_project.get(project.id, [])
+            # Stable layout ordering: 1+kk, 2+kk, …, by leading number then label.
+            cheapest.sort(key=lambda u: (
+                int("".join(ch for ch in (u["layout"] or "") if ch.isdigit()) or "99"),
+                u["layout"] or "",
+            ))
             items.append({
                 "id": project.id,
                 "project": project.name,
@@ -6847,8 +6887,18 @@ def list_projects(
                 "gps_latitude": float(lat) if lat is not None else None,
                 "gps_longitude": float(lon) if lon is not None else None,
                 "avg_price_per_m2_czk": float(avg_pm2) if avg_pm2 is not None else None,
+                "units_total": agg.get("units_total"),
                 "units_available": agg.get("units_available"),
                 "units_reserved": agg.get("units_reserved"),
+                # Meta for popup
+                "completion_date": project.completion_date.isoformat() if project.completion_date else None,
+                "construction_completion": getattr(project, "construction_completion", None),
+                "ride_to_center_min": float(project.ride_to_center_min) if project.ride_to_center_min is not None else None,
+                "public_transport_to_center_min": float(project.public_transport_to_center_min) if project.public_transport_to_center_min is not None else None,
+                "walkability_score": project.walkability_score,
+                "walkability_label": project.walkability_label,
+                "project_url": getattr(project, "project_url", None),
+                "cheapest_units_by_layout": cheapest,
             })
         return ProjectsListResponse(items=items, total=total, limit=limit, offset=offset)
 

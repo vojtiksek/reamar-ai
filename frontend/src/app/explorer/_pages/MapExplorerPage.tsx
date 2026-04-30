@@ -32,6 +32,14 @@ import { useActiveClient } from "@/contexts/ActiveClientContext";
 import { filtersEqual, filtersToProfilePatch } from "@/lib/clientFilters";
 import { ClientModeBar } from "@/components/ClientModeBar";
 
+type CheapestUnit = {
+  layout: string | null;
+  unit_external_id: string | null;
+  price_czk: number | null;
+  floor_area_m2: number | null;
+  exterior_area_m2: number | null;
+};
+
 type ProjectMapItem = {
   id: number;
   project: string | null;
@@ -41,8 +49,17 @@ type ProjectMapItem = {
   avg_price_per_m2_czk?: number | null;
   gps_latitude?: number | null;
   gps_longitude?: number | null;
-   units_available?: number | null;
-   units_reserved?: number | null;
+  units_total?: number | null;
+  units_available?: number | null;
+  units_reserved?: number | null;
+  completion_date?: string | null;
+  construction_completion?: string | null;
+  ride_to_center_min?: number | null;
+  public_transport_to_center_min?: number | null;
+  walkability_score?: number | null;
+  walkability_label?: string | null;
+  project_url?: string | null;
+  cheapest_units_by_layout?: CheapestUnit[];
 };
 
 type ProjectsResponse = {
