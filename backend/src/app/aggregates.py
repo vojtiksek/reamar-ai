@@ -219,6 +219,24 @@ def recompute_project_aggregates(db: Session, project_ids: Sequence[int]) -> Non
         agg.project_last_seen = max(last_seen_vals) if last_seen_vals else None
         agg.max_days_on_market = max(days_on_market_vals) if days_on_market_vals else None
 
+        # Max sold_date napříč jednotkami projektu — používá se v
+        # `not include_archived` filtru (zobraz nedávno prodané + živé).
+        # Bez tohoto pole by cached agg JOIN nemohl pokrýt hot-path.
+        sold_date_vals: list[date] = []
+        for d in unit_dicts:
+            extra2: dict[str, Any] = d.get("data") or {}
+            sd_raw = d.get("sold_date") or extra2.get("sold_date")
+            if sd_raw is None:
+                continue
+            if isinstance(sd_raw, date):
+                sold_date_vals.append(sd_raw)
+                continue
+            try:
+                sold_date_vals.append(date.fromisoformat(str(sd_raw)))
+            except Exception:
+                continue
+        agg.sold_date = max(sold_date_vals) if sold_date_vals else None
+
         # Payment scheme aggregates
         agg.min_payment_contract = min(payment_contract_vals) if payment_contract_vals else None
         agg.max_payment_contract = max(payment_contract_vals) if payment_contract_vals else None

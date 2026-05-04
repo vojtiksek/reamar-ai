@@ -768,6 +768,10 @@ class ProjectAggregates(Base):
     max_payment_occupancy: Mapped[Decimal | None] = mapped_column(Numeric(6, 4), nullable=True)
     # Derived floor info from units
     derived_total_floors: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Max sold_date across project units; NULL = projekt není prodaný / žádné
+    # units s sold_date. Používá se ve filtru `not include_archived`
+    # ("zobraz jen nedávno prodané a živé") přímo v cached JOINu.
+    sold_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         nullable=False,
