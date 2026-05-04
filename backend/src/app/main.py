@@ -494,6 +494,26 @@ VALID_OVERRIDE_FIELDS = OVERRIDEABLE_FIELDS
 VALID_PROJECT_OVERRIDE_FIELDS = PROJECT_OVERRIDEABLE_FIELDS
 PENDING_API_FIELDS = frozenset({"price_czk", "price_per_m2_czk", "availability_status"})
 
+# Pole jejichž změna v unit override mění hodnoty v ProjectAggregates
+# (counts, ceny, plochy, parking, payment, derived floors). Po PUT/DELETE
+# těchto fields voláme recompute_project_aggregates([project_id]) — jinak
+# /projects list zobrazuje staré počty, dokud neproběhne denní ops_runner.
+# Když field NENÍ v této sadě (např. floorplan_url, notes), recompute by
+# byl zbytečný a jen by zatížil DB.
+AGGREGATE_AFFECTING_FIELDS = frozenset({
+    "price_czk",
+    "price_per_m2_czk",
+    "available",
+    "availability_status",  # přepnutí na sold/reserved → změní available_units
+    "floor_area_m2",
+    "floor",  # derived_total_floors
+    "parking_indoor_price_czk",
+    "parking_outdoor_price_czk",
+    "payment_contract",
+    "payment_construction",
+    "payment_occupancy",
+})
+
 
 # ---------------------------------------------------------------------------
 # Broker auth (MVP): email+password with SHA256 hashing and opaque session token.
@@ -7245,7 +7265,7 @@ def put_unit_override(
 
     db.flush()
     # Recompute cached aggregates for this unit's project when relevant fields change
-    if field in ("price_czk", "price_per_m2_czk", "available", "floor_area_m2"):
+    if field in AGGREGATE_AFFECTING_FIELDS:
         recompute_project_aggregates(db, [unit.project_id])
 
     db.commit()
@@ -7278,7 +7298,7 @@ def delete_unit_override(
         db.delete(existing)
 
     db.flush()
-    if field in ("price_czk", "price_per_m2_czk", "available", "floor_area_m2"):
+    if field in AGGREGATE_AFFECTING_FIELDS:
         recompute_project_aggregates(db, [unit.project_id])
 
     db.commit()
@@ -7340,7 +7360,7 @@ def accept_pending_api(
             db.add(UnitOverride(unit_id=unit.id, field="available", value="true" if available_val else "false"))
     db.delete(pending)
     db.flush()
-    if body.field in ("price_czk", "price_per_m2_czk", "availability_status"):
+    if body.field in AGGREGATE_AFFECTING_FIELDS:
         recompute_project_aggregates(db, [unit.project_id])
     db.commit()
     db.refresh(unit)
