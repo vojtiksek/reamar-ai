@@ -6154,31 +6154,34 @@ def _project_agg_cached_subquery():
     """
     from .models import ProjectAggregates as PA
 
-    return select(
-        PA.project_id.label("project_id"),
-        PA.total_units.label("units_total"),
-        PA.available_units.label("units_available"),
-        PA.availability_ratio.label("availability_ratio"),
-        PA.min_price_czk.label("min_price_czk"),
-        PA.avg_price_czk.label("avg_price_czk"),
-        PA.max_price_czk.label("max_price_czk"),
-        PA.avg_price_per_m2_czk.label("avg_price_per_m2_czk"),
-        PA.avg_floor_area_m2.label("avg_floor_area_m2"),
-        PA.min_parking_indoor_price_czk.label("min_parking_indoor_price_czk"),
-        PA.max_parking_indoor_price_czk.label("max_parking_indoor_price_czk"),
-        PA.min_parking_outdoor_price_czk.label("min_parking_outdoor_price_czk"),
-        PA.max_parking_outdoor_price_czk.label("max_parking_outdoor_price_czk"),
-        PA.project_first_seen.label("project_first_seen"),
-        PA.project_last_seen.label("project_last_seen"),
-        PA.max_days_on_market.label("max_days_on_market"),
-        PA.min_payment_contract.label("min_payment_contract"),
-        PA.max_payment_contract.label("max_payment_contract"),
-        PA.min_payment_construction.label("min_payment_construction"),
-        PA.max_payment_construction.label("max_payment_construction"),
-        PA.min_payment_occupancy.label("min_payment_occupancy"),
-        PA.max_payment_occupancy.label("max_payment_occupancy"),
-        PA.derived_total_floors.label("derived_total_floors"),
-        PA.sold_date.label("sold_date"),
+    return (
+        select(
+            PA.project_id.label("project_id"),
+            PA.total_units.label("units_total"),
+            PA.available_units.label("units_available"),
+            PA.availability_ratio.label("availability_ratio"),
+            PA.min_price_czk.label("min_price_czk"),
+            PA.avg_price_czk.label("avg_price_czk"),
+            PA.max_price_czk.label("max_price_czk"),
+            PA.avg_price_per_m2_czk.label("avg_price_per_m2_czk"),
+            PA.avg_floor_area_m2.label("avg_floor_area_m2"),
+            PA.min_parking_indoor_price_czk.label("min_parking_indoor_price_czk"),
+            PA.max_parking_indoor_price_czk.label("max_parking_indoor_price_czk"),
+            PA.min_parking_outdoor_price_czk.label("min_parking_outdoor_price_czk"),
+            PA.max_parking_outdoor_price_czk.label("max_parking_outdoor_price_czk"),
+            PA.project_first_seen.label("project_first_seen"),
+            PA.project_last_seen.label("project_last_seen"),
+            PA.max_days_on_market.label("max_days_on_market"),
+            PA.min_payment_contract.label("min_payment_contract"),
+            PA.max_payment_contract.label("max_payment_contract"),
+            PA.min_payment_construction.label("min_payment_construction"),
+            PA.max_payment_construction.label("max_payment_construction"),
+            PA.min_payment_occupancy.label("min_payment_occupancy"),
+            PA.max_payment_occupancy.label("max_payment_occupancy"),
+            PA.derived_total_floors.label("derived_total_floors"),
+            PA.sold_date.label("sold_date"),
+        )
+        .subquery()
     )
 
 
