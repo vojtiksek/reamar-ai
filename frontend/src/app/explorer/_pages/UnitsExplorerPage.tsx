@@ -1002,48 +1002,71 @@ export default function Home() {
         : validSortBy;
 
   useEffect(() => {
-    const controller = new AbortController();
-    // Debounce 250 ms — během psaní/scrollování slideru rychle se měnící
-    // dependencies (filters object) by jinak vystřelily request na každý keystroke.
-    // Toast notifikace se ukazuje pozdě, protože JS hlavní vlákno blokuje
-    // JSON.parse + render obří odpovědi /units. Debounce + AbortController spolu
-    // zaručují, že běží maximálně 1 request a ostatní jsou zrušeny.
+    const dataController = new AbortController();
+    const countController = new AbortController();
+    const summaryController = new AbortController();
+    // Debounce 250 ms + paralelní 3 fetche:
+    // 1) Hlavní data — `with_count=false&with_summary=false` (rychlé, jen řádky)
+    // 2) Count — `with_count=true&with_summary=false&limit=1` paralelně
+    // 3) Summary aggregates — `with_summary=true&limit=1` paralelně
+    // Server time = MAX(data, count, summary) místo SUM. Tabulka se vyrenderuje
+    // jakmile dorazí data; total a summary se doplní hned jak přijdou.
     const timer = setTimeout(() => {
       setLoading(true);
       setError(null);
       const effectiveFilters = showOnlyPendingApi
         ? { ...filters, availability: undefined }
         : filters;
-      let qs = buildUnitsQuery(
+      const baseQs = buildUnitsQuery(
         effectiveFilters,
         supportedFilterKeys,
         { limit: safeLimit, offset },
         { sort_by: backendSortBy, sort_dir: validSortDir }
       );
-      // Pokud máme v URL polygon, pošleme jeho obdélníkový obal na backend
-      // jako min/max latitude/longitude, aby se filtr aplikoval globálně před paginačním limitem.
+      const countBaseQs = buildUnitsQuery(
+        effectiveFilters,
+        supportedFilterKeys,
+        { limit: 1, offset: 0 },
+        { sort_by: backendSortBy, sort_dir: validSortDir }
+      );
+      let geoSuffix = "";
       if (polygon && polygon.trim() !== "") {
         const points = decodePolygon(polygon);
         const bounds = getPolygonBounds(points);
         if (bounds) {
           const { minLat, maxLat, minLng, maxLng } = bounds;
-          qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+          geoSuffix = `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
         }
       }
-      if (includeArchived) {
-        qs += "&include_archived=1";
-      }
-      if (showOnlyPendingApi) {
-        qs += "&pending_api=1";
-      }
-      fetch(`${API_BASE}/units?${qs}`, { signal: controller.signal })
+      const extraSuffix =
+        (includeArchived ? "&include_archived=1" : "") +
+        (showOnlyPendingApi ? "&pending_api=1" : "");
+      const dataQs = `${baseQs}${geoSuffix}${extraSuffix}&with_count=false&with_summary=false`;
+      const countQs = `${countBaseQs}${geoSuffix}${extraSuffix}&with_count=true&with_summary=false`;
+      const summaryQs = `${countBaseQs}${geoSuffix}${extraSuffix}&with_count=false&with_summary=true`;
+
+      fetch(`${API_BASE}/units?${dataQs}`, { signal: dataController.signal })
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
         .then((data: UnitsListResponse) => {
           const items = data.items ?? [];
           setUnits(items);
-          setTotal(data.total ?? items.length);
+          setTotal((prev) => (prev > 0 ? prev : items.length));
+        })
+        .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
+        .finally(() => setLoading(false));
+
+      fetch(`${API_BASE}/units?${countQs}`, { signal: countController.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((data: UnitsListResponse) => {
+          if (typeof data.total === "number" && data.total >= 0) setTotal(data.total);
+        })
+        .catch(() => { /* count je best-effort */ });
+
+      fetch(`${API_BASE}/units?${summaryQs}`, { signal: summaryController.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((data: UnitsListResponse) => {
           setSummaryOverride({
-            total: data.total ?? items.length,
+            total: typeof data.total === "number" && data.total >= 0 ? data.total : 0,
             averagePrice: data.average_price_czk ?? null,
             averagePricePerM2: data.average_price_per_m2_czk ?? null,
             availableCount: data.available_count ?? 0,
@@ -1051,12 +1074,13 @@ export default function Home() {
             averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
           });
         })
-        .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
-        .finally(() => setLoading(false));
+        .catch(() => { /* summary je best-effort */ });
     }, 250);
     return () => {
       clearTimeout(timer);
-      controller.abort();
+      dataController.abort();
+      countController.abort();
+      summaryController.abort();
     };
   }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger, showOnlyPendingApi, includeArchived]);
 

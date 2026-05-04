@@ -5090,6 +5090,7 @@ def list_units(
     offset: Annotated[int, Query(ge=0, description="Skip N items")] = 0,
     mode: Annotated[str, Query(description="Response shape. 'full' = UnitResponse with overrides + project enrichment (default). 'map' = id, external_id, project_id, project_name, gps, price, layout, status, area — ~20× smaller payload, no overrides applied.")] = "full",
     with_summary: Annotated[bool, Query(description="Compute global avg/sum aggregates over all matching units (across pages). Skip when caller doesn't need the summary panel — saves a heavy aggregate query.")] = True,
+    with_count: Annotated[bool, Query(description="Compute total row count (COUNT(*) over the filtered base). Skip when caller fetches count separately in a parallel request — saves the slowest query of the endpoint.")] = True,
     available: Annotated[bool | None, Query(description="Filter by available")] = None,
     availability: Annotated[list[str] | None, Query(description="Filter by availability_status (any of)")] = None,
     min_price: Annotated[int | None, Query(ge=0)] = None,
@@ -5285,7 +5286,14 @@ def list_units(
         )
         base = base.where(Unit.project_id.in_(active_projects_subq.subquery()))
     base_subq = base.subquery()
-    total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
+    # COUNT(*) přes filtrovanou base je nejpomalejší část endpointu (full scan
+    # po LEFT JOINech projekt/overrides). Volající, který count zná z paralelního
+    # requestu nebo ho nepotřebuje (mapa, infinite scroll), ho vypne přes
+    # `with_count=false` a dostane total=-1.
+    if with_count:
+        total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
+    else:
+        total = -1
 
     # Globální agregace pro všechny jednotky odpovídající filtrům (bez limit/offset).
     # Vyžaduje agregaci přes celou base_subq (může jít o desítky tisíc řádků), což

@@ -200,7 +200,12 @@ export function installErrorReporter(): void {
       }
       return res;
     } catch (err: unknown) {
-      if (!isReporter && isOurBackend) {
+      // AbortError = záměrné cancellation (debounce filtrů, unmount komponenty,
+      // navigace), ne bug. Nezahlcovat /admin/errors.
+      const isAbort = err instanceof DOMException
+        ? err.name === "AbortError"
+        : (err as { name?: string } | null)?.name === "AbortError";
+      if (!isReporter && isOurBackend && !isAbort) {
         const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         send({
           message: `Network error on ${method} ${shortPath(urlStr)}: ${message}`,

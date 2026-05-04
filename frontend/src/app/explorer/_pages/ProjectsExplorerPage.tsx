@@ -650,46 +650,68 @@ export default function ProjectsPage() {
   }, [searchParams, sortBy, sortDir, filters, limit, offset, polygon, syncToUrl]);
 
   // Fetch projects list (paginated, server-side sort, with filters).
-  // Debounce 250 ms: filtry se mění na keystroke/slider a bez debounce
-  // by každá změna vystřelila request, který blokuje main thread při parse.
+  // - Debounce 250 ms: filtry se mění na keystroke/slider a bez debounce
+  //   by každá změna vystřelila request, který blokuje main thread při parse.
+  // - Data fetch jede s `with_count=false` (komentář v backendu: COUNT je
+  //   nejpomalejší část /projects). Total fetchujeme PARALELNĚ druhým requestem
+  //   s `with_count=true&limit=1`, takže server time = MAX(data, count) místo
+  //   SUM. Tabulka se vyrenderuje jakmile dorazí data; "Strana 1 z N" se
+  //   doplní když přijde count.
   useEffect(() => {
-    const controller = new AbortController();
+    const dataController = new AbortController();
+    const countController = new AbortController();
     const timer = setTimeout(() => {
       setLoading(true);
       setError(null);
-      let qs = buildUnitsQuery(
+      const baseQs = buildUnitsQuery(
         filters,
         supportedFilterKeys,
         { limit: safeLimit, offset },
         { sort_by: effectiveSortBy, sort_dir: sortDir }
       );
-      // Pokud je v URL polygon (poly), pošli jeho obdélníkový obal na backend,
-      // aby se geografický filtr aplikoval globálně před limitem/offsetem.
+      let geoSuffix = "";
       if (polygon && polygon.trim() !== "") {
         const points = decodePolygon(polygon);
         const bounds = getPolygonBounds(points);
         if (bounds) {
           const { minLat, maxLat, minLng, maxLng } = bounds;
-          qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+          geoSuffix = `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
         }
       }
-      fetch(`${API_BASE}/projects?${qs}`, { signal: controller.signal })
+      const dataQs = `${baseQs}${geoSuffix}&with_count=false`;
+      const countQs = buildUnitsQuery(
+        filters,
+        supportedFilterKeys,
+        { limit: 1, offset: 0 },
+        { sort_by: effectiveSortBy, sort_dir: sortDir }
+      ) + geoSuffix + "&with_count=true";
+
+      // Hlavní data fetch — render tabulky závisí jen na něm.
+      fetch(`${API_BASE}/projects?${dataQs}`, { signal: dataController.signal })
         .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
         .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
           const rows: ProjectItem[] = Array.isArray(json)
             ? (json as ProjectItem[])
             : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
-          const totalValue =
-            json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
           setProjects(rows);
-          setTotal(totalValue);
+          // Než dojde count, ukaž alespoň počet aktuálně načtených — UI nezobrazí "?".
+          setTotal((prev) => (prev > 0 ? prev : rows.length));
         })
         .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
         .finally(() => setLoading(false));
+
+      // Paralelní count — neblokuje render, neukazuje vlastní spinner.
+      fetch(`${API_BASE}/projects?${countQs}`, { signal: countController.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((json: any) => {
+          if (typeof json?.total === "number") setTotal(json.total);
+        })
+        .catch(() => { /* count je best-effort — bez něj UI funguje dál */ });
     }, 250);
     return () => {
       clearTimeout(timer);
-      controller.abort();
+      dataController.abort();
+      countController.abort();
     };
   }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon, refetchTrigger]);
 
