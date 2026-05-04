@@ -5081,14 +5081,15 @@ def get_units_filters(db: DbSession) -> dict:
 
 @app.get(
     "/units",
-    response_model=UnitsListResponse,
     summary="List units with pagination and filters",
-    description="Returns a paginated list of units. Optional query params: limit (1–1000, default 100), offset, available, min_price, max_price, min_price_per_m2, max_price_per_m2, layout, district, heating, windows, permit_regular, renovation, min_floor_area, max_floor_area, sort_by, sort_dir. Response: total (count before pagination), items (UnitResponse with overrides applied).",
+    description="Returns a paginated list of units. Optional query params: limit (1–1000, default 100), offset, available, min_price, max_price, min_price_per_m2, max_price_per_m2, layout, district, heating, windows, permit_regular, renovation, min_floor_area, max_floor_area, sort_by, sort_dir, mode, with_summary. Response: total (count before pagination), items (UnitResponse with overrides applied). With mode=map returns a slim payload (~20× smaller) suitable for map markers; with with_summary=false skips the global avg/sum aggregates query (saves ~0.5–2s on large filter sets).",
 )
 def list_units(
     db: DbSession,
     limit: Annotated[int, Query(ge=1, le=1000, description="Page size (1–1000)")] = 100,
     offset: Annotated[int, Query(ge=0, description="Skip N items")] = 0,
+    mode: Annotated[str, Query(description="Response shape. 'full' = UnitResponse with overrides + project enrichment (default). 'map' = id, external_id, project_id, project_name, gps, price, layout, status, area — ~20× smaller payload, no overrides applied.")] = "full",
+    with_summary: Annotated[bool, Query(description="Compute global avg/sum aggregates over all matching units (across pages). Skip when caller doesn't need the summary panel — saves a heavy aggregate query.")] = True,
     available: Annotated[bool | None, Query(description="Filter by available")] = None,
     availability: Annotated[list[str] | None, Query(description="Filter by availability_status (any of)")] = None,
     min_price: Annotated[int | None, Query(ge=0)] = None,
@@ -5167,7 +5168,7 @@ def list_units(
     pending_api: Annotated[bool, Query(description="Return only units that have pending API update proposals")] = False,
     sort_by: Annotated[str, Query(description="Sort field")] = "price_per_m2_czk",
     sort_dir: Annotated[str, Query(description="Sort direction")] = "asc",
-) -> UnitsListResponse:
+) -> Any:
     if sort_by not in ALLOWED_SORT_BY:
         raise HTTPException(
             status_code=422,
@@ -5179,6 +5180,8 @@ def list_units(
             status_code=422,
             detail="sort_dir must be asc or desc",
         )
+    if mode not in ("full", "map"):
+        raise HTTPException(status_code=422, detail="mode must be 'full' or 'map'")
 
     base = _build_units_query(
         available=available,
@@ -5285,43 +5288,113 @@ def list_units(
     total = db.execute(select(func.count()).select_from(base_subq)).scalar_one()
 
     # Globální agregace pro všechny jednotky odpovídající filtrům (bez limit/offset).
-    summary_row = db.execute(
-        select(
-            func.avg(base_subq.c.price_czk),
-            func.avg(base_subq.c.price_per_m2_czk),
-            func.sum(case((base_subq.c.available.is_(True), 1), else_=0)),
-            # Průměrná lokální odchylka (počítaná jen z jednotek na trhu) – používáme 1 km a 2 km.
-            func.avg(
-                case(
-                    (
-                        or_(
-                            base_subq.c.available.is_(True),
-                            base_subq.c.availability_status.in_(["available", "reserved"]),
+    # Vyžaduje agregaci přes celou base_subq (může jít o desítky tisíc řádků), což
+    # je zdaleka nejdražší část endpointu pro plné filtry. Volající, který panel
+    # se souhrnem nepotřebuje (mapa, infinite scroll, mode=map), ji vypne přes
+    # `with_summary=false`.
+    avg_price_czk: float | None = None
+    avg_price_per_m2_czk: float | None = None
+    available_count: int = 0
+    avg_local_1000: float | None = None
+    avg_local_2000: float | None = None
+    if with_summary and mode == "full":
+        summary_row = db.execute(
+            select(
+                func.avg(base_subq.c.price_czk),
+                func.avg(base_subq.c.price_per_m2_czk),
+                func.sum(case((base_subq.c.available.is_(True), 1), else_=0)),
+                # Průměrná lokální odchylka (počítaná jen z jednotek na trhu) – používáme 1 km a 2 km.
+                func.avg(
+                    case(
+                        (
+                            or_(
+                                base_subq.c.available.is_(True),
+                                base_subq.c.availability_status.in_(["available", "reserved"]),
+                            ),
+                            base_subq.c.local_price_diff_1000m,
                         ),
-                        base_subq.c.local_price_diff_1000m,
-                    ),
-                    else_=None,
-                )
-            ),
-            func.avg(
-                case(
-                    (
-                        or_(
-                            base_subq.c.available.is_(True),
-                            base_subq.c.availability_status.in_(["available", "reserved"]),
+                        else_=None,
+                    )
+                ),
+                func.avg(
+                    case(
+                        (
+                            or_(
+                                base_subq.c.available.is_(True),
+                                base_subq.c.availability_status.in_(["available", "reserved"]),
+                            ),
+                            base_subq.c.local_price_diff_2000m,
                         ),
-                        base_subq.c.local_price_diff_2000m,
-                    ),
-                    else_=None,
-                )
-            ),
+                        else_=None,
+                    )
+                ),
+            )
+        ).first()
+        avg_price_czk = float(summary_row[0]) if summary_row and summary_row[0] is not None else None
+        avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
+        available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
+        avg_local_1000 = float(summary_row[3]) if summary_row and summary_row[3] is not None else None
+        avg_local_2000 = float(summary_row[4]) if summary_row and summary_row[4] is not None else None
+
+    # Fast-path: mode=map vrací slim payload pro mapové markery — bez overrides,
+    # bez project enrichmentu, bez pending_api. ~20× menší a bez post-fetch SELECTů.
+    if mode == "map":
+        slim_stmt = (
+            select(
+                Unit.id,
+                Unit.external_id,
+                Unit.project_id,
+                Unit.gps_latitude,
+                Unit.gps_longitude,
+                Unit.layout,
+                Unit.availability_status,
+                Unit.available,
+                Unit.price_czk,
+                Unit.price_per_m2_czk,
+                Unit.floor_area_m2,
+                Unit.exterior_area_m2,
+                Unit.floor,
+                Project.name.label("project_name"),
+                Project.gps_latitude.label("project_gps_latitude"),
+                Project.gps_longitude.label("project_gps_longitude"),
+            )
+            .select_from(base_subq)
+            .join(Unit, Unit.id == base_subq.c.id)
+            .join(Project, Project.id == Unit.project_id)
+            .order_by(Unit.id.asc())
+            .offset(offset)
+            .limit(limit)
         )
-    ).first()
-    avg_price_czk = float(summary_row[0]) if summary_row and summary_row[0] is not None else None
-    avg_price_per_m2_czk = float(summary_row[1]) if summary_row and summary_row[1] is not None else None
-    available_count = int(summary_row[2]) if summary_row and summary_row[2] is not None else 0
-    avg_local_1000 = float(summary_row[3]) if summary_row and summary_row[3] is not None else None
-    avg_local_2000 = float(summary_row[4]) if summary_row and summary_row[4] is not None else None
+        rows = db.execute(slim_stmt).mappings().all()
+        items_payload = [
+            {
+                "id": r["id"],
+                "external_id": r["external_id"],
+                "project_id": r["project_id"],
+                "project_name": r["project_name"],
+                "gps_latitude": float(r["gps_latitude"]) if r["gps_latitude"] is not None else (
+                    float(r["project_gps_latitude"]) if r["project_gps_latitude"] is not None else None
+                ),
+                "gps_longitude": float(r["gps_longitude"]) if r["gps_longitude"] is not None else (
+                    float(r["project_gps_longitude"]) if r["project_gps_longitude"] is not None else None
+                ),
+                "layout": r["layout"],
+                "availability_status": r["availability_status"],
+                "available": bool(r["available"]),
+                "price_czk": int(r["price_czk"]) if r["price_czk"] is not None else None,
+                "price_per_m2_czk": int(r["price_per_m2_czk"]) if r["price_per_m2_czk"] is not None else None,
+                "floor_area_m2": float(r["floor_area_m2"]) if r["floor_area_m2"] is not None else None,
+                "exterior_area_m2": float(r["exterior_area_m2"]) if r["exterior_area_m2"] is not None else None,
+                "floor": r["floor"],
+            }
+            for r in rows
+        ]
+        return JSONResponse(content={
+            "items": items_payload,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        })
 
     # Řazení: část polí je přímo na Unit, část jsou projektové atributy (Project)
     # a část jsou projektové agregáty (ProjectAggregates).

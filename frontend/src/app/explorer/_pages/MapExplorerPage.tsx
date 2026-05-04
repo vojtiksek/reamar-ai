@@ -145,6 +145,12 @@ export default function ProjectsMapPage() {
 
   useEffect(() => {
     let cancelled = false;
+    // Debounce 250 ms — filtry v URL se mění na každý keystroke ve filter panelu
+    // a chunked load /projects (mode=map) je dost velký na to, aby si zasloužil
+    // pauzu před spuštěním. Polygon i searchParams jdou skrz tentýž timer.
+    const timer = setTimeout(() => {
+      void loadAll();
+    }, 250);
     async function loadAll() {
       setLoading(true);
       setError(null);
@@ -218,9 +224,9 @@ export default function ProjectsMapPage() {
         if (!cancelled) setLoading(false);
       }
     }
-    void loadAll();
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [searchParams?.toString(), polygon]);
 

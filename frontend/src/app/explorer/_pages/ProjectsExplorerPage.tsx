@@ -649,41 +649,48 @@ export default function ProjectsPage() {
     }
   }, [searchParams, sortBy, sortDir, filters, limit, offset, polygon, syncToUrl]);
 
-  // Fetch projects list (paginated, server-side sort, with filters)
+  // Fetch projects list (paginated, server-side sort, with filters).
+  // Debounce 250 ms: filtry se mění na keystroke/slider a bez debounce
+  // by každá změna vystřelila request, který blokuje main thread při parse.
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    let qs = buildUnitsQuery(
-      filters,
-      supportedFilterKeys,
-      { limit: safeLimit, offset },
-      { sort_by: effectiveSortBy, sort_dir: sortDir }
-    );
-    // Pokud je v URL polygon (poly), pošli jeho obdélníkový obal na backend,
-    // aby se geografický filtr aplikoval globálně před limitem/offsetem.
-    if (polygon && polygon.trim() !== "") {
-      const points = decodePolygon(polygon);
-      const bounds = getPolygonBounds(points);
-      if (bounds) {
-        const { minLat, maxLat, minLng, maxLng } = bounds;
-        qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      let qs = buildUnitsQuery(
+        filters,
+        supportedFilterKeys,
+        { limit: safeLimit, offset },
+        { sort_by: effectiveSortBy, sort_dir: sortDir }
+      );
+      // Pokud je v URL polygon (poly), pošli jeho obdélníkový obal na backend,
+      // aby se geografický filtr aplikoval globálně před limitem/offsetem.
+      if (polygon && polygon.trim() !== "") {
+        const points = decodePolygon(polygon);
+        const bounds = getPolygonBounds(points);
+        if (bounds) {
+          const { minLat, maxLat, minLng, maxLng } = bounds;
+          qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+        }
       }
-    }
-    fetch(`${API_BASE}/projects?${qs}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
-        const rows: ProjectItem[] = Array.isArray(json)
-          ? (json as ProjectItem[])
-          : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
-        const totalValue =
-          json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
-        setProjects(rows);
-        setTotal(totalValue);
-      })
-      .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
+      fetch(`${API_BASE}/projects?${qs}`, { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((json: ProjectsOverviewResponse | ProjectItem[]) => {
+          const rows: ProjectItem[] = Array.isArray(json)
+            ? (json as ProjectItem[])
+            : (((json as any)?.items ?? (json as any)?.itimes) as ProjectItem[] | undefined) ?? [];
+          const totalValue =
+            json && typeof (json as any)?.total === "number" ? (json as any).total : rows.length;
+          setProjects(rows);
+          setTotal(totalValue);
+        })
+        .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon, refetchTrigger]);
 
   const visibleColumns = useMemo(() => {

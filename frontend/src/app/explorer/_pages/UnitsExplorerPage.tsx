@@ -1003,52 +1003,62 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true);
-    setError(null);
-    const effectiveFilters = showOnlyPendingApi
-      ? { ...filters, availability: undefined }
-      : filters;
-    let qs = buildUnitsQuery(
-      effectiveFilters,
-      supportedFilterKeys,
-      { limit: safeLimit, offset },
-      { sort_by: backendSortBy, sort_dir: validSortDir }
-    );
-    // Pokud máme v URL polygon, pošleme jeho obdélníkový obal na backend
-    // jako min/max latitude/longitude, aby se filtr aplikoval globálně před paginačním limitem.
-    if (polygon && polygon.trim() !== "") {
-      const points = decodePolygon(polygon);
-      const bounds = getPolygonBounds(points);
-      if (bounds) {
-        const { minLat, maxLat, minLng, maxLng } = bounds;
-        qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+    // Debounce 250 ms — během psaní/scrollování slideru rychle se měnící
+    // dependencies (filters object) by jinak vystřelily request na každý keystroke.
+    // Toast notifikace se ukazuje pozdě, protože JS hlavní vlákno blokuje
+    // JSON.parse + render obří odpovědi /units. Debounce + AbortController spolu
+    // zaručují, že běží maximálně 1 request a ostatní jsou zrušeny.
+    const timer = setTimeout(() => {
+      setLoading(true);
+      setError(null);
+      const effectiveFilters = showOnlyPendingApi
+        ? { ...filters, availability: undefined }
+        : filters;
+      let qs = buildUnitsQuery(
+        effectiveFilters,
+        supportedFilterKeys,
+        { limit: safeLimit, offset },
+        { sort_by: backendSortBy, sort_dir: validSortDir }
+      );
+      // Pokud máme v URL polygon, pošleme jeho obdélníkový obal na backend
+      // jako min/max latitude/longitude, aby se filtr aplikoval globálně před paginačním limitem.
+      if (polygon && polygon.trim() !== "") {
+        const points = decodePolygon(polygon);
+        const bounds = getPolygonBounds(points);
+        if (bounds) {
+          const { minLat, maxLat, minLng, maxLng } = bounds;
+          qs += `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
+        }
       }
-    }
-    if (includeArchived) {
-      qs += "&include_archived=1";
-    }
-    if (showOnlyPendingApi) {
-      qs += "&pending_api=1";
-    }
-    fetch(`${API_BASE}/units?${qs}`, { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: UnitsListResponse) => {
-        const items = data.items ?? [];
-        setUnits(items);
-        setTotal(data.total ?? items.length);
-        setSummaryOverride({
-          total: data.total ?? items.length,
-          averagePrice: data.average_price_czk ?? null,
-          averagePricePerM2: data.average_price_per_m2_czk ?? null,
-          availableCount: data.available_count ?? 0,
-          averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
-          averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
-        });
-      })
-      .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
-      .finally(() => setLoading(false));
-    return () => controller.abort();
-  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger, showOnlyPendingApi]);
+      if (includeArchived) {
+        qs += "&include_archived=1";
+      }
+      if (showOnlyPendingApi) {
+        qs += "&pending_api=1";
+      }
+      fetch(`${API_BASE}/units?${qs}`, { signal: controller.signal })
+        .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
+        .then((data: UnitsListResponse) => {
+          const items = data.items ?? [];
+          setUnits(items);
+          setTotal(data.total ?? items.length);
+          setSummaryOverride({
+            total: data.total ?? items.length,
+            averagePrice: data.average_price_czk ?? null,
+            averagePricePerM2: data.average_price_per_m2_czk ?? null,
+            availableCount: data.available_count ?? 0,
+            averageLocalDiff1000: data.average_local_price_diff_1000m ?? null,
+            averageLocalDiff2000: data.average_local_price_diff_2000m ?? null,
+          });
+        })
+        .catch((e) => { if (e?.name !== "AbortError") setError(e instanceof Error ? e.message : "Chyba"); })
+        .finally(() => setLoading(false));
+    }, 250);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [filters, safeLimit, offset, backendSortBy, validSortDir, supportedFilterKeys, polygon, refetchTrigger, showOnlyPendingApi, includeArchived]);
 
   const isClientOverridden =
     activeClient != null && !filtersEqual(filters, activeClient.derivedFilters);
