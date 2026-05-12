@@ -3,14 +3,6 @@
     {
       "path": "/api/cron/daily-ops",
       "schedule": "0 3 * * *"
-    },
-    {
-      "path": "/api/cron/probe",
-      "schedule": "*/5 * * * *"
-    },
-    {
-      "path": "/api/cron/warmup",
-      "schedule": "*/4 * * * *"
     }
   ]
 }
