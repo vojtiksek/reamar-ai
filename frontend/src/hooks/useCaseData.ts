@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { API_BASE, deleteRecommendationFeedback, putRecommendationFeedback } from "@/lib/api";
 import { profileToFilters } from "@/lib/clientFilters";
@@ -37,11 +38,19 @@ import {
   type WorkingFilterKey,
 } from "@/lib/clientMode";
 
+// Persisted react-query cache keys for case data. Whatever lands in these
+// keys is automatically mirrored to IndexedDB by PersistQueryClientProvider,
+// so a hard reload / navigation back to a previously-opened case can render
+// from cache before the network request returns.
+const recsCacheKey = (clientId: number) => ["case", clientId, "recommendations"] as const;
+const profileCacheKey = (clientId: number) => ["case", clientId, "profile"] as const;
+
 export function useCaseData() {
   const params = useParams();
   const router = useRouter();
   const clientId = Number(params?.id);
   const { activate, activeClient } = useActiveClient();
+  const queryClient = useQueryClient();
 
   const [client, setClient] = useState<ClientSummary | null>(null);
   const [profile, setProfile] = useState<ClientProfile | null>(null);
@@ -254,7 +263,22 @@ export function useCaseData() {
       setLoading(false);
       return;
     }
-    setLoading(true);
+
+    // Seed UI from persisted cache (IndexedDB via QueryProvider) so the page
+    // renders instantly. Network fetch below still runs and overwrites the
+    // state with fresh data — stale-while-revalidate.
+    const cachedRecs = queryClient.getQueryData<RecommendationItem[]>(recsCacheKey(clientId));
+    const cachedProfile = queryClient.getQueryData<ClientProfile | null>(profileCacheKey(clientId));
+    if (cachedRecs && cachedRecs.length > 0) {
+      setRecs(cachedRecs);
+      // Don't show skeleton: we already have something to display while refreshing.
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
+    if (cachedProfile) {
+      setProfile(cachedProfile);
+    }
 
     const controller = new AbortController();
     const authHeaders = { Authorization: `Bearer ${token}` };
@@ -370,7 +394,23 @@ export function useCaseData() {
       });
 
     return () => { controller.abort(); };
-  }, [clientId, token, hydrated]);
+  }, [clientId, token, hydrated, queryClient]);
+
+  // Mirror `recs` and `profile` to the persisted react-query cache whenever
+  // they change. This catches the initial fetch result AND every optimistic
+  // mutation (pin, like/dislike, override edit). Next visit to this case
+  // renders the cached snapshot before the network call returns.
+  useEffect(() => {
+    if (!clientId) return;
+    if (recs.length > 0) {
+      queryClient.setQueryData(recsCacheKey(clientId), recs);
+    }
+  }, [clientId, recs, queryClient]);
+
+  useEffect(() => {
+    if (!clientId || !profile) return;
+    queryClient.setQueryData(profileCacheKey(clientId), profile);
+  }, [clientId, profile, queryClient]);
 
   const buildProfileBody = useCallback((): ClientProfile => {
     // Auto-derive method flags from actual data — broker doesn't toggle these manually
