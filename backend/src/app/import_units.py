@@ -300,7 +300,13 @@ def apply_unit_data_mapped(
     only_if_present: bool = False,
 ) -> None:
     """Store full JSON in raw_json and set every mapped column from unit_data. Do not overwrite with None when only_if_present."""
-    unit.raw_json = dict(unit_data)
+    # JSONB is opaque to SQLAlchemy's attribute history — `unit.raw_json = dict(...)`
+    # creates a new dict identity even when content is identical, which marks the
+    # row dirty and triggers an UPDATE every import. Skip if equal to avoid 45k
+    # no-op UPDATEs/day that bloat the table and saturate autovacuum.
+    new_raw = dict(unit_data)
+    if unit.raw_json != new_raw:
+        unit.raw_json = new_raw
     columns = _get_unit_data_columns()
     table = Unit.__table__
     for key, value in unit_data.items():
@@ -556,7 +562,10 @@ def apply_unit_data_respecting_overrides(
         * pokud je na poli override → rozdíl API vs. efektivní ukládáme do pending_list
         * pokud override není → hodnotu z API normálně zapíšeme (bez pending)
     """
-    unit.raw_json = dict(unit_data)
+    # Viz komentář v apply_unit_data_mapped — JSONB attribute history.
+    new_raw = dict(unit_data)
+    if unit.raw_json != new_raw:
+        unit.raw_json = new_raw
     table = Unit.__table__
 
     for key, value in unit_data.items():
