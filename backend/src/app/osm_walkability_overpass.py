@@ -15,7 +15,16 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Multiple Overpass endpoints — try in order, fall back on any non-2xx.
+# The main `overpass-api.de` started returning 406 around 2026-05-12 even
+# for valid POST bodies; the Kumi and z.overpass mirrors stayed up. Keeping
+# all three lets us survive any single mirror being down without manual
+# intervention.
+OVERPASS_URLS = (
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+)
 BBOX_PRAHA = (49.95, 14.1, 50.2, 14.8)
 TIMEOUT_S = 120
 
@@ -26,27 +35,23 @@ def _bbox_str() -> str:
 
 
 def _overpass_request(query: str) -> list[dict[str, Any]]:
-    """POST query to Overpass; returns elements. Retry once on failure."""
+    """POST query to Overpass; try mirrors in order. Returns elements."""
     last_error: Exception | None = None
-    for attempt in range(2):
+    for url in OVERPASS_URLS:
         try:
             resp = requests.post(
-                OVERPASS_URL,
+                url,
                 data={"data": query},
                 timeout=TIMEOUT_S,
-                headers={"Accept": "application/json"},
             )
             resp.raise_for_status()
             data = resp.json()
             return (data.get("elements") or []) if isinstance(data, dict) else []
         except requests.exceptions.RequestException as e:
             last_error = e
-            if attempt == 0:
-                logger.warning("Overpass walkability request failed (%s), retrying in 15s...", e)
-                time.sleep(15)
-                continue
-            raise
-    raise last_error or RuntimeError("Overpass request failed")
+            logger.warning("Overpass mirror %s failed (%s), trying next", url, e)
+            continue
+    raise last_error or RuntimeError("All Overpass mirrors failed")
 
 
 def _element_to_point_geom(element: dict[str, Any]) -> tuple[float, float] | None:

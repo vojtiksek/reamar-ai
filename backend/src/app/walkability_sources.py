@@ -52,29 +52,53 @@ def _insert_poi_rows(
 
 def refresh_walkability_sources(db: Session) -> dict[str, Any]:
     """
-    Truncate all walkability POI tables (from WALKABILITY_DOWNLOADERS), download from Overpass, insert.
-    Single source of truth: no hardcoded table list; future categories are included automatically.
+    Download POI from Overpass first, only then TRUNCATE + insert. Prevents the
+    failure mode where TRUNCATE succeeds but the network call fails (or
+    returns empty) — that wiped all POI tables during the 2026-05-12 cron and
+    left walkability at 0 for the whole catalogue.
+
+    A table is only TRUNCATEd when its download returned rows; tables whose
+    download failed keep their previous content. The whole flow is one
+    transaction so a mid-flight error rolls back cleanly.
+
     Returns dict with source_counts, warnings, elapsed_seconds.
     """
     start = time.perf_counter()
     tables = list(WALKABILITY_DOWNLOADERS.keys())
-    for t in tables:
-        db.execute(text(f"TRUNCATE {t} RESTART IDENTITY"))
+
+    # 1) Download first so a network failure doesn't wipe existing data.
     data = download_all_walkability_poi()
+
     source_counts: dict[str, int] = {}
     warnings: list[str] = []
+    skipped: list[str] = []
     for table_name in tables:
         rows = data.get(table_name, [])
+        if not rows:
+            # Don't touch the existing table — keep yesterday's POI rather
+            # than wipe to zero. Warn so daily ops surfaces the partial fail.
+            warnings.append(
+                f"{table_name}: download returned 0 rows, keeping existing data"
+            )
+            logger.warning(
+                "Walkability download returned 0 rows for %s; existing rows kept",
+                table_name,
+            )
+            # Report current row count so the run summary still has a number.
+            existing = db.execute(text(f"SELECT count(*) FROM {table_name}")).scalar()
+            source_counts[table_name] = int(existing or 0)
+            skipped.append(table_name)
+            continue
+        db.execute(text(f"TRUNCATE {table_name} RESTART IDENTITY"))
         count = _insert_poi_rows(db, table_name, rows)
         source_counts[table_name] = count
-        if count == 0:
-            warnings.append(f"{table_name}: 0 rows (table empty after refresh)")
-            logger.warning("Walkability source table %s has 0 rows after refresh", table_name)
+
     db.commit()
     elapsed = time.perf_counter() - start
     return {
         "source_counts": source_counts,
         "warnings": warnings,
+        "skipped_tables": skipped,
         "elapsed_seconds": round(elapsed, 2),
     }
 
