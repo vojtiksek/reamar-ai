@@ -725,23 +725,37 @@ def compute_project_walkability(db: Session, project: Project) -> None:
                 {"walking_distance_to_tram_stop_m": "distance_to_tram_stop_m", "walking_distance_to_bus_stop_m": "distance_to_bus_stop_m", "walking_distance_to_metro_station_m": "distance_to_metro_station_m"}[walking_key]
             )
 
-    # Persist raw fields on project (distances + counts)
+    # Persist raw fields on project (distances + counts) — only when changed,
+    # so daily recompute doesn't UPDATE every project row even when POIs are
+    # identical to yesterday. Otherwise `walkability_updated_at = datetime.now()`
+    # marks every project dirty on every run (always-new timestamp).
+    changed = False
+
+    def _set_if_changed(obj: Project, attr: str, new_val: Any) -> None:
+        nonlocal changed
+        if not hasattr(obj, attr):
+            return
+        if getattr(obj, attr) != new_val:
+            setattr(obj, attr, new_val)
+            changed = True
+
     for k, v in raw.items():
-        if hasattr(project, k):
-            setattr(project, k, v)
-    project.walkability_walking_fallback_used = walking_fallback
+        _set_if_changed(project, k, v)
+    _set_if_changed(project, "walkability_walking_fallback_used", walking_fallback)
 
     # Scores
     result = compute_walkability_score(raw)
-    project.walkability_daily_needs_score = result["walkability_daily_needs_score"]
-    project.walkability_transport_score = result["walkability_transport_score"]
-    project.walkability_leisure_score = result["walkability_leisure_score"]
-    project.walkability_family_score = result["walkability_family_score"]
-    project.walkability_score = result["walkability_score"]
-    project.walkability_label = result["walkability_label"]
-    project.walkability_updated_at = datetime.now(timezone.utc)
-    project.walkability_source = "osm_geometry"
-    project.walkability_method = "st_distance_geography" + ("_air_fallback" if walking_fallback else "")
+    _set_if_changed(project, "walkability_daily_needs_score", result["walkability_daily_needs_score"])
+    _set_if_changed(project, "walkability_transport_score", result["walkability_transport_score"])
+    _set_if_changed(project, "walkability_leisure_score", result["walkability_leisure_score"])
+    _set_if_changed(project, "walkability_family_score", result["walkability_family_score"])
+    _set_if_changed(project, "walkability_score", result["walkability_score"])
+    _set_if_changed(project, "walkability_label", result["walkability_label"])
+    _set_if_changed(project, "walkability_source", "osm_geometry")
+    _set_if_changed(project, "walkability_method", "st_distance_geography" + ("_air_fallback" if walking_fallback else ""))
+
+    if changed:
+        project.walkability_updated_at = datetime.now(timezone.utc)
 
 
 def _clear_walkability(project: Project) -> None:

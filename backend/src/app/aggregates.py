@@ -585,9 +585,17 @@ def recompute_local_price_diffs(db: Session) -> None:
                 return None
 
         # 500 m sloupec již nepoužíváme – vždy nulujeme.
-        u.local_price_diff_500m = None
-        u.local_price_diff_1000m = _as_decimal(diffs[1000.0])
-        u.local_price_diff_2000m = _as_decimal(diffs[2000.0])
+        # Skip the assignment when the value would be unchanged to avoid no-op
+        # UPDATEs (bloat units heap, saturate autovacuum — incident 2026-05-12).
+        new_500 = None
+        new_1000 = _as_decimal(diffs[1000.0])
+        new_2000 = _as_decimal(diffs[2000.0])
+        if u.local_price_diff_500m != new_500:
+            u.local_price_diff_500m = new_500
+        if u.local_price_diff_1000m != new_1000:
+            u.local_price_diff_1000m = new_1000
+        if u.local_price_diff_2000m != new_2000:
+            u.local_price_diff_2000m = new_2000
 
     db.flush()
 
