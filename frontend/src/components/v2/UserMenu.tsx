@@ -45,6 +45,34 @@ export function UserMenu() {
     router.replace("/login");
   };
 
+  const [refreshing, setRefreshing] = useState(false);
+  const handleHardRefresh = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      // 1) Drop all service worker registrations so the new bundle isn't
+      //    served from sw.js runtime cache on next load.
+      if ("serviceWorker" in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map((r) => r.unregister()));
+      }
+      // 2) Wipe Cache Storage (Workbox / sw.js precache + runtime cache).
+      if ("caches" in window) {
+        const keys = await caches.keys();
+        await Promise.all(keys.map((k) => caches.delete(k)));
+      }
+      // 3) Hard reload with cache bypass. ?_v=... busts any HTTP cache that
+      //    keyed on the bare URL.
+      const url = new URL(window.location.href);
+      url.searchParams.set("_v", Date.now().toString());
+      window.location.replace(url.toString());
+    } catch {
+      // Even if something above failed, attempt a plain reload so the user
+      // isn't stuck in a half-state.
+      window.location.reload();
+    }
+  };
+
   return (
     <div ref={wrapperRef} style={{ position: "relative" }}>
       <button
@@ -86,6 +114,28 @@ export function UserMenu() {
           <div style={{ padding: "8px 10px", fontSize: 12, color: "#475569", borderBottom: "1px solid #F1F5F9", marginBottom: 4 }}>
             {email || "—"}
           </div>
+          <button
+            type="button"
+            onClick={handleHardRefresh}
+            disabled={refreshing}
+            title="Stáhne nejnovější verzi aplikace (vymaže Service Worker + cache)"
+            style={{
+              width: "100%",
+              textAlign: "left",
+              padding: "8px 10px",
+              fontSize: 13,
+              color: "#1E3A5F",
+              background: "transparent",
+              border: "none",
+              borderRadius: 8,
+              cursor: refreshing ? "wait" : "pointer",
+              opacity: refreshing ? 0.6 : 1,
+            }}
+            onMouseEnter={(e) => { if (!refreshing) e.currentTarget.style.background = "#F1F5F9"; }}
+            onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+          >
+            {refreshing ? "Aktualizuji…" : "↻ Aktualizovat aplikaci"}
+          </button>
           <button
             type="button"
             onClick={handleSignOut}
