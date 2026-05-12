@@ -249,14 +249,25 @@ const POI_LABELS: Record<string, string> = {
 };
 
 function PoiBadges({ poiCounts, activePrefs }: { poiCounts?: Record<string, number> | null; activePrefs: string[] }) {
-  if (!poiCounts || !activePrefs.length) return null;
-  const badges = activePrefs.filter((k) => (poiCounts[k] ?? 0) > 0).slice(0, 5);
+  if (!poiCounts) return null;
+  const source = activePrefs.length
+    ? activePrefs.filter((k) => (poiCounts[k] ?? 0) > 0)
+    : Object.keys(POI_LABELS).filter((k) => (poiCounts[k] ?? 0) > 0);
+  const badges = source.slice(0, 6);
   if (!badges.length) return null;
+  const isFallback = activePrefs.length === 0;
   return (
     <>
       {badges.map((k) => (
         <Tip key={k} text={`${POI_LABELS[k] ?? k}: ${poiCounts[k]} do 500 m`}>
-          <span className="rounded-full bg-teal-50 border border-teal-200 px-1 py-0.5 text-[10px] font-medium text-teal-700">
+          <span
+            className={cn(
+              "rounded-full border px-1 py-0.5 text-[10px] font-medium",
+              isFallback
+                ? "bg-slate-50 border-slate-200 text-slate-600"
+                : "bg-teal-50 border-teal-200 text-teal-700",
+            )}
+          >
             {POI_EMOJI[k] ?? k} {poiCounts[k]}
           </span>
         </Tip>
@@ -1107,6 +1118,25 @@ function ProjectGroupCard({
   const nonDislikedUnits = group.units.filter((u) => u.feedback?.feedback_type !== "disliked");
   const dislikedUnits = group.units.filter((u) => u.feedback?.feedback_type === "disliked");
 
+  // Project-level attributes are identical across units of the same project but may be
+  // null on some rows. Pick the first non-null value so a single missing row doesn't
+  // hide a project-wide signal (noise, near-source distances, POI counts).
+  const pickAttr = <K extends keyof RecommendationItem>(key: K): RecommendationItem[K] | null => {
+    for (const u of group.units) {
+      const v = u[key];
+      if (v != null) return v;
+    }
+    return null;
+  };
+  const projNoise = pickAttr("noise_label") as string | null;
+  const projTram = pickAttr("distance_to_tram_tracks_m") as number | null;
+  const projRail = pickAttr("distance_to_railway_m") as number | null;
+  const projRoad = pickAttr("distance_to_primary_road_m") as number | null;
+  const projPoi = pickAttr("poi_counts") as Record<string, number> | null;
+  const projUnitForMhd = group.units.find((u) =>
+    MHD_CONFIG.some(({ field }) => u[field] != null),
+  ) ?? group.units[0];
+
   return (
     <ReamarCard className={cn("overflow-hidden", allDisliked && "opacity-50")}>
       {/* Project header row */}
@@ -1122,8 +1152,8 @@ function ProjectGroupCard({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-base font-semibold text-slate-900 truncate">{group.project_name}</h3>
-              {group.units[0]?.noise_label && <NoiseBadge label={group.units[0].noise_label} />}
-              <NearSourceBadges tramM={group.units[0]?.distance_to_tram_tracks_m} railM={group.units[0]?.distance_to_railway_m} roadM={group.units[0]?.distance_to_primary_road_m} />
+              {projNoise && <NoiseBadge label={projNoise} />}
+              <NearSourceBadges tramM={projTram} railM={projRail} roadM={projRoad} />
               {/* Project status chips */}
               {group.pinned_count > 0 && (
                 <span className="shrink-0 inline-flex items-center rounded-full bg-amber-50 border border-amber-200 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
@@ -1138,10 +1168,10 @@ function ProjectGroupCard({
               {group.units.length} {group.units.length === 1 ? "jednotka" : group.units.length < 5 ? "jednotky" : "jednotek"}
               {group.layouts.length > 0 ? ` · ${group.layouts.join(", ")}` : ""}
             </p>
-            {group.units[0] && (
+            {projUnitForMhd && (
               <div className="mt-0.5 flex flex-wrap gap-1">
-                <MhdBadges rec={group.units[0]} activePrefs={activePoiPrefs} />
-                <PoiBadges poiCounts={group.units[0].poi_counts} activePrefs={activePoiPrefs} />
+                <MhdBadges rec={projUnitForMhd} activePrefs={activePoiPrefs} />
+                <PoiBadges poiCounts={projPoi} activePrefs={activePoiPrefs} />
               </div>
             )}
             <div className="mt-0.5 flex flex-wrap gap-x-3 text-[11px] text-slate-400">
@@ -1242,6 +1272,8 @@ function ProjectGroupCard({
                 <th className="px-3 py-2 text-right">Ext.</th>
                 <th className="px-3 py-2 text-center">Patro</th>
                 <th className="px-3 py-2 text-right">Cena</th>
+                <th className="px-3 py-2 text-right">Kč/m²</th>
+                <th className="px-3 py-2 text-center">Trh</th>
                 <th className="px-3 py-2">Stav</th>
                 <th className="px-3 py-2 w-[120px]">Akce</th>
               </tr>
@@ -1271,6 +1303,8 @@ function ProjectGroupCard({
                     <td className="px-3 py-2 text-right tabular-nums text-slate-700">{r.exterior_area_m2 != null ? `${Math.round(r.exterior_area_m2)} m²` : "—"}</td>
                     <td className="px-3 py-2 text-center tabular-nums text-slate-700">{r.floor ?? "—"}</td>
                     <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">{r.price_czk != null ? formatCurrencyCzk(r.price_czk) : "—"}</td>
+                    <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">{r.price_per_m2_czk != null ? `${Math.round(r.price_per_m2_czk / 1000)}k Kč` : "—"}</td>
+                    <td className="px-3 py-2 text-center"><PriceDiffBadge pct={r.price_diff_pct} /></td>
                     <td className="px-3 py-2">
                       <StatusBadge r={r} />
                     </td>
