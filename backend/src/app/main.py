@@ -123,6 +123,39 @@ from .error_logging import ErrorLoggingMiddleware  # noqa: E402
 app.add_middleware(ErrorLoggingMiddleware)
 
 
+# Lightweight per-request timing. Emits a single log line per request and
+# returns the elapsed time as the X-Process-Time response header so the
+# frontend / browser DevTools can see it without re-instrumenting.
+# Logs go to stdout — visible in Railway logs and locally.
+import logging as _t_logging
+import time as _t_time
+
+_perf_logger = _t_logging.getLogger("reamar.perf")
+if not _perf_logger.handlers:
+    _ph = _t_logging.StreamHandler()
+    _ph.setFormatter(_t_logging.Formatter("%(asctime)s perf %(message)s"))
+    _perf_logger.addHandler(_ph)
+    _perf_logger.setLevel(_t_logging.INFO)
+
+
+@app.middleware("http")
+async def _timing_middleware(request, call_next):
+    start = _t_time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = (_t_time.perf_counter() - start) * 1000.0
+    # Skip noisy health-check pings so Railway logs stay readable.
+    if request.url.path not in ("/health", "/"):
+        _perf_logger.info(
+            "%s %s -> %d in %.0fms",
+            request.method,
+            request.url.path,
+            response.status_code,
+            elapsed_ms,
+        )
+    response.headers["X-Process-Time"] = f"{elapsed_ms:.0f}"
+    return response
+
+
 class ProjectInfo(BaseModel):
     developer: str | None
     name: str
