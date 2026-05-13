@@ -284,8 +284,9 @@ const MHD_CONFIG: { key: "metro" | "tram" | "bus" | "train"; field: "distance_to
 ];
 
 function MhdBadges({ rec, activePrefs }: { rec: RecommendationItem; activePrefs: string[] }) {
+  const isFallback = activePrefs.length === 0;
   const badges = MHD_CONFIG.filter(({ key, field, threshold }) => {
-    if (!activePrefs.includes(key)) return false;
+    if (!isFallback && !activePrefs.includes(key)) return false;
     const d = rec[field];
     return d != null && d <= threshold;
   });
@@ -296,7 +297,14 @@ function MhdBadges({ rec, activePrefs }: { rec: RecommendationItem; activePrefs:
         const d = rec[field];
         return (
           <Tip key={key} text={`${label} ${Math.round(d!)} m`}>
-            <span className="rounded-full bg-blue-50 border border-blue-200 px-1.5 py-0.5 text-[10px] font-medium text-blue-700">
+            <span
+              className={cn(
+                "rounded-full border px-1.5 py-0.5 text-[10px] font-medium",
+                isFallback
+                  ? "bg-slate-50 border-slate-200 text-slate-600"
+                  : "bg-blue-50 border-blue-200 text-blue-700",
+              )}
+            >
               {emoji} {Math.round(d!)} m
             </span>
           </Tip>
