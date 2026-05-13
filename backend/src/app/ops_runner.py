@@ -1,11 +1,24 @@
 """Daily ops pipeline runner.
 
-Orchestrates the full nightly data refresh:
+Two-tier cadence:
+
+  Daily (every night):
     1. BuiltMind import (new projects + units)
-    2. Walkability POI refresh + recompute
-    3. Derived floors aggregation
-    4. Local price diffs (market deviation) recompute
-    5. Location metrics (noise + micro-location) recompute
+    2. Walkability for new/missing projects only (per-project, cheap)
+    3. Noise for new/missing projects only
+    4. Micro-location for new/missing projects only
+    5. Derived floors aggregation (cheap, all projects)
+    6. Local price diffs (market deviation) recompute
+    7. Location metrics
+    8. Error log cleanup
+
+  Monthly (1st of month only):
+    9. Walkability POI source refresh from Overpass (TRUNCATE + reload all
+       osm_* POI tables, then recompute every project)
+
+The "monthly" steps early-return on other days, so the daily cron stays
+cheap (~1 min) and only the first-of-month run does the expensive global
+Overpass refresh.
 
 Each step runs best-effort: a failure is logged to OpsRun.steps_json and the
 pipeline continues. The whole run completes with status='done' if every step
@@ -26,6 +39,11 @@ from sqlalchemy import select
 
 from .db import SessionLocal
 from .models import OpsRun
+
+
+def _is_monthly_full_refresh_day() -> bool:
+    """True on the 1st of the month (UTC). Gates expensive global refreshes."""
+    return datetime.now(timezone.utc).day == 1
 
 
 # --- Step wrapper --------------------------------------------------------
@@ -113,12 +131,125 @@ def _step_builtmind_import() -> dict[str, Any]:
     }
 
 
-def _step_walkability() -> dict[str, Any]:
+def _step_walkability_full_refresh() -> dict[str, Any]:
+    """Monthly: refresh OSM POI source tables from Overpass and recompute
+    walkability for every project. Skipped on non-1st days."""
+    if not _is_monthly_full_refresh_day():
+        return {"skipped": True, "reason": "not first of month"}
     from .walkability_sources import refresh_walkability_sources_and_recompute
 
     db = SessionLocal()
     try:
         return refresh_walkability_sources_and_recompute(db)
+    finally:
+        db.close()
+
+
+def _step_walkability_for_new_projects() -> dict[str, Any]:
+    """Daily: compute walkability for projects that have never had it computed.
+    Selector: walkability_updated_at IS NULL — set by compute_project_walkability
+    on any successful run, so projects without OSM POI coverage (e.g. just
+    outside the Prague bbox) skip cleanly once they've been attempted."""
+    from .models import Project
+    from .walkability import compute_project_walkability
+
+    t0 = time.monotonic()
+    db = SessionLocal()
+    try:
+        ids = [
+            pid
+            for (pid,) in db.execute(
+                select(Project.id).where(
+                    Project.gps_latitude.isnot(None),
+                    Project.gps_longitude.isnot(None),
+                    Project.walkability_updated_at.is_(None),
+                )
+            ).all()
+        ]
+        if not ids:
+            return {"processed": 0, "elapsed_seconds": 0}
+        for pid in ids:
+            project = db.get(Project, pid)
+            if project is not None:
+                compute_project_walkability(db, project)
+        db.commit()
+        return {
+            "processed": len(ids),
+            "elapsed_seconds": round(time.monotonic() - t0, 2),
+        }
+    finally:
+        db.close()
+
+
+def _step_noise_for_new_projects() -> dict[str, Any]:
+    """Daily: compute noise label for projects that have never had it computed.
+    Selector: only projects in Prague that have not been attempted yet.
+    Non-Prague projects are skipped — they will never have data from the
+    Prague noise map."""
+    from .models import Project
+    from .noise import compute_project_noise
+
+    t0 = time.monotonic()
+    db = SessionLocal()
+    try:
+        ids = [
+            pid
+            for (pid,) in db.execute(
+                select(Project.id).where(
+                    Project.gps_latitude.isnot(None),
+                    Project.gps_longitude.isnot(None),
+                    Project.region_iga == "Hlavní město Praha",
+                    Project.noise_updated_at.is_(None),
+                )
+            ).all()
+        ]
+        if not ids:
+            return {"processed": 0, "elapsed_seconds": 0}
+        for pid in ids:
+            project = db.get(Project, pid)
+            if project is not None:
+                compute_project_noise(db, project)
+        db.commit()
+        return {
+            "processed": len(ids),
+            "elapsed_seconds": round(time.monotonic() - t0, 2),
+        }
+    finally:
+        db.close()
+
+
+def _step_micro_location_for_new_projects() -> dict[str, Any]:
+    """Daily: compute micro-location (distances to railway / tram tracks /
+    primary roads) for projects that have never had it computed.
+    compute_project_micro_location sets micro_location_updated_at on every
+    successful run, so the selector cleanly skips fully-processed projects."""
+    from .models import Project
+    from .micro_location import compute_project_micro_location
+
+    t0 = time.monotonic()
+    db = SessionLocal()
+    try:
+        ids = [
+            pid
+            for (pid,) in db.execute(
+                select(Project.id).where(
+                    Project.gps_latitude.isnot(None),
+                    Project.gps_longitude.isnot(None),
+                    Project.micro_location_updated_at.is_(None),
+                )
+            ).all()
+        ]
+        if not ids:
+            return {"processed": 0, "elapsed_seconds": 0}
+        for pid in ids:
+            project = db.get(Project, pid)
+            if project is not None:
+                compute_project_micro_location(db, project)
+        db.commit()
+        return {
+            "processed": len(ids),
+            "elapsed_seconds": round(time.monotonic() - t0, 2),
+        }
     finally:
         db.close()
 
@@ -192,10 +323,16 @@ def _step_error_log_cleanup() -> dict[str, Any]:
 
 DEFAULT_STEPS: list[tuple[str, Callable[[], dict[str, Any]]]] = [
     ("builtmind_import", _step_builtmind_import),
-    ("walkability_refresh", _step_walkability),
+    # Daily incremental — cheap, runs every night for projects added today.
+    ("walkability_for_new_projects", _step_walkability_for_new_projects),
+    ("noise_for_new_projects", _step_noise_for_new_projects),
+    ("micro_location_for_new_projects", _step_micro_location_for_new_projects),
+    # Cheap globals that touch project_aggregates / units (not osm_*).
     ("derived_floors", _step_derived_floors),
     ("local_price_diffs", _step_local_price_diffs),
     ("location_metrics", _step_location_metrics),
+    # Monthly only (early-returns on non-1st days).
+    ("walkability_refresh", _step_walkability_full_refresh),
     ("error_log_cleanup", _step_error_log_cleanup),
 ]
 
