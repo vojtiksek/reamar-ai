@@ -2313,9 +2313,12 @@ def recompute_client_recommendations(
                 func.lower(Unit.category).in_(["house", "dům", "rodinný dům", "řadový dům"])
             )
 
-    # Layout SQL filter — reverse-map bucket names ("2kk") to DB values ("layout_2")
+    # Layout SQL filter — reverse-map bucket names ("2kk") to DB values ("layout_2").
+    # 5kk/6kk/7kk arrive in the DB via the URL/unit_name detection in
+    # import_units (BuiltMind only natively produces layout_1..layout_4).
     _BUCKET_TO_DB_LAYOUT: dict[str, str] = {
         "1kk": "layout_1", "2kk": "layout_2", "3kk": "layout_3", "4kk": "layout_4",
+        "5kk": "layout_5", "6kk": "layout_6", "7kk": "layout_7",
         "1.5kk": "layout_1_5",
     }
     pref_layout_buckets: list[str] = []

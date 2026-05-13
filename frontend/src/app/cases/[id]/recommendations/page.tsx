@@ -1500,7 +1500,7 @@ function QuickFilterBar({
 /*  Working filters bar (Client Mode Phase 2)                */
 /* ────────────────────────────────────────────────────────── */
 
-const WORKING_LAYOUT_OPTIONS = ["1kk", "1.5kk", "2kk", "3kk", "4kk"] as const;
+const WORKING_LAYOUT_OPTIONS = ["1kk", "1.5kk", "2kk", "3kk", "4kk", "5+kk"] as const;
 const WORKING_PROPERTY_TYPES: { value: string; label: string }[] = [
   { value: "any", label: "Jakýkoliv" },
   { value: "flat", label: "Byt" },

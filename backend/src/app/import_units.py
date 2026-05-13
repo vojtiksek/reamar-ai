@@ -293,6 +293,25 @@ def _parse_completion_date(raw: str) -> date | None:
     return None
 
 
+_LARGE_LAYOUT_HINT_RE = re.compile(r"(?<![0-9])([5-9])[\s_+\-]?kk(?![a-z0-9])", re.IGNORECASE)
+
+
+def _detect_large_layout_from_hints(unit_data: dict[str, Any]) -> str | None:
+    """BuiltMind's `layout` field caps at 4kk (`layout_4`), so 5kk+ apartments
+    arrive labelled as 4kk. The actual size is leaked elsewhere — most
+    reliably in floorplan URLs (`B.1.7_5kk.pdf`, `byty-5kk-praha/`) and
+    occasionally in `unit_name`. Detect those and override layout to
+    `layout_N` for N in 5..9 so the broker's filter can separate them."""
+    for key in ("url", "unit_name"):
+        val = unit_data.get(key)
+        if not isinstance(val, str):
+            continue
+        match = _LARGE_LAYOUT_HINT_RE.search(val)
+        if match:
+            return f"layout_{match.group(1)}"
+    return None
+
+
 def apply_unit_data_mapped(
     unit: Unit,
     unit_data: dict[str, Any],
@@ -326,6 +345,10 @@ def apply_unit_data_mapped(
         column_type = col.type if col is not None else None
         normalized = _normalize_value_for_column(value, column_type)
         setattr(unit, attr, normalized)
+    # Override BuiltMind's layout when URL / unit_name leaks a larger size.
+    extra = _detect_large_layout_from_hints(unit_data)
+    if extra is not None:
+        unit.layout = extra
     # Pokud má jednotka vyplněné sold_date, vždy nastavíme status na "sold"
     if unit.sold_date is not None:
         unit.availability_status = "sold"
@@ -610,6 +633,12 @@ def apply_unit_data_respecting_overrides(
         column_type = col.type if col is not None else None
         normalized = _normalize_value_for_column(value, column_type)
         setattr(unit, attr, normalized)
+    # Override BuiltMind's layout when URL / unit_name leaks a 5kk+ size,
+    # unless the broker has manually set an override on the layout field.
+    if "layout" not in overrides:
+        extra = _detect_large_layout_from_hints(unit_data)
+        if extra is not None:
+            unit.layout = extra
 
 
 def apply_unit_data(

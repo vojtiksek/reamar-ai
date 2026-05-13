@@ -62,16 +62,20 @@ export function profileToFilters(profile: ClientProfileForFilters): CurrentFilte
   const layouts = profile.layouts?.values;
   if (Array.isArray(layouts) && layouts.length > 0) {
     const dbLayouts = layouts
-      .map((v) => {
+      .flatMap((v): string[] => {
         const s = String(v).trim().toLowerCase().replace(",", ".");
-        if (s === "1kk")   return "layout_1";
-        if (s === "1.5kk") return "layout_1_5";
-        if (s === "2kk")   return "layout_2";
-        if (s === "3kk")   return "layout_3";
-        if (s === "4kk")   return "layout_4";
-        return null; // unknown bucket — skip
-      })
-       .filter((v) => v !== null) as string[];
+        if (s === "1kk")   return ["layout_1"];
+        if (s === "1.5kk") return ["layout_1_5"];
+        if (s === "2kk")   return ["layout_2"];
+        if (s === "3kk")   return ["layout_3"];
+        if (s === "4kk")   return ["layout_4"];
+        // BuiltMind caps layout at 4kk; import_units detects 5kk+ from URL
+        // hints and stores them as layout_5/6/7. "5+kk" in the wizard means
+        // "5kk or larger", so expand to every bucket we might have.
+        if (s === "5kk" || s === "5+kk") return ["layout_5", "layout_6", "layout_7"];
+        if (s === "6kk")               return ["layout_6"];
+        return []; // unknown bucket — skip
+      });
     if (dbLayouts.length > 0) filters.layout = dbLayouts;
   }
 

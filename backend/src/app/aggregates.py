@@ -278,19 +278,22 @@ def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _layout_group(layout: str | None) -> str | None:
-    """Map raw layout like 'layout_1', 'layout_1_5' to bucket name."""
+    """Map raw layout like 'layout_1', 'layout_1_5' to bucket name.
+
+    Accepts 1–9 because we now derive `layout_5` (and possibly 6/7) from
+    URL/unit_name hints in import_units when BuiltMind only labels them
+    as `layout_4`."""
     if not layout:
         return None
     s = str(layout).strip().lower()
     if s.startswith("layout_"):
         parts = s.split("_")
         if len(parts) == 2:
-            # layout_1 -> 1kk, layout_2 -> 2kk, ...
             try:
                 n = int(parts[1])
             except ValueError:
                 return None
-            if n in (1, 2, 3, 4):
+            if 1 <= n <= 9:
                 return f"{n}kk"
             return None
         if len(parts) == 3 and parts[1] == "1" and parts[2] == "5":
@@ -302,7 +305,7 @@ def _layout_group(layout: str | None) -> str | None:
             n = int(s.split("+", 1)[0])
         except ValueError:
             return None
-        if n in (1, 2, 3, 4):
+        if 1 <= n <= 9:
             return f"{n}kk"
     return None
 
