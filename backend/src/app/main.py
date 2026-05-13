@@ -4095,17 +4095,63 @@ def health() -> JSONResponse:
     return JSONResponse(content={"status": "ok"})
 
 
+_local_price_diffs_state: dict[str, Any] = {"status": "idle"}
+
+
+def _run_local_price_diffs_job() -> None:
+    from .aggregates import recompute_local_price_diffs
+    from .db import SessionLocal as _SessionLocal
+
+    started = datetime.now(timezone.utc)
+    _local_price_diffs_state.update(status="running", started_at=started.isoformat(), finished_at=None, error=None)
+    db = _SessionLocal()
+    try:
+        recompute_local_price_diffs(db)
+        db.commit()
+        _local_price_diffs_state.update(
+            status="done",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
+    except Exception as exc:  # noqa: BLE001
+        _local_price_diffs_state.update(
+            status="error",
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    finally:
+        db.close()
+
+
 @app.post(
     "/units/local-price-diffs/recompute",
-    summary="Recompute local price differences for all units",
-    description="Offline-style recompute of local_price_diff_* fields for all units. Intended for cron/manual use; may take several seconds on larger datasets.",
+    summary="Recompute local price differences for all units (background)",
+    description=(
+        "Fire-and-forget recompute. Spawns a background thread, returns 202 "
+        "immediately. Synchronous version would exceed Railway's ~60s edge "
+        "proxy timeout (this job typically runs ~130s) so the browser would "
+        "see 'Load failed' even though the work succeeds server-side. Poll "
+        "GET /units/local-price-diffs/recompute/status for state."
+    ),
+    status_code=202,
 )
-def recompute_units_local_price_diffs(db: DbSession) -> dict[str, Any]:
-    from .aggregates import recompute_local_price_diffs
+def recompute_units_local_price_diffs() -> dict[str, Any]:
+    import threading
 
-    recompute_local_price_diffs(db)
-    db.commit()
-    return {"status": "ok"}
+    if _local_price_diffs_state.get("status") == "running":
+        raise HTTPException(status_code=409, detail="Recompute already running")
+    t = threading.Thread(
+        target=_run_local_price_diffs_job, daemon=True, name="local-price-diffs"
+    )
+    t.start()
+    return {"ok": True, "status": "started"}
+
+
+@app.get(
+    "/units/local-price-diffs/recompute/status",
+    summary="Poll status of last local price diffs recompute",
+)
+def get_local_price_diffs_status() -> dict[str, Any]:
+    return dict(_local_price_diffs_state)
 
 
 @app.get(

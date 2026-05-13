@@ -580,11 +580,15 @@ export default function OperacePage() {
           title="Přepočítat odchylku od trhu"
           description="Přepočítá cenovou odchylku jednotek vůči okolní nabídce v okruhu 1 km a 2 km."
           buttonLabel="Spustit"
-          runningLabel="Přepočítávám…"
+          runningLabel="Spouštím…"
           onRun={async () => {
+            // Backend runs the recompute in a daemon thread and returns 202
+            // immediately — the synchronous version exceeded the Railway edge
+            // proxy timeout (60s) on a ~130s job.
             const res = await fetch(`${API_BASE}/units/local-price-diffs/recompute`, { method: "POST", headers: authHeaders() });
+            if (res.status === 409) return "Přepočet už běží na pozadí.";
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            return "Odchylky od trhu přepočítány.";
+            return "Spuštěno na pozadí. Výsledek bude k dispozici za 1–3 minuty.";
           }}
         />
 
