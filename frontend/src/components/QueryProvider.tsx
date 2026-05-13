@@ -54,7 +54,12 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
             staleTime: 60_000,
             gcTime: 24 * 60 * 60_000, // 24h — required ≥ persist throttle for cache to be persisted
             refetchOnWindowFocus: false,
-            retry: 1,
+            // Retry transient network blips automatically. Safari often
+            // reports brief Wi-Fi drops as "TypeError: Load failed" with no
+            // status, and we don't want a 1s connectivity hiccup to break
+            // the broker workflow. Exponential backoff: 1s, 2s, 4s.
+            retry: 3,
+            retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
           },
         },
       }),

@@ -205,7 +205,12 @@ export function installErrorReporter(): void {
       const isAbort = err instanceof DOMException
         ? err.name === "AbortError"
         : (err as { name?: string } | null)?.name === "AbortError";
-      if (!isReporter && isOurBackend && !isAbort) {
+      // Next.js RSC prefetch — když user otevře recs list, Next.js si stahuje
+      // payload každého rozkliknutelného unit detailu. Při rychlé navigaci nebo
+      // filter změně browser tyhle prefetches aborts a Safari to hlásí jako
+      // generic "TypeError: Load failed" místo AbortError. Není to bug.
+      const isRscPrefetch = urlStr.includes("_rsc=") || urlStr.includes("?_rsc");
+      if (!isReporter && isOurBackend && !isAbort && !isRscPrefetch) {
         const message = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
         send({
           message: `Network error on ${method} ${shortPath(urlStr)}: ${message}`,
