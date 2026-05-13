@@ -110,7 +110,9 @@ export type ClientProfilePatch = {
   polygon_geojson?: string | null;
 };
 
-/** Reverse mapping: DB layout value → profile bucket name */
+/** Reverse mapping: DB layout value → profile bucket name. 5kk+ collapse
+ * to "5+kk" so the wizard's existing 5+kk chip rehydrates cleanly when a
+ * profile loaded from the API has layout_5/6/7. */
 function dbLayoutToProfileValue(db: string): string | null {
   switch (db) {
     case "layout_1":   return "1kk";
@@ -118,6 +120,9 @@ function dbLayoutToProfileValue(db: string): string | null {
     case "layout_2":   return "2kk";
     case "layout_3":   return "3kk";
     case "layout_4":   return "4kk";
+    case "layout_5":   return "5+kk";
+    case "layout_6":   return "5+kk";
+    case "layout_7":   return "5+kk";
     default:           return null;
   }
 }
