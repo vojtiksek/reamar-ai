@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -29,9 +29,26 @@ BBOX_PRAHA = (49.95, 14.1, 50.2, 14.8)
 TIMEOUT_S = 120
 
 
-def _bbox_str() -> str:
-    south, west, north, east = BBOX_PRAHA
+def _bbox_str(bbox: tuple[float, float, float, float] | None = None) -> str:
+    south, west, north, east = bbox or BBOX_PRAHA
     return f"({south},{west},{north},{east})"
+
+
+def _bbox_quadrants() -> list[tuple[float, float, float, float]]:
+    """Split Prague bbox into 4 overlapping quadrants for categories where the
+    full-bbox query gets 504 timeouts (restaurants, big leisure layers).
+    Returns (south, west, north, east) tuples. Mild overlap (0.005°, ~500 m)
+    ensures POI on the cut don't fall through; we dedup by osm_id."""
+    south, west, north, east = BBOX_PRAHA
+    mid_lat = (south + north) / 2.0
+    mid_lon = (west + east) / 2.0
+    o = 0.005
+    return [
+        (south,       west,         mid_lat + o, mid_lon + o),  # SW
+        (south,       mid_lon - o,  mid_lat + o, east),         # SE
+        (mid_lat - o, west,         north,       mid_lon + o),  # NW
+        (mid_lat - o, mid_lon - o,  north,       east),         # NE
+    ]
 
 
 def _overpass_request(query: str) -> list[dict[str, Any]]:
@@ -123,6 +140,52 @@ def _run_query(node_query: str, way_query: str | None = None) -> list[tuple[int 
         q = f'[out:json][timeout:{TIMEOUT_S}];\n(node{node_query}{b};way{way_query}{b};);\nout body geom qt;'
     elements = _overpass_request(q)
     return _elements_to_rows(elements)
+
+
+def _run_query_split(
+    node_query: str,
+    way_query: str | None = None,
+    *,
+    elements_to_rows: Callable[[list[dict[str, Any]]], list[tuple[int | None, str | None, dict[str, Any]]]] | None = None,
+) -> list[tuple[int | None, str | None, dict[str, Any]]]:
+    """Run a category query against each of the 4 Prague quadrants and merge.
+    Use for categories where the full-bbox query consistently 504-times-out
+    on the Kumi mirror (restaurants, parks). Dedups by osm_id so the small
+    overlap between adjacent quadrants doesn't produce duplicates.
+
+    `elements_to_rows` lets callers (e.g. parks) override the default
+    point-only conversion with one that retains polygon geometry."""
+    convert = elements_to_rows or _elements_to_rows
+    seen_ids: set[int] = set()
+    seen_keys: set[tuple[float, float]] = set()
+    merged: list[tuple[int | None, str | None, dict[str, Any]]] = []
+
+    for quad in _bbox_quadrants():
+        b = _bbox_str(quad)
+        if way_query is None:
+            q = f'[out:json][timeout:{TIMEOUT_S}];\nnode{node_query}{b};\nout body qt;'
+        else:
+            q = f'[out:json][timeout:{TIMEOUT_S}];\n(node{node_query}{b};way{way_query}{b};);\nout body geom qt;'
+        try:
+            elements = _overpass_request(q)
+        except Exception as exc:
+            logger.warning("Quadrant %s failed (%s); continuing with other quadrants", quad, exc)
+            continue
+        rows = convert(elements)
+        for osm_id, name, geom in rows:
+            if osm_id is not None:
+                if osm_id in seen_ids:
+                    continue
+                seen_ids.add(osm_id)
+            else:
+                coords = geom.get("coordinates")
+                if isinstance(coords, list) and len(coords) == 2 and all(isinstance(c, (int, float)) for c in coords):
+                    key = (round(coords[0], 6), round(coords[1], 6))
+                    if key in seen_keys:
+                        continue
+                    seen_keys.add(key)
+            merged.append((osm_id, name, geom))
+    return merged
 
 
 def _way_geometry_to_polygon_geojson(geometry: list[dict[str, float]]) -> dict[str, Any] | None:
@@ -240,8 +303,10 @@ def download_osm_train_stations() -> list[tuple[int | None, str | None, dict[str
 
 # --- Leisure ---
 def download_osm_restaurants() -> list[tuple[int | None, str | None, dict[str, Any]]]:
-    """amenity=restaurant."""
-    return _run_query('["amenity"="restaurant"]', way_query='["amenity"="restaurant"]')
+    """amenity=restaurant. Split into 4 quadrants — the Prague-wide query
+    times out (504 Gateway Timeout) on every Overpass mirror as of
+    2026-05-13 because restaurants are the densest OSM amenity layer."""
+    return _run_query_split('["amenity"="restaurant"]', way_query='["amenity"="restaurant"]')
 
 
 def download_osm_cafes() -> list[tuple[int | None, str | None, dict[str, Any]]]:
@@ -250,11 +315,14 @@ def download_osm_cafes() -> list[tuple[int | None, str | None, dict[str, Any]]]:
 
 
 def download_osm_parks() -> list[tuple[int | None, str | None, dict[str, Any]]]:
-    """leisure=park (often ways). Ways stored as Polygon so distance = to nearest edge, not centroid."""
-    b = _bbox_str()
-    q = f'[out:json][timeout:{TIMEOUT_S}];\n(node["leisure"="park"]{b};way["leisure"="park"]{b};);\nout body geom qt;'
-    elements = _overpass_request(q)
-    return _elements_to_rows_parks(elements)
+    """leisure=park (often ways). Ways stored as Polygon so distance = to
+    nearest edge, not centroid. Quadrant split because full-bbox park query
+    also intermittently times out."""
+    return _run_query_split(
+        '["leisure"="park"]',
+        way_query='["leisure"="park"]',
+        elements_to_rows=_elements_to_rows_parks,
+    )
 
 
 def download_osm_fitness() -> list[tuple[int | None, str | None, dict[str, Any]]]:
@@ -282,8 +350,9 @@ def download_osm_primary_schools() -> list[tuple[int | None, str | None, dict[st
 
 
 def download_osm_pediatricians() -> list[tuple[int | None, str | None, dict[str, Any]]]:
-    """healthcare=pediatrician; fallback: amenity=doctors (pragmatic - many pediatricians not tagged)."""
-    return _run_query(
+    """healthcare=pediatrician; fallback: amenity=doctors (pragmatic - many pediatricians not tagged).
+    Quadrant split because the same big-bbox timeouts hit this layer too."""
+    return _run_query_split(
         '["healthcare"="pediatrician"]',
         way_query='["healthcare"="pediatrician"]',
     )
