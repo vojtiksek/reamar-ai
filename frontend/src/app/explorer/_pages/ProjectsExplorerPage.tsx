@@ -391,6 +391,144 @@ function FitDot({ value, title }: { value: number; title: string }) {
   return <span title={`${title}: ${Math.round(value)}`} className={`inline-block h-2 w-2 rounded-full ${color}`} />;
 }
 
+// PriceDiffBadge is local — mirrors the one in recommendations/page.tsx so
+// brokers see the same colour coding (green = below market, red = above)
+// across recs and explorer expansion.
+function PriceDiffBadge({ pct }: { pct?: number | null }) {
+  if (pct == null) return <span className="text-slate-300">—</span>;
+  if (pct <= -5)
+    return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-700">{Math.round(pct)} %</span>;
+  if (pct >= 5)
+    return <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-medium text-rose-700">+{Math.round(pct)} %</span>;
+  return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500">±trh</span>;
+}
+
+type ExpandedUnitRow = {
+  external_id: string;
+  unit_name: string | null;
+  layout: string | null;
+  floor: number | null;
+  floor_area_m2: number | null;
+  exterior_area_m2: number | null;
+  price_czk: number | null;
+  price_per_m2_czk: number | null;
+  availability_status: string | null;
+  local_price_diff_1000m: number | null;
+};
+
+/** Content of the per-project expansion row. Replaces the old Standardy /
+ * Lokalita / Amenities cards — those move to the project detail page.
+ *
+ * Renders a compact list of available units in this project, like the
+ * inner table inside ProjectGroupCard in /cases/X/recommendations. The
+ * broker can scan unit prices and layouts without leaving the explorer. */
+function ExpandedProjectUnits({
+  cache,
+  projectUrl,
+  projectId,
+}: {
+  cache: { state: "loading" | "error" | "ready"; units?: ExpandedUnitRow[] } | undefined;
+  projectUrl: string | null;
+  projectId: number;
+}) {
+  if (!cache || cache.state === "loading") {
+    return <div className="py-4 text-center text-xs text-slate-500">Načítám jednotky…</div>;
+  }
+  if (cache.state === "error") {
+    return <div className="py-4 text-center text-xs text-rose-600">Chyba při načítání jednotek.</div>;
+  }
+  const units = cache.units ?? [];
+  return (
+    <>
+      <div className="mb-2 flex items-center justify-between">
+        <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+          Dostupné jednotky · {units.length}
+        </h4>
+        <div className="flex gap-2">
+          <a
+            href={`/projects/${projectId}`}
+            className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
+            data-no-row-nav
+            onClick={(e) => e.stopPropagation()}
+          >
+            Detail projektu
+          </a>
+          {projectUrl ? (
+            <a
+              href={projectUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+              data-no-row-nav
+              onClick={(e) => e.stopPropagation()}
+            >
+              ↗ Web projektu
+            </a>
+          ) : null}
+        </div>
+      </div>
+      {units.length === 0 ? (
+        <div className="rounded-lg border border-slate-200 bg-white px-3 py-4 text-center text-xs text-slate-500">
+          Žádné aktuálně dostupné jednotky.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+          <table className="w-full">
+            <thead>
+              <tr className="bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                <th className="px-3 py-2 text-left">Jednotka</th>
+                <th className="px-3 py-2 text-left">Dispozice</th>
+                <th className="px-3 py-2 text-right">Plocha</th>
+                <th className="px-3 py-2 text-right">Ext.</th>
+                <th className="px-3 py-2 text-center">Patro</th>
+                <th className="px-3 py-2 text-right">Cena</th>
+                <th className="px-3 py-2 text-right">Kč/m²</th>
+                <th className="px-3 py-2 text-center">Trh</th>
+                <th className="px-3 py-2 text-left">Stav</th>
+              </tr>
+            </thead>
+            <tbody>
+              {units.map((u) => (
+                <tr key={u.external_id} className="border-t border-slate-100 text-sm hover:bg-slate-50/80">
+                  <td className="px-3 py-2 font-medium text-slate-800">{u.unit_name ?? "—"}</td>
+                  <td className="px-3 py-2 text-slate-700">{formatLayout(u.layout)}</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                    {u.floor_area_m2 != null ? `${Math.round(u.floor_area_m2)} m²` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                    {u.exterior_area_m2 != null && u.exterior_area_m2 > 0 ? `${Math.round(u.exterior_area_m2)} m²` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center tabular-nums text-slate-700">{u.floor ?? "—"}</td>
+                  <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
+                    {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
+                    {u.price_per_m2_czk != null ? `${Math.round(u.price_per_m2_czk / 1000)}k Kč` : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    <PriceDiffBadge pct={u.local_price_diff_1000m} />
+                  </td>
+                  <td className="px-3 py-2 text-slate-600">{formatAvailability(u.availability_status)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
+
+function formatAvailability(status: string | null): string {
+  if (!status) return "—";
+  const s = status.toLowerCase();
+  if (s === "available") return "Dostupná";
+  if (s === "reserved") return "Rezervovaná";
+  if (s === "unseen") return "Neviděná";
+  if (s === "sold") return "Prodaná";
+  return status;
+}
+
 export default function ProjectsPage() {
   const router = useRouter();
   const pathname = usePathname();
@@ -435,6 +573,94 @@ export default function ProjectsPage() {
 
   const [expandedRowId, setExpandedRowId] = useState<number | null>(null);
   const rowClickTimeoutRef = useRef<number | null>(null);
+
+  // Per-project units cache. Populated lazily when the broker expands a
+  // project row — we fetch the available units for that project and show a
+  // compact table in the expansion, mirroring the broker's mental model
+  // from /cases/X/recommendations where each project groups its own units.
+  type ExpandedUnit = {
+    external_id: string;
+    unit_name: string | null;
+    layout: string | null;
+    floor: number | null;
+    floor_area_m2: number | null;
+    exterior_area_m2: number | null;
+    price_czk: number | null;
+    price_per_m2_czk: number | null;
+    availability_status: string | null;
+    local_price_diff_1000m: number | null;
+  };
+  type UnitsCache = Record<number, { state: "loading" | "error" | "ready"; units?: ExpandedUnit[] }>;
+  const [projectUnitsCache, setProjectUnitsCache] = useState<UnitsCache>({});
+
+  const fetchProjectUnits = useCallback(async (projectId: number, projectName: string) => {
+    setProjectUnitsCache((prev) => ({ ...prev, [projectId]: { state: "loading" } }));
+    try {
+      const params = new URLSearchParams();
+      params.set("project", projectName);
+      params.set("availability", "available");
+      params.set("availability", "unseen");
+      params.set("availability", "reserved");
+      params.set("limit", "500");
+      params.set("with_count", "false");
+      // Compact 'map' mode keeps the payload small but still includes
+      // layout/area/price; we extract local_price_diff_1000m from `data`.
+      const res = await fetch(`${API_BASE}/units?${params.toString()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      type RawUnit = {
+        external_id: string;
+        unit_name: string | null;
+        layout: string | null;
+        price_czk: number | null;
+        price_per_m2_czk: number | null;
+        floor_area_m2: number | null;
+        availability_status?: string | null;
+        data?: Record<string, unknown>;
+      };
+      const json = await res.json() as { items?: RawUnit[] };
+      const units: ExpandedUnit[] = (json.items ?? []).map((u) => {
+        const d = u.data ?? {};
+        const num = (v: unknown): number | null =>
+          typeof v === "number" && Number.isFinite(v) ? v : (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v)) ? Number(v) : null);
+        return {
+          external_id: u.external_id,
+          unit_name: u.unit_name ?? null,
+          layout: u.layout ?? null,
+          floor: num(d.floor),
+          floor_area_m2: u.floor_area_m2,
+          exterior_area_m2: num(d.exterior_area_m2),
+          price_czk: u.price_czk,
+          price_per_m2_czk: u.price_per_m2_czk,
+          availability_status: u.availability_status ?? (typeof d.availability_status === "string" ? d.availability_status : null),
+          local_price_diff_1000m: num(d.local_price_diff_1000m),
+        };
+      });
+      // Sort by layout then area for consistent display
+      units.sort((a, b) => {
+        const la = (a.layout ?? "").localeCompare(b.layout ?? "");
+        if (la !== 0) return la;
+        return (a.floor_area_m2 ?? 0) - (b.floor_area_m2 ?? 0);
+      });
+      setProjectUnitsCache((prev) => ({ ...prev, [projectId]: { state: "ready", units } }));
+    } catch {
+      setProjectUnitsCache((prev) => ({ ...prev, [projectId]: { state: "error" } }));
+    }
+  }, []);
+
+  // Auto-fetch when a row is newly expanded (cached, so re-expanding doesn't refire).
+  useEffect(() => {
+    if (expandedRowId == null) return;
+    const cached = projectUnitsCache[expandedRowId];
+    if (cached != null) return;
+    const project = sortedProjects.find((p) => (p.id as number) === expandedRowId);
+    if (!project) return;
+    const name = String(project["project"] ?? project["name"] ?? "");
+    if (!name) return;
+    void fetchProjectUnits(expandedRowId, name);
+    // sortedProjects is a derived value — depending on it here is fine, the
+    // effect re-runs if the expanded id changes (which is the actual signal).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedRowId]);
 
   const syncToUrl = useCallback(
     (f: CurrentFilters, lim: number, off: number, sb: string, sd: string, poly: string | null) => {
@@ -1679,119 +1905,11 @@ export default function ProjectsPage() {
                       <tr className="bg-slate-50/80">
                         <td colSpan={visibleColumns.length} className="p-0">
                           <div className="sticky left-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden border-b border-slate-200 bg-slate-50/90 px-5 py-4">
-                            {/* Standards */}
-                            <div className="mb-3">
-                              <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Standardy</h4>
-                              <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
-                                {(() => {
-                                  const fields: Array<{ label: string; value: unknown }> = [
-                                    { label: "Kvalita", value: p["overall_quality"] },
-                                    { label: "Topení", value: p["heating"] },
-                                    { label: "Okna", value: p["windows"] },
-                                    { label: "Příčky", value: p["partition_walls"] },
-                                    { label: "Podlahový materiál", value: p["floors"] },
-                                    { label: "Klimatizace", value: p["air_conditioning"] },
-                                    { label: "Chlazení stropem", value: p["cooling_ceilings"] },
-                                    { label: "Žaluzie", value: p["exterior_blinds"] },
-                                    { label: "Smart home", value: p["smart_home"] },
-                                    { label: "Rekuperace", value: p["recuperation"] },
-                                    { label: "Výška stropů", value: p["ceiling_height"] },
-                                    { label: "Kategorie", value: p["category"] },
-                                  ];
-                                  const formatBool = (v: unknown) => {
-                                    if (v === true || v === "true" || v === "1") return "Ano";
-                                    if (v === false || v === "false" || v === "0") return "Ne";
-                                    return null;
-                                  };
-                                  return fields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
-                                    <div key={f.label}>
-                                      <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
-                                      <p className="font-medium text-slate-900">
-                                        {typeof f.value === "boolean" || (typeof f.value === "string" && ["true","false"].includes(f.value.toLowerCase()))
-                                          ? formatBool(f.value) ?? String(f.value) : String(f.value)}
-                                      </p>
-                                    </div>
-                                  ));
-                                })()}
-                              </div>
-                            </div>
-                            {/* Location & walkability */}
-                            <div className="mb-3">
-                              <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Lokalita</h4>
-                              <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
-                                {(() => {
-                                  const fields: Array<{ label: string; value: unknown }> = [
-                                    { label: "Adresa", value: p["address"] },
-                                    { label: "Obec", value: p["municipality"] },
-                                    { label: "Okres", value: p["district"] },
-                                    { label: "Walkability", value: p["walkability_score"] != null ? `${Math.round(Number(p["walkability_score"]))} (${p["walkability_label"] ?? ""})` : null },
-                                    { label: "Hluk", value: p["noise_label"] },
-                                    { label: "Mikro-lokalita", value: p["micro_location_label"] },
-                                    { label: "Dní na trhu", value: p["max_days_on_market"] },
-                                    { label: "Od", value: p["project_first_seen"] },
-                                  ];
-                                  return fields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined).map((f) => (
-                                    <div key={f.label}>
-                                      <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
-                                      <p className="font-medium text-slate-900">{String(f.value)}</p>
-                                    </div>
-                                  ));
-                                })()}
-                              </div>
-                            </div>
-                            {/* Amenities */}
-                            {(() => {
-                              const amenFields: Array<{ label: string; value: unknown }> = [
-                                { label: "Concierge", value: p["concierge"] },
-                                { label: "Recepce", value: p["reception"] },
-                                { label: "Kolárna", value: p["bike_room"] },
-                                { label: "Kočárkárna", value: p["stroller_room"] },
-                                { label: "Fitness", value: p["fitness"] },
-                                { label: "Zahrada", value: p["courtyard_garden"] },
-                              ];
-                              const formatBool = (v: unknown) => {
-                                if (v === true || v === "true" || v === "1") return "Ano";
-                                if (v === false || v === "false" || v === "0") return "Ne";
-                                return null;
-                              };
-                              const filled = amenFields.filter((f) => f.value != null && f.value !== "" && f.value !== undefined);
-                              if (filled.length === 0) return null;
-                              return (
-                                <div className="mb-3">
-                                  <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400 mb-2">Amenities</h4>
-                                  <div className="grid grid-cols-3 gap-x-6 gap-y-2 sm:grid-cols-4 lg:grid-cols-6 text-sm">
-                                    {filled.map((f) => (
-                                      <div key={f.label}>
-                                        <p className="text-[11px] font-medium text-slate-500">{f.label}</p>
-                                        <p className="font-medium text-slate-900">{formatBool(f.value) ?? String(f.value)}</p>
-                                      </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              );
-                            })()}
-                            <div className="mt-3 flex gap-2">
-                              <a
-                                href={`/projects/${p.id}`}
-                                className="inline-flex items-center gap-1 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white hover:bg-slate-800 transition-colors"
-                                data-no-row-nav
-                                onClick={(e) => e.stopPropagation()}
-                              >
-                                Detail projektu
-                              </a>
-                              {p["project_url"] ? (
-                                <a
-                                  href={p["project_url"] as string}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors"
-                                  data-no-row-nav
-                                  onClick={(e) => e.stopPropagation()}
-                                >
-                                  ↗ Web projektu
-                                </a>
-                              ) : null}
-                            </div>
+                            <ExpandedProjectUnits
+                              cache={projectUnitsCache[p.id as number]}
+                              projectUrl={typeof p["project_url"] === "string" ? p["project_url"] : null}
+                              projectId={p.id as number}
+                            />
                           </div>
                         </td>
                       </tr>
