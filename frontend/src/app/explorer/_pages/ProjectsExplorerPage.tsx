@@ -113,14 +113,13 @@ const DEFAULT_VISIBLE_COLUMNS = 10;
 /** Keys shown by default for users without saved column preferences.
  *
  * Tight column set so the table fits on one screen — broker complained
- * about horizontal scrolling. Verbose columns moved INTO the project name
- * cell as multi-line content + inline badges (see ProjectCellContent
- * below). Broker can still re-add any hidden column via the columns
+ * about horizontal scrolling. Anything that's already in the multi-line
+ * PROJEKT cell (developer, municipality, total/available units, completion
+ * date, near-source + noise badges) is no longer duplicated as its own
+ * column. Broker can still re-add any hidden column via the columns
  * config drawer. */
 const DEFAULT_VISIBLE_KEYS: string[] = [
   "name",
-  "total_units",
-  "available_units",
   "avg_price_czk",
   "avg_price_per_m2_czk",
   "walkability_score",
@@ -591,14 +590,11 @@ function ExpandedProjectUnits({
           <table className="w-full">
             <thead>
               <tr className="bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2 text-left">Jednotka</th>
                 <th className="px-3 py-2 text-right">Plocha</th>
-                <th className="px-3 py-2 text-right">Ext.</th>
+                <th className="px-3 py-2 text-right">Venek</th>
                 <th className="px-3 py-2 text-center">Patro</th>
                 <th className="px-3 py-2 text-right">Cena</th>
                 <th className="px-3 py-2 text-right">Kč/m²</th>
-                <th className="px-3 py-2 text-center">Trh</th>
-                <th className="px-3 py-2 text-left">Stav</th>
               </tr>
             </thead>
             <tbody>
@@ -607,7 +603,7 @@ function ExpandedProjectUnits({
                 return (
                   <React.Fragment key={layout}>
                     <tr className="bg-slate-50/50">
-                      <td colSpan={8} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      <td colSpan={5} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                         {formatLayout(layout)}
                         <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
                           · {totalInLayout} {totalInLayout === 1 ? "dostupná" : totalInLayout < 5 ? "dostupné" : "dostupných"}
@@ -616,7 +612,6 @@ function ExpandedProjectUnits({
                     </tr>
                     {rows.map((u) => (
                       <tr key={u.external_id} className="border-t border-slate-100 text-sm hover:bg-slate-50/80">
-                        <td className="px-3 py-2 font-medium text-slate-800">{u.unit_name ?? "—"}</td>
                         <td className="px-3 py-2 text-right tabular-nums text-slate-700">
                           {u.floor_area_m2 != null ? `${Math.round(u.floor_area_m2)} m²` : "—"}
                         </td>
@@ -630,15 +625,11 @@ function ExpandedProjectUnits({
                         <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
                           {u.price_per_m2_czk != null ? `${Math.round(u.price_per_m2_czk / 1000)}k Kč` : "—"}
                         </td>
-                        <td className="px-3 py-2 text-center">
-                          <PriceDiffBadge pct={u.local_price_diff_1000m} />
-                        </td>
-                        <td className="px-3 py-2 text-slate-600">{formatAvailability(u.availability_status)}</td>
                       </tr>
                     ))}
                     {hiddenInGroup > 0 && (
                       <tr>
-                        <td colSpan={8} className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-400">
+                        <td colSpan={5} className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-400">
                           + {hiddenInGroup} dalších {formatLayout(layout)} v projektu
                         </td>
                       </tr>
