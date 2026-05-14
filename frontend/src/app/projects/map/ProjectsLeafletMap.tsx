@@ -1,9 +1,10 @@
 "use client";
 
-import { MapContainer, Marker, Polygon, Popup, TileLayer, useMapEvent } from "react-leaflet";
+import { MapContainer, Marker, Polygon, Popup, TileLayer, useMap, useMapEvent } from "react-leaflet";
 import type { LatLngExpression } from "leaflet";
 import L from "leaflet";
 import Link from "next/link";
+import { useEffect } from "react";
 import "leaflet/dist/leaflet.css";
 import type { LatLng } from "@/lib/geo";
 import { POI_CATEGORY_COLORS, POI_CATEGORY_LABELS } from "@/lib/poiConfig";
@@ -103,6 +104,8 @@ function getPoiCategoryIcon(category: string): L.DivIcon {
   return icon;
 }
 
+type FocusTarget = { lat: number; lng: number; zoom?: number; key?: number; label?: string | null };
+
 type Props = {
   projects: ProjectPoint[];
   center: LatLngExpression;
@@ -113,7 +116,28 @@ type Props = {
   selectedProjectId?: number | null;
   onProjectSelect?: (id: number | null) => void;
   poiOverview?: PoiOverview;
+  focus?: FocusTarget | null;
 };
+
+/** Imperatively pan + zoom the map when `target` changes (address search). */
+function MapFocusController({ target }: { target: FocusTarget | null | undefined }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!target) return;
+    const zoom = typeof target.zoom === "number" ? target.zoom : 15;
+    map.flyTo([target.lat, target.lng], zoom, { duration: 0.8 });
+  }, [map, target?.lat, target?.lng, target?.zoom, target?.key]);
+  return null;
+}
+
+const focusIcon = L.divIcon({
+  className: "",
+  html: `
+    <div style="width:24px;height:24px;border-radius:9999px;background:rgba(244,63,94,0.9);border:3px solid #ffffff;box-shadow:0 0 0 2px rgba(244,63,94,0.35),0 2px 6px rgba(15,23,42,0.35);display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;line-height:1;">📍</div>
+  `,
+  iconSize: [24, 24],
+  iconAnchor: [12, 12],
+});
 
 // Cache barevně odlišených ikon podle hex/HSL barvy, ať zbytečně nevytváříme
 // nové instancie `L.divIcon` pro stejnou barvu.
@@ -151,6 +175,7 @@ function ProjectsLeafletMap({
   selectedProjectId = null,
   onProjectSelect,
   poiOverview = null,
+  focus = null,
 }: Props) {
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
 
@@ -212,6 +237,21 @@ function ProjectsLeafletMap({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       />
       <ClickCapture drawing={drawing} onClick={onMapClick} />
+      <MapFocusController target={focus} />
+      {focus && (
+        <Marker position={[focus.lat, focus.lng]} icon={focusIcon}>
+          <Popup>
+            <div style={{ minWidth: 180 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>
+                {focus.label || "Hledaná adresa"}
+              </div>
+              <div style={{ fontSize: 11, color: "#64748b" }}>
+                {focus.lat.toFixed(5)}, {focus.lng.toFixed(5)}
+              </div>
+            </div>
+          </Popup>
+        </Marker>
+      )}
       {activePolygon.length >= 2 && (
         <Polygon
           positions={activePolygon.map((p) => [p.lat, p.lng]) as [number, number][]}

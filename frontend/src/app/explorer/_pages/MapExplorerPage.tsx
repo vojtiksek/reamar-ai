@@ -128,6 +128,51 @@ export default function ProjectsMapPage() {
   );
   const [poiPanelOpen, setPoiPanelOpen] = useState(true);
 
+  // Address search (HERE geocoding via /geocode). When the broker submits a
+  // query, we flyTo the first hit and drop a red pin so they can scan nearby
+  // projects without losing the current map state.
+  const [addressQuery, setAddressQuery] = useState("");
+  const [addressSearching, setAddressSearching] = useState(false);
+  const [addressError, setAddressError] = useState<string | null>(null);
+  const [focusTarget, setFocusTarget] = useState<{
+    lat: number;
+    lng: number;
+    zoom?: number;
+    key: number;
+    label?: string | null;
+  } | null>(null);
+
+  const handleAddressSearch = useCallback(async () => {
+    const q = addressQuery.trim();
+    if (!q) return;
+    setAddressSearching(true);
+    setAddressError(null);
+    try {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const res = await fetch(`${API_BASE}/geocode?q=${encodeURIComponent(q)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { results?: { lat: number; lng: number; label?: string }[] };
+      const top = data.results?.[0];
+      if (!top) {
+        setAddressError("Adresa nenalezena");
+        return;
+      }
+      setFocusTarget({
+        lat: top.lat,
+        lng: top.lng,
+        zoom: 16,
+        key: Date.now(),
+        label: top.label ?? null,
+      });
+    } catch (e) {
+      setAddressError(e instanceof Error ? e.message : "Chyba vyhledávání");
+    } finally {
+      setAddressSearching(false);
+    }
+  }, [addressQuery]);
+
   const filtersInUrl: CurrentFilters = useMemo(
     () => parseFiltersFromSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
     [searchParams]
@@ -496,6 +541,45 @@ export default function ProjectsMapPage() {
             </span>
           )}
         </button>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleAddressSearch();
+          }}
+          className="flex items-center gap-1"
+          role="search"
+        >
+          <input
+            type="text"
+            value={addressQuery}
+            onChange={(e) => setAddressQuery(e.target.value)}
+            placeholder="Hledat adresu…"
+            aria-label="Hledat adresu na mapě"
+            className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
+            style={{ minWidth: 220 }}
+          />
+          <button
+            type="submit"
+            disabled={addressSearching || !addressQuery.trim()}
+            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Najít adresu na mapě"
+          >
+            {addressSearching ? "Hledám…" : "Najít"}
+          </button>
+          {focusTarget && (
+            <button
+              type="button"
+              onClick={() => { setFocusTarget(null); setAddressQuery(""); setAddressError(null); }}
+              className="text-xs text-slate-500 underline decoration-dotted underline-offset-2 hover:text-slate-900"
+              title="Skrýt značku adresy"
+            >
+              Zrušit
+            </button>
+          )}
+          {addressError && (
+            <span className="text-xs text-rose-600">{addressError}</span>
+          )}
+        </form>
         {isClientOverridden && (
           <button
             type="button"
@@ -690,6 +774,7 @@ export default function ProjectsMapPage() {
             selectedProjectId={selectedProjectId}
             onProjectSelect={setSelectedProjectId}
             poiOverview={poiOverviewData}
+            focus={focusTarget}
           />
         </section>
       </div>

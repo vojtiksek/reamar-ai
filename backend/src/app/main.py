@@ -10372,3 +10372,53 @@ def update_scoring_v2_config(body: dict[str, Any], db: DbSession) -> dict[str, A
     db.commit()
 
     return {"config": SCORING_V2_CONFIG}
+
+
+@app.get("/geocode")
+def geocode_address(
+    q: str,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Forward to HERE Geocoding API. Returns top results with lat/lng + label.
+    Used by the map page's address search — broker types "Vinohradská 50" and
+    the map flies to the result. Czechia-only to avoid bleed from similarly
+    named streets abroad."""
+    import os
+    import requests as _requests
+
+    api_key = os.environ.get("HERE_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
+    query = (q or "").strip()
+    if not query:
+        return {"results": []}
+    try:
+        resp = _requests.get(
+            "https://geocode.search.hereapi.com/v1/geocode",
+            params={
+                "q": query,
+                "in": "countryCode:CZE",
+                "limit": 5,
+                "apiKey": api_key,
+            },
+            timeout=8,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except _requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Geocoding upstream failed: {exc}") from exc
+    items = data.get("items") or []
+    results: list[dict[str, Any]] = []
+    for item in items:
+        pos = item.get("position") or {}
+        lat = pos.get("lat")
+        lng = pos.get("lng")
+        if lat is None or lng is None:
+            continue
+        results.append({
+            "label": item.get("title") or (item.get("address") or {}).get("label"),
+            "lat": float(lat),
+            "lng": float(lng),
+            "result_type": item.get("resultType"),
+        })
+    return {"results": results}
