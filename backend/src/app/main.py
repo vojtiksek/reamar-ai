@@ -4784,6 +4784,8 @@ def _build_units_query(
     max_latitude: float | None = None,
     min_longitude: float | None = None,
     max_longitude: float | None = None,
+    area_id: list[int] | None = None,
+    exclude_area_id: list[int] | None = None,
     min_ride_to_center_min: float | None = None,
     max_ride_to_center_min: float | None = None,
     min_public_transport_to_center_min: float | None = None,
@@ -5051,6 +5053,30 @@ def _build_units_query(
         base = base.where(Unit.gps_longitude >= min_longitude)
     if max_longitude is not None:
         base = base.where(Unit.gps_longitude <= max_longitude)
+    # Boundary-area filter: include = at least one matching polygon contains
+    # the unit's GPS point; exclude = no excluded polygon contains it. Uses
+    # the GIST-indexed boundary_areas.geom from app/boundaries.py.
+    if area_id or exclude_area_id:
+        from .boundaries import BoundaryArea
+        unit_point = sa.func.ST_SetSRID(
+            sa.func.ST_MakePoint(Unit.gps_longitude, Unit.gps_latitude), 4326
+        )
+        if area_id:
+            include_subq = (
+                sa.select(sa.literal(1))
+                .select_from(BoundaryArea)
+                .where(BoundaryArea.id.in_(area_id))
+                .where(sa.func.ST_Contains(BoundaryArea.geom, unit_point))
+            )
+            base = base.where(sa.exists(include_subq))
+        if exclude_area_id:
+            exclude_subq = (
+                sa.select(sa.literal(1))
+                .select_from(BoundaryArea)
+                .where(BoundaryArea.id.in_(exclude_area_id))
+                .where(sa.func.ST_Contains(BoundaryArea.geom, unit_point))
+            )
+            base = base.where(~sa.exists(exclude_subq))
     if min_ride_to_center_min is not None:
         base = base.where(Unit.ride_to_center_min >= min_ride_to_center_min)
     if max_ride_to_center_min is not None:
@@ -5251,6 +5277,8 @@ def list_units(
     max_latitude: Annotated[float | None, Query(description="Filter by Unit.gps_latitude <= value")] = None,
     min_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude >= value")] = None,
     max_longitude: Annotated[float | None, Query(description="Filter by Unit.gps_longitude <= value")] = None,
+    area_id: Annotated[list[int] | None, Query(description="Include units whose project GPS falls inside any of these boundary_areas")] = None,
+    exclude_area_id: Annotated[list[int] | None, Query(description="Exclude units whose project GPS falls inside any of these boundary_areas")] = None,
     min_ride_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by ride_to_center_min >= value (min)")] = None,
     max_ride_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by ride_to_center_min <= value (min)")] = None,
     min_public_transport_to_center_min: Annotated[float | None, Query(ge=0, description="Filter by public_transport_to_center_min >= value (min)")] = None,
@@ -5342,6 +5370,8 @@ def list_units(
         max_latitude=max_latitude,
         min_longitude=min_longitude,
         max_longitude=max_longitude,
+        area_id=area_id,
+        exclude_area_id=exclude_area_id,
         min_ride_to_center_min=min_ride_to_center_min,
         max_ride_to_center_min=max_ride_to_center_min,
         min_public_transport_to_center_min=min_public_transport_to_center_min,
@@ -6777,6 +6807,8 @@ def list_projects(
     max_latitude: Annotated[float | None, Query(description="Filter by Project.gps_latitude <= value")] = None,
     min_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude >= value")] = None,
     max_longitude: Annotated[float | None, Query(description="Filter by Project.gps_longitude <= value")] = None,
+    area_id: Annotated[list[int] | None, Query(description="Include projects whose GPS falls inside any of these boundary_areas")] = None,
+    exclude_area_id: Annotated[list[int] | None, Query(description="Exclude projects whose GPS falls inside any of these boundary_areas")] = None,
     # Unit-level filters: only projects that have at least one unit matching these are returned
     available: Annotated[bool | None, Query(description="Filter projects by units with available=")] = None,
     availability: Annotated[list[str] | None, Query(description="Filter by unit availability_status (any of)")] = None,
@@ -6878,6 +6910,28 @@ def list_projects(
         stmt = stmt.where(Project.gps_longitude >= min_longitude)
     if max_longitude is not None:
         stmt = stmt.where(Project.gps_longitude <= max_longitude)
+    # Boundary-area filter (PostGIS): see analogous block in _build_units_query.
+    if area_id or exclude_area_id:
+        from .boundaries import BoundaryArea
+        project_point = sa.func.ST_SetSRID(
+            sa.func.ST_MakePoint(Project.gps_longitude, Project.gps_latitude), 4326
+        )
+        if area_id:
+            include_subq = (
+                sa.select(sa.literal(1))
+                .select_from(BoundaryArea)
+                .where(BoundaryArea.id.in_(area_id))
+                .where(sa.func.ST_Contains(BoundaryArea.geom, project_point))
+            )
+            stmt = stmt.where(sa.exists(include_subq))
+        if exclude_area_id:
+            exclude_subq = (
+                sa.select(sa.literal(1))
+                .select_from(BoundaryArea)
+                .where(BoundaryArea.id.in_(exclude_area_id))
+                .where(sa.func.ST_Contains(BoundaryArea.geom, project_point))
+            )
+            stmt = stmt.where(~sa.exists(exclude_subq))
     if min_completion_date is not None:
         stmt = stmt.where(Project.completion_date >= min_completion_date)
     if max_completion_date is not None:
