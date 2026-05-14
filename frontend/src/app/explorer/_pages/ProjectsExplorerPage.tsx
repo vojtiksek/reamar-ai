@@ -110,17 +110,19 @@ const ROWS_PER_PAGE_OPTIONS = [100, 300, 500] as const;
 const PROJECTS_COLUMNS_STORAGE_KEY = "projects_columns_v1";
 const DEFAULT_VISIBLE_COLUMNS = 10;
 
-/** Keys shown by default for users without saved column preferences, in display order. */
+/** Keys shown by default for users without saved column preferences.
+ *
+ * Tight column set so the table fits on one screen — broker complained
+ * about horizontal scrolling. Verbose columns moved INTO the project name
+ * cell as multi-line content + inline badges (see ProjectCellContent
+ * below). Broker can still re-add any hidden column via the columns
+ * config drawer. */
 const DEFAULT_VISIBLE_KEYS: string[] = [
   "name",
-  "developer",
   "total_units",
   "available_units",
   "avg_price_czk",
   "avg_price_per_m2_czk",
-  "municipality",
-  "ride_to_center",
-  "public_transport_to_center",
   "walkability_score",
 ];
 const DEFAULT_VISIBLE_KEYS_SET = new Set(DEFAULT_VISIBLE_KEYS);
@@ -389,6 +391,91 @@ function scoreLabel(score: number): { label: string; cls: string } {
 function FitDot({ value, title }: { value: number; title: string }) {
   const color = value >= 70 ? "bg-emerald-400" : value >= 40 ? "bg-amber-400" : "bg-red-400";
   return <span title={`${title}: ${Math.round(value)}`} className={`inline-block h-2 w-2 rounded-full ${color}`} />;
+}
+
+/** Inline badges for the project name cell — mirror what /cases/X/recommendations
+ * shows in ProjectGroupCard. Uses only fields that /projects already returns
+ * (noise_label + distance_to_railway_m/tram_tracks_m/primary_road_m). POI
+ * counts and MHD-stop distances are not currently in the projects payload —
+ * if we want those here, the backend response needs to grow. */
+function NoiseChip({ label }: { label?: string | null }) {
+  if (!label) return null;
+  const lower = label.toLowerCase();
+  const cls = lower.includes("nízk")
+    ? "bg-emerald-100 text-emerald-700"
+    : lower.includes("vyšš") || lower.includes("vysok")
+    ? "bg-rose-100 text-rose-700"
+    : "bg-slate-100 text-slate-600";
+  return <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}>Hluk: {lower}</span>;
+}
+
+function NearSourceChips({
+  railM, tramM, roadM,
+}: { railM?: number | null; tramM?: number | null; roadM?: number | null }) {
+  const items: { label: string; tip: string }[] = [];
+  if (tramM != null && tramM <= 150) items.push({ label: "Tram", tip: `Tramvajová trať ${Math.round(tramM)} m` });
+  if (railM != null && railM <= 200) items.push({ label: "Vlak", tip: `Železnice ${Math.round(railM)} m` });
+  if (roadM != null && roadM <= 80) items.push({ label: "Silnice", tip: `Hlavní silnice ${Math.round(roadM)} m` });
+  if (!items.length) return null;
+  return (
+    <>
+      {items.map((it) => (
+        <span
+          key={it.label}
+          title={it.tip}
+          className="rounded-full bg-amber-50 border border-amber-200 px-1.5 py-0.5 text-[9px] font-medium text-amber-700"
+        >
+          {it.label}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** Multi-line content for the PROJEKT cell. Replaces what used to be a
+ * single-line "project name" rendering — bumps density without forcing
+ * horizontal scroll. Sortable column header for `name` still works,
+ * because the data drives the sort, not the rendering. */
+function ProjectCellContent({ p }: { p: ProjectItem }) {
+  const asStr = (v: unknown): string => (v == null ? "" : String(v));
+  const developer = asStr(p["developer"]);
+  const municipality = asStr(p["municipality"] ?? p["district"] ?? p["cadastral_area_iga"]);
+  const totalUnits = p["total_units"] ?? p["units_total"];
+  const availableUnits = p["available_units"] ?? p["units_available"];
+  const completion = asStr(p["completion_date"]);
+  const noise = (p["noise_label"] as string | null | undefined) ?? null;
+  const rail = num(p["distance_to_railway_m"]);
+  const tram = num(p["distance_to_tram_tracks_m"]);
+  const road = num(p["distance_to_primary_road_m"]);
+  const projectName = asStr(p["project"] ?? p["name"]);
+  const secondaryLine = [developer, municipality].filter(Boolean).join(" · ");
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5 py-0.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="truncate font-semibold text-slate-900">{projectName || "—"}</span>
+        <NoiseChip label={noise} />
+        <NearSourceChips railM={rail} tramM={tram} roadM={road} />
+      </div>
+      {secondaryLine && (
+        <div className="truncate text-[11px] text-slate-500">{secondaryLine}</div>
+      )}
+      <div className="flex flex-wrap gap-x-3 text-[11px] text-slate-400">
+        {totalUnits != null && (
+          <span>
+            {asStr(totalUnits)} jednotek
+            {availableUnits != null ? ` · ${asStr(availableUnits)} dostupných` : ""}
+          </span>
+        )}
+        {completion && <span>Dokončení: {completion}</span>}
+      </div>
+    </div>
+  );
+}
+
+function num(v: unknown): number | null {
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  if (typeof v === "string" && v.trim() !== "" && !Number.isNaN(Number(v))) return Number(v);
+  return null;
 }
 
 // PriceDiffBadge is local — mirrors the one in recommendations/page.tsx so
@@ -1846,6 +1933,14 @@ export default function ProjectsPage() {
                         // Special handling for financování/parkování: zobrazuj jen jednu hodnotu
                         // (payment_*), která se může přepočítat z min/max na backendu.
                         const renderValue = () => {
+                          // Project name column = multi-line cell with badges
+                          // and secondary info (developer / municipality /
+                          // unit counts / completion). The wide cell soaks up
+                          // horizontal space so the rest of the table fits on
+                          // a typical screen without scrolling.
+                          if (fieldKey === "name" || fieldKey === "project") {
+                            return <ProjectCellContent p={p} />;
+                          }
                           if (fieldKey === "payment_contract" || fieldKey === "payment_construction" || fieldKey === "payment_occupancy") {
                             const val = p[fieldKey] as number | null | undefined;
                             return formatPercent(val != null ? Number(val) : null, undefined, true);
@@ -1883,12 +1978,16 @@ export default function ProjectsPage() {
                         };
 
                         const isStickyFirst = columnIndex === 0;
+                        // Project name cell is multi-line + carries inline
+                        // badges, so give it a generous min-width on desktop.
+                        // Other cells stay compact.
+                        const isProjectCell = fieldKey === "name" || fieldKey === "project";
                         return (
                           <td
                             key={col.key}
                             className={`px-3 py-1.5 text-xs sm:text-sm text-slate-900 ${
                               alignRight ? "text-right" : "text-left"
-                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""}`}
+                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${isProjectCell ? "min-w-[320px] max-w-[480px]" : ""}`}
                             onDoubleClick={() => {
                               if (!isEditable || loading || savingOverride) return;
                               const projectId = p.id as number;
