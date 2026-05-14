@@ -496,7 +496,10 @@ function AreaFilterSection({
   const activeCount = included.length + excluded.length;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-slate-50/70 shadow-sm overflow-hidden">
+    <section className="relative rounded-2xl border border-slate-200 bg-slate-50/70 shadow-sm">
+      {/* NOTE: no `overflow-hidden` here — the autosuggest dropdown is rendered
+          via position:absolute and would otherwise be clipped inside the
+          scrollable filter drawer. */}
       <div className="flex w-full items-center gap-3 px-4 py-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
           Oblast

@@ -206,7 +206,7 @@ export function AreaFilter({ included, excluded, onChange, className }: Props) {
         )}
         {open && suggestions.length > 0 && (
           <ul
-            className="absolute left-0 top-full z-30 mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg"
+            className="absolute left-0 top-full z-[60] mt-1 max-h-64 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-xl"
             role="listbox"
           >
             {suggestions.map((s, i) => (
