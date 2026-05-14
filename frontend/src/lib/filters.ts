@@ -85,6 +85,10 @@ const CATALOG_TO_UNITS_API: Record<
   distance_to_tram_stop_m: { max: "max_distance_to_tram_stop_m" },
   distance_to_bus_stop_m: { max: "max_distance_to_bus_stop_m" },
   distance_to_train_station_m: { max: "max_distance_to_train_station_m" },
+  // Unified geographic-area filter (replaces 7 legacy text location filters).
+  // Values are stringified numeric ids from boundary_areas. Backend converts.
+  area_id: { list: "area_id" },
+  exclude_area_id: { list: "exclude_area_id" },
 };
 
 /**
@@ -237,6 +241,8 @@ const API_TO_CATALOG: Record<string, { key: string; suffix?: string; date?: bool
   max_distance_to_tram_stop_m: { key: "distance_to_tram_stop_m", suffix: "max" },
   max_distance_to_bus_stop_m: { key: "distance_to_bus_stop_m", suffix: "max" },
   max_distance_to_train_station_m: { key: "distance_to_train_station_m", suffix: "max" },
+  area_id: { key: "area_id" },
+  exclude_area_id: { key: "exclude_area_id" },
   min_completion_date: { key: "completion_date", suffix: "min", date: true },
   max_completion_date: { key: "completion_date", suffix: "max", date: true },
 };
@@ -262,6 +268,9 @@ const API_LIST_PARAMS = new Set([
   "building",
   // Stav jednotky (available / reserved / sold / ...), může mít více hodnot najednou.
   "availability",
+  // Geographic-area filter ids (multi-select, numeric, repeated in API call).
+  "area_id",
+  "exclude_area_id",
 ]);
 
 export function parseFiltersFromSearchParams(params: URLSearchParams): CurrentFilters {

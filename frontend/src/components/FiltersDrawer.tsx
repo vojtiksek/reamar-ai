@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { CurrentFilters, FilterGroup, FilterSpec } from "@/lib/filters";
 import { API_BASE } from "@/lib/api";
 import { buildUnitsQuery } from "@/lib/filters";
+import { AreaFilter, type Area } from "@/components/AreaFilter";
 
 type Props = {
   open: boolean;
@@ -129,6 +130,17 @@ const ANO_ONLY_KEYS = new Set([
 //   - lokalitní duplicity (municipality/city/...) — necháváme jen „district" (Okres)
 //   - venkovní prostor — necháváme jen souhrnný exterior_area
 const HIDDEN_FILTER_KEYS = new Set([
+  // Legacy text-based location filters — replaced by the unified AreaFilter
+  // (GeoPostGIS-backed) at the top of the drawer. Backend still accepts these
+  // for compatibility with older saved profiles.
+  "city",
+  "district",
+  "municipality",
+  "postal_code",
+  "cadastral_area_iga",
+  "municipal_district_iga",
+  "administrative_district_iga",
+  "region_iga",
   // Backend není ještě plně připojen
   "recuperation",
   "cooling",
@@ -328,6 +340,10 @@ export function FiltersDrawer({
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-5">
           <div className="space-y-3">
+            <AreaFilterSection
+              currentFilters={currentFilters}
+              onChange={onChange}
+            />
             <NearbyTransportSection
               currentFilters={currentFilters}
               onChange={onChange}
@@ -424,6 +440,97 @@ export function FiltersDrawer({
       </div>
     </>
   );
+}
+
+/** AreaFilter wrapper that bridges URL state (numeric ids) with the chip
+ * component (which needs name + project_count). Rehydrates names via
+ * GET /areas/{id} when only ids are present in the URL (link share, refresh).
+ */
+function AreaFilterSection({
+  currentFilters,
+  onChange,
+}: {
+  currentFilters: CurrentFilters;
+  onChange: (key: string, value: number | number[] | string | string[] | boolean | undefined) => void;
+}) {
+  const includeIds = useMemo(() => idsFromFilter(currentFilters.area_id), [currentFilters.area_id]);
+  const excludeIds = useMemo(() => idsFromFilter(currentFilters.exclude_area_id), [currentFilters.exclude_area_id]);
+  const [included, setIncluded] = useState<Area[]>([]);
+  const [excluded, setExcluded] = useState<Area[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function hydrate(ids: number[], setter: (a: Area[]) => void, current: Area[]) {
+      if (ids.length === 0) { setter([]); return; }
+      // Reuse already-loaded chips when their ids haven't changed — avoids a
+      // refetch on every URL update.
+      const cachedById = new Map(current.map((a) => [a.id, a]));
+      const missing = ids.filter((id) => !cachedById.has(id));
+      let merged: Area[] = ids.map((id) => cachedById.get(id) ?? { id, name: `Oblast ${id}` });
+      if (missing.length > 0) {
+        const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+        const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+        const fetched: Area[] = await Promise.all(
+          missing.map(async (id) => {
+            try {
+              const r = await fetch(`${API_BASE}/areas/${id}`, { headers });
+              if (!r.ok) return { id, name: `Oblast ${id}` };
+              const d = await r.json() as Area;
+              return { id: d.id, name: d.name, display_name: d.display_name ?? null, project_count: d.project_count };
+            } catch {
+              return { id, name: `Oblast ${id}` };
+            }
+          }),
+        );
+        const fetchedById = new Map(fetched.map((a) => [a.id, a]));
+        merged = ids.map((id) => fetchedById.get(id) ?? cachedById.get(id) ?? { id, name: `Oblast ${id}` });
+      }
+      if (!cancelled) setter(merged);
+    }
+    void hydrate(includeIds, setIncluded, included);
+    void hydrate(excludeIds, setExcluded, excluded);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [includeIds.join(","), excludeIds.join(",")]);
+
+  const activeCount = included.length + excluded.length;
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-slate-50/70 shadow-sm overflow-hidden">
+      <div className="flex w-full items-center gap-3 px-4 py-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+          Oblast
+        </h3>
+        {activeCount > 0 && (
+          <span className="inline-flex items-center justify-center rounded-full bg-slate-900 px-1.5 py-0.5 text-[10px] font-bold text-white min-w-[18px]">
+            {activeCount}
+          </span>
+        )}
+        <div className="h-px flex-1 bg-slate-200" />
+      </div>
+      <div className="px-4 pb-3 pt-1">
+        <AreaFilter
+          included={included}
+          excluded={excluded}
+          onChange={({ included: newInc, excluded: newExc }) => {
+            setIncluded(newInc);
+            setExcluded(newExc);
+            const incIds = newInc.map((a) => String(a.id));
+            const excIds = newExc.map((a) => String(a.id));
+            onChange("area_id", incIds.length ? incIds : undefined);
+            onChange("exclude_area_id", excIds.length ? excIds : undefined);
+          }}
+        />
+      </div>
+    </section>
+  );
+}
+
+function idsFromFilter(v: unknown): number[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .map((x) => (typeof x === "number" ? x : Number(x)))
+    .filter((n) => Number.isFinite(n));
 }
 
 function NearbyTransportSection({
