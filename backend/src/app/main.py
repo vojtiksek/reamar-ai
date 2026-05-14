@@ -6476,15 +6476,21 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
             out[k] = v
 
     # Jedna hodnota „Autem do centra" / „MHD do centra": klíč ride_to_center / public_transport_to_center.
-    # Projekt je často nemá; doplníme z agregátu jednotek (průměr).
-    if out.get("ride_to_center_min") is None and agg.get("avg_ride_to_center_min") is not None:
+    # Catalog loop above už uložil hodnotu z Project.ride_to_center_min do out["ride_to_center"].
+    # Když projekt sám nemá hodnotu, doplníme z agregátu jednotek (průměr) — POZN.: cached
+    # agg subquery (_project_agg_cached_subquery) tyto klíče nevrací, takže agg-fallback
+    # se uplatní jen v live subquery. Nepřepisujeme None-em, jinak by se „nulovala" hodnota
+    # z projektu i tam, kde byla validní.
+    if agg.get("avg_ride_to_center_min") is not None:
         v = agg["avg_ride_to_center_min"]
         out["ride_to_center_min"] = float(v) if isinstance(v, Decimal) else v
-    if out.get("public_transport_to_center_min") is None and agg.get("avg_public_transport_to_center_min") is not None:
+    if agg.get("avg_public_transport_to_center_min") is not None:
         v = agg["avg_public_transport_to_center_min"]
         out["public_transport_to_center_min"] = float(v) if isinstance(v, Decimal) else v
-    out["ride_to_center"] = out.get("ride_to_center_min")
-    out["public_transport_to_center"] = out.get("public_transport_to_center_min")
+    if out.get("ride_to_center_min") is not None:
+        out["ride_to_center"] = out["ride_to_center_min"]
+    if out.get("public_transport_to_center_min") is not None:
+        out["public_transport_to_center"] = out["public_transport_to_center_min"]
 
     # Časové údaje z agregátu (field_catalog: project_first_seen, project_last_seen, max_days_on_market)
     out["project_first_seen"] = agg.get("project_first_seen")
