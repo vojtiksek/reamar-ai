@@ -953,6 +953,25 @@ class ErrorLog(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
 
+class AppSetting(Base):
+    """Generic key/value JSONB store for admin-managed runtime knobs.
+
+    First use: `projects_columns_allowed` — list of column keys the admin
+    has whitelisted to appear in the broker's column picker on /explorer.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[dict | list] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
+
+
 # Indexes
 Index("ix_units_project_id", Unit.project_id)
 Index("ix_ops_runs_started_at_desc", OpsRun.started_at.desc())

@@ -55,6 +55,7 @@ from .models import (
     ClientMagicLink,
     ClientPortalSession,
     ErrorLog,
+    AppSetting,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -8481,6 +8482,73 @@ def set_global_scoring_weights(body: dict[str, Any], db: DbSession) -> dict[str,
     db.commit()
     db.refresh(row)
     return {"weights": row.config_json}
+
+
+# --- Admin: columns allow-list (controls which columns appear in the broker's
+# explorer column picker — admin shrinks the picker to a curated set). ----
+
+_COLUMNS_ALLOWED_KEY_PREFIX = "projects_columns_allowed"
+_ALLOWED_VIEWS = {"projects"}
+
+
+def _columns_allowed_key(view: str) -> str:
+    return f"{_COLUMNS_ALLOWED_KEY_PREFIX}:{view}"
+
+
+@app.get("/admin/columns-allowed")
+def get_columns_allowed(view: str, db: DbSession) -> dict[str, Any]:
+    """Return the admin-curated allow-list of column keys for a given view.
+
+    Empty list = no whitelist, all catalog columns are exposed to the picker.
+    """
+    if view not in _ALLOWED_VIEWS:
+        raise HTTPException(status_code=400, detail=f"Unsupported view: {view}")
+    row = db.execute(
+        select(AppSetting).where(AppSetting.key == _columns_allowed_key(view))
+    ).scalars().first()
+    keys: list[str] = []
+    if row and isinstance(row.value, dict):
+        raw = row.value.get("keys")
+        if isinstance(raw, list):
+            keys = [str(k) for k in raw if isinstance(k, str)]
+    elif row and isinstance(row.value, list):
+        keys = [str(k) for k in row.value if isinstance(k, str)]
+    return {"view": view, "keys": keys}
+
+
+@app.put("/admin/columns-allowed")
+def set_columns_allowed(body: dict[str, Any], db: DbSession) -> dict[str, Any]:
+    """Persist the admin's allow-list of column keys for a view.
+
+    Body: {"view": "projects", "keys": ["name", "avg_price_czk", ...]}.
+    """
+    view = str(body.get("view") or "").strip()
+    if view not in _ALLOWED_VIEWS:
+        raise HTTPException(status_code=400, detail=f"Unsupported view: {view}")
+    raw_keys = body.get("keys")
+    if not isinstance(raw_keys, list):
+        raise HTTPException(status_code=400, detail="'keys' must be a list of strings")
+    keys = [str(k) for k in raw_keys if isinstance(k, str) and k.strip()]
+    # Dedupe preserving order.
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for k in keys:
+        if k in seen:
+            continue
+        seen.add(k)
+        ordered.append(k)
+
+    storage_key = _columns_allowed_key(view)
+    row = db.execute(
+        select(AppSetting).where(AppSetting.key == storage_key)
+    ).scalars().first()
+    if row:
+        row.value = {"keys": ordered}
+    else:
+        row = AppSetting(key=storage_key, value={"keys": ordered})
+        db.add(row)
+    db.commit()
+    return {"view": view, "keys": ordered}
 
 
 @app.get("/clients/{client_id}/scoring-weights")

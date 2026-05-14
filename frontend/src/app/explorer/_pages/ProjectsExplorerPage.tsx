@@ -990,12 +990,32 @@ export default function ProjectsPage() {
   );
 
 
-  // Fetch column definitions
+  // Fetch column definitions + the admin-curated allow-list (configured via
+  // /admin/sloupce). When the allow-list is non-empty, the picker only shows
+  // those keys. Empty list = no whitelist → all catalog columns are exposed.
   useEffect(() => {
-    fetch(`${API_BASE}/columns?view=projects`)
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error(res.statusText))))
-      .then((data: ProjectColumnDef[]) => {
-        setColumns(Array.isArray(data) ? data : []);
+    Promise.all([
+      fetch(`${API_BASE}/columns?view=projects`).then((res) =>
+        res.ok ? (res.json() as Promise<ProjectColumnDef[]>) : Promise.reject(new Error(res.statusText))
+      ),
+      fetch(`${API_BASE}/admin/columns-allowed?view=projects`)
+        .then((res) => (res.ok ? res.json() : Promise.resolve({ keys: [] })))
+        .then((data: { keys?: string[] }) =>
+          Array.isArray(data?.keys) ? data.keys : []
+        )
+        .catch(() => [] as string[]),
+    ])
+      .then(([cols, allowedKeys]) => {
+        const list = Array.isArray(cols) ? cols : [];
+        if (allowedKeys.length === 0) {
+          setColumns(list);
+          return;
+        }
+        const allowed = new Set(allowedKeys);
+        // Always keep `name` so the projects view stays usable even if admin
+        // accidentally removes it.
+        allowed.add("name");
+        setColumns(list.filter((c) => allowed.has(c.key)));
       })
       .catch(() => setColumns([]));
   }, []);
