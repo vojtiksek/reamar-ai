@@ -10548,3 +10548,71 @@ def geocode_address(
             boundary = _fetch_nominatim_boundary(query)
 
     return {"results": results, "boundary": boundary}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Boundary areas (Nominatim-backed) — power the unified "Oblast" filter.
+# ──────────────────────────────────────────────────────────────────────────
+
+@app.post("/areas/resolve")
+def areas_resolve(
+    body: dict[str, Any],
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Resolve a free-text area name to a cached BoundaryArea. Returns the
+    cached row when present, otherwise fetches from Nominatim, inserts, and
+    returns the new row. Idempotent — calling twice with "Praha 8" yields
+    the same id."""
+    from .boundaries import resolve_area_by_name, get_area_geometry_geojson, count_projects_in_area
+
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Missing 'name'")
+    area = resolve_area_by_name(db, name)
+    if area is None:
+        raise HTTPException(status_code=404, detail=f"Area not found for query: {name!r}")
+    geom = get_area_geometry_geojson(db, area.id)
+    count = count_projects_in_area(db, area.id)
+    return {
+        "id": area.id,
+        "name": area.name,
+        "display_name": area.display_name,
+        "bounds": {
+            "south": area.bbox_south,
+            "north": area.bbox_north,
+            "west": area.bbox_west,
+            "east": area.bbox_east,
+        } if area.bbox_south is not None else None,
+        "geometry": geom,
+        "project_count": count,
+    }
+
+
+@app.get("/areas/{area_id}")
+def areas_get(
+    area_id: int,
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Return one cached area by id, including its full GeoJSON geometry and
+    current project count. Used by the map page to re-render the polygon
+    after a reload when only area_id is present in the URL."""
+    from .boundaries import BoundaryArea, get_area_geometry_geojson, count_projects_in_area
+
+    area = db.get(BoundaryArea, area_id)
+    if area is None:
+        raise HTTPException(status_code=404, detail="Area not found")
+    return {
+        "id": area.id,
+        "name": area.name,
+        "display_name": area.display_name,
+        "bounds": {
+            "south": area.bbox_south,
+            "north": area.bbox_north,
+            "west": area.bbox_west,
+            "east": area.bbox_east,
+        } if area.bbox_south is not None else None,
+        "geometry": get_area_geometry_geojson(db, area.id),
+        "project_count": count_projects_in_area(db, area.id),
+    }
