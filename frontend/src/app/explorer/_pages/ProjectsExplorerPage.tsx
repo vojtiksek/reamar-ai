@@ -646,9 +646,14 @@ export default function ProjectsPage() {
     try {
       const params = new URLSearchParams();
       params.set("project", projectName);
-      params.set("availability", "available");
-      params.set("availability", "unseen");
-      params.set("availability", "reserved");
+      // Multi-value availability filter — URLSearchParams.set replaces, so we
+      // need append for repeated query params (FastAPI parses list[str] from
+      // ?availability=A&availability=B). Bug fixed 2026-05-14: previously
+      // .set overwrote each prior value, leaving only "reserved" → 0 results
+      // for projects with no reserved units.
+      for (const status of ["available", "unseen", "reserved"]) {
+        params.append("availability", status);
+      }
       params.set("limit", "500");
       params.set("with_count", "false");
       // Compact 'map' mode keeps the payload small but still includes
