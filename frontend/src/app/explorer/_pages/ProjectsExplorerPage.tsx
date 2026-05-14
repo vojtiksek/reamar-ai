@@ -438,11 +438,39 @@ function ExpandedProjectUnits({
     return <div className="py-4 text-center text-xs text-rose-600">Chyba při načítání jednotek.</div>;
   }
   const units = cache.units ?? [];
+  // Group by layout, sort each group by price ASC, keep top 5 per group.
+  // Broker scans "cheapest in each disposition" — much more useful than a
+  // flat list of every available unit when a project has 50+.
+  const TOP_PER_LAYOUT = 5;
+  const groupsByLayout = new Map<string, ExpandedUnitRow[]>();
+  for (const u of units) {
+    const key = u.layout ?? "unknown";
+    const arr = groupsByLayout.get(key) ?? [];
+    arr.push(u);
+    groupsByLayout.set(key, arr);
+  }
+  // Natural sort: 1kk → 1.5kk → 2kk → 3kk → 4kk → 5kk → unknown.
+  const layoutOrder = (lay: string): number => {
+    const m = /^layout_(\d+)(?:_(\d+))?$/.exec(lay);
+    if (!m) return 99;
+    const whole = parseInt(m[1], 10);
+    const frac = m[2] ? parseInt(m[2], 10) / 10 : 0;
+    return whole + frac;
+  };
+  const layouts = Array.from(groupsByLayout.keys()).sort((a, b) => layoutOrder(a) - layoutOrder(b));
+  const groupedTop: { layout: string; rows: ExpandedUnitRow[]; totalInLayout: number }[] = layouts.map((lay) => {
+    const all = groupsByLayout.get(lay) ?? [];
+    const sorted = [...all].sort((a, b) => (a.price_czk ?? Infinity) - (b.price_czk ?? Infinity));
+    return { layout: lay, rows: sorted.slice(0, TOP_PER_LAYOUT), totalInLayout: all.length };
+  });
   return (
     <>
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
           Dostupné jednotky · {units.length}
+          <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
+            (top {TOP_PER_LAYOUT} nejlevnějších v každé dispozici)
+          </span>
         </h4>
         <div className="flex gap-2">
           <a
@@ -477,7 +505,6 @@ function ExpandedProjectUnits({
             <thead>
               <tr className="bg-slate-50/80 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
                 <th className="px-3 py-2 text-left">Jednotka</th>
-                <th className="px-3 py-2 text-left">Dispozice</th>
                 <th className="px-3 py-2 text-right">Plocha</th>
                 <th className="px-3 py-2 text-right">Ext.</th>
                 <th className="px-3 py-2 text-center">Patro</th>
@@ -488,29 +515,50 @@ function ExpandedProjectUnits({
               </tr>
             </thead>
             <tbody>
-              {units.map((u) => (
-                <tr key={u.external_id} className="border-t border-slate-100 text-sm hover:bg-slate-50/80">
-                  <td className="px-3 py-2 font-medium text-slate-800">{u.unit_name ?? "—"}</td>
-                  <td className="px-3 py-2 text-slate-700">{formatLayout(u.layout)}</td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-700">
-                    {u.floor_area_m2 != null ? `${Math.round(u.floor_area_m2)} m²` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-700">
-                    {u.exterior_area_m2 != null && u.exterior_area_m2 > 0 ? `${Math.round(u.exterior_area_m2)} m²` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-center tabular-nums text-slate-700">{u.floor ?? "—"}</td>
-                  <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
-                    {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
-                    {u.price_per_m2_czk != null ? `${Math.round(u.price_per_m2_czk / 1000)}k Kč` : "—"}
-                  </td>
-                  <td className="px-3 py-2 text-center">
-                    <PriceDiffBadge pct={u.local_price_diff_1000m} />
-                  </td>
-                  <td className="px-3 py-2 text-slate-600">{formatAvailability(u.availability_status)}</td>
-                </tr>
-              ))}
+              {groupedTop.map(({ layout, rows, totalInLayout }) => {
+                const hiddenInGroup = totalInLayout - rows.length;
+                return (
+                  <React.Fragment key={layout}>
+                    <tr className="bg-slate-50/50">
+                      <td colSpan={8} className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                        {formatLayout(layout)}
+                        <span className="ml-2 font-normal normal-case tracking-normal text-slate-400">
+                          · {totalInLayout} {totalInLayout === 1 ? "dostupná" : totalInLayout < 5 ? "dostupné" : "dostupných"}
+                        </span>
+                      </td>
+                    </tr>
+                    {rows.map((u) => (
+                      <tr key={u.external_id} className="border-t border-slate-100 text-sm hover:bg-slate-50/80">
+                        <td className="px-3 py-2 font-medium text-slate-800">{u.unit_name ?? "—"}</td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                          {u.floor_area_m2 != null ? `${Math.round(u.floor_area_m2)} m²` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-700">
+                          {u.exterior_area_m2 != null && u.exterior_area_m2 > 0 ? `${Math.round(u.exterior_area_m2)} m²` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-center tabular-nums text-slate-700">{u.floor ?? "—"}</td>
+                        <td className="px-3 py-2 text-right tabular-nums font-medium text-slate-900">
+                          {u.price_czk != null ? formatCurrencyCzk(u.price_czk) : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums text-slate-500 text-xs">
+                          {u.price_per_m2_czk != null ? `${Math.round(u.price_per_m2_czk / 1000)}k Kč` : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <PriceDiffBadge pct={u.local_price_diff_1000m} />
+                        </td>
+                        <td className="px-3 py-2 text-slate-600">{formatAvailability(u.availability_status)}</td>
+                      </tr>
+                    ))}
+                    {hiddenInGroup > 0 && (
+                      <tr>
+                        <td colSpan={8} className="border-t border-slate-100 px-3 py-1.5 text-[11px] text-slate-400">
+                          + {hiddenInGroup} dalších {formatLayout(layout)} v projektu
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
