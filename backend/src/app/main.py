@@ -6560,6 +6560,38 @@ def _project_row_to_item(project: Project, row: Any) -> dict[str, Any]:
         out["layouts_present"] = list(dict.fromkeys(x for x in raw_layouts if x is not None))
     else:
         out["layouts_present"] = []
+
+    # POI counts within 500 m + nearest-distance metres for transport and
+    # daily-needs amenities. These aren't part of the column catalog, so the
+    # generic loop above skips them — broker UI uses them as inline badges in
+    # the project row (Hluk, Vlak/Tram/Silnice, 🛒 N, 🌳 N, 🚌 156 m, …) and
+    # for the unified "blízko dopravy" toggles. Same set is already returned
+    # by /projects/{id} (line ~7274).
+    for attr in (
+        "noise_label", "noise_day_db", "noise_night_db",
+        "distance_to_railway_m", "distance_to_tram_tracks_m",
+        "distance_to_primary_road_m", "distance_to_airport_m",
+        "distance_to_metro_station_m", "distance_to_tram_stop_m",
+        "distance_to_bus_stop_m", "distance_to_train_station_m",
+        "distance_to_supermarket_m", "distance_to_pharmacy_m",
+        "distance_to_park_m", "distance_to_restaurant_m",
+        "distance_to_cafe_m", "distance_to_fitness_m",
+        "distance_to_playground_m", "distance_to_kindergarten_m",
+        "distance_to_primary_school_m",
+        "count_supermarket_500m", "count_pharmacy_500m", "count_restaurant_500m",
+        "count_cafe_500m", "count_park_500m", "count_fitness_500m",
+        "count_playground_500m", "count_kindergarten_500m", "count_primary_school_500m",
+        "walkability_label", "walkability_daily_needs_score",
+        "walkability_transport_score", "walkability_leisure_score",
+        "walkability_family_score", "micro_location_score", "micro_location_label",
+    ):
+        if attr in out and out.get(attr) is not None:
+            continue  # don't overwrite catalog-derived value
+        v = getattr(project, attr, None)
+        if isinstance(v, Decimal):
+            out[attr] = float(v)
+        else:
+            out[attr] = v
     return out
 
 

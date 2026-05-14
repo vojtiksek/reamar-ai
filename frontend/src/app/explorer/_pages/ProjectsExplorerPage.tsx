@@ -107,7 +107,10 @@ type ProjectColumnConfig = {
 
 const DEFAULT_LIMIT = 100;
 const ROWS_PER_PAGE_OPTIONS = [100, 300, 500] as const;
-const PROJECTS_COLUMNS_STORAGE_KEY = "projects_columns_v1";
+// Bumped to v2 in 2026-05-14 when the default column set shrank — brokers
+// with saved v1 columns (developer / municipality / total_units / etc.)
+// otherwise kept the wide layout that caused horizontal scroll.
+const PROJECTS_COLUMNS_STORAGE_KEY = "projects_columns_v2";
 const DEFAULT_VISIBLE_COLUMNS = 10;
 
 /** Keys shown by default for users without saved column preferences.
@@ -431,6 +434,76 @@ function NearSourceChips({
   );
 }
 
+/** MHD-stop badges: render only when the project is within a sensible
+ * walking distance of a stop (metro ≤600m, tram ≤300m, bus ≤200m, train
+ * ≤1km). Mirrors the thresholds used in /cases/X/recommendations. */
+const MHD_CONFIG = [
+  { key: "metro", field: "distance_to_metro_station_m", threshold: 600, emoji: "🚇", label: "Metro" },
+  { key: "tram",  field: "distance_to_tram_stop_m",     threshold: 300, emoji: "🚋", label: "Tramvaj" },
+  { key: "bus",   field: "distance_to_bus_stop_m",      threshold: 200, emoji: "🚌", label: "Bus" },
+  { key: "train", field: "distance_to_train_station_m", threshold: 1000, emoji: "🚆", label: "Vlak" },
+] as const;
+
+function MhdChips({ p }: { p: ProjectItem }) {
+  const visible = MHD_CONFIG
+    .map((cfg) => {
+      const v = num(p[cfg.field]);
+      return v != null && v <= cfg.threshold ? { ...cfg, distance: v } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (!visible.length) return null;
+  return (
+    <>
+      {visible.map((it) => (
+        <span
+          key={it.key}
+          title={`${it.label} ${Math.round(it.distance)} m`}
+          className="rounded-full bg-blue-50 border border-blue-200 px-1.5 py-0.5 text-[10px] font-medium text-blue-700"
+        >
+          {it.emoji} {Math.round(it.distance)} m
+        </span>
+      ))}
+    </>
+  );
+}
+
+/** POI counts within 500 m. Always renders (regardless of broker prefs) so
+ * the explorer view shows what's nearby — broker can immediately judge
+ * neighbourhood density. Hidden when all counts are zero/null. */
+const POI_CONFIG = [
+  { field: "count_supermarket_500m", emoji: "🛒", label: "Obchod" },
+  { field: "count_park_500m",        emoji: "🌳", label: "Parky" },
+  { field: "count_cafe_500m",        emoji: "☕", label: "Kavárny" },
+  { field: "count_restaurant_500m",  emoji: "🍽️", label: "Restaurace" },
+  { field: "count_kindergarten_500m", emoji: "👶", label: "Školka" },
+  { field: "count_primary_school_500m", emoji: "🎓", label: "ZŠ" },
+  { field: "count_fitness_500m",     emoji: "🏋️", label: "Fitness" },
+  { field: "count_playground_500m",  emoji: "🛝", label: "Hřiště" },
+] as const;
+
+function PoiChips({ p }: { p: ProjectItem }) {
+  const visible = POI_CONFIG
+    .map((cfg) => {
+      const v = num(p[cfg.field]);
+      return v != null && v > 0 ? { ...cfg, count: v } : null;
+    })
+    .filter((x): x is NonNullable<typeof x> => x !== null);
+  if (!visible.length) return null;
+  return (
+    <>
+      {visible.slice(0, 6).map((it) => (
+        <span
+          key={it.field}
+          title={`${it.label}: ${Math.round(it.count)} do 500 m`}
+          className="rounded-full bg-teal-50 border border-teal-200 px-1 py-0.5 text-[10px] font-medium text-teal-700"
+        >
+          {it.emoji} {Math.round(it.count)}
+        </span>
+      ))}
+    </>
+  );
+}
+
 /** Multi-line content for the PROJEKT cell. Replaces what used to be a
  * single-line "project name" rendering — bumps density without forcing
  * horizontal scroll. Sortable column header for `name` still works,
@@ -458,6 +531,13 @@ function ProjectCellContent({ p }: { p: ProjectItem }) {
       {secondaryLine && (
         <div className="truncate text-[11px] text-slate-500">{secondaryLine}</div>
       )}
+      {/* Transport + POI chips inline — these come from the now-extended
+          /projects response. Each helper returns null when there's nothing
+          worth rendering, so this stays tight on exurban projects. */}
+      <div className="flex flex-wrap gap-1">
+        <MhdChips p={p} />
+        <PoiChips p={p} />
+      </div>
       <div className="flex flex-wrap gap-x-3 text-[11px] text-slate-400">
         {totalUnits != null && (
           <span>
@@ -2047,7 +2127,13 @@ export default function ProjectsPage() {
                     {isExpanded && (
                       <tr className="bg-slate-50/80">
                         <td colSpan={visibleColumns.length} className="p-0">
-                          <div className="sticky left-0 w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)] overflow-hidden border-b border-slate-200 bg-slate-50/90 px-5 py-4">
+                          {/* Sticky to viewport-left so it doesn't scroll out
+                              of view as the broker scans the wide table. Fixed
+                              max-width keeps the inner 5-column table compact
+                              (no horizontal scroll inside the expansion). The
+                              `100vw - 16rem` accounts for the ~14rem sidebar
+                              plus 2rem of page padding on typical desktop. */}
+                          <div className="sticky left-0 z-10 max-w-[min(1100px,calc(100vw-16rem))] overflow-hidden border-b border-slate-200 bg-slate-50/90 px-5 py-4">
                             <ExpandedProjectUnits
                               cache={projectUnitsCache[p.id as number]}
                               projectUrl={typeof p["project_url"] === "string" ? p["project_url"] : null}

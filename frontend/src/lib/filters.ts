@@ -339,6 +339,13 @@ export type UnitsQuerySorting = { sort_by: string; sort_dir: string };
  * Build the query string for GET /units from filters, pagination, and sorting.
  * Uses API param names (min_price, available, district=…&district=…, etc.).
  */
+/** Filter keys that aren't surfaced through GET /filters (so they're not in
+ * backend-supported `supportedKeys`) but that the /units and /projects
+ * endpoints still accept. Without this allow-list the unified Oblast filter
+ * would be silently dropped when filtersToUnitsParams iterates supportedKeys.
+ */
+const ALWAYS_FORWARDED_FILTER_KEYS = new Set(["area_id", "exclude_area_id"]);
+
 export function buildUnitsQuery(
   filters: CurrentFilters,
   supportedKeys: Set<string>,
@@ -350,7 +357,8 @@ export function buildUnitsQuery(
   params.set("offset", String(Math.max(0, pagination.offset)));
   params.set("sort_by", sorting.sort_by);
   params.set("sort_dir", sorting.sort_dir);
-  const fp = filtersToUnitsParams(filters, supportedKeys);
+  const effectiveSupported = new Set([...supportedKeys, ...ALWAYS_FORWARDED_FILTER_KEYS]);
+  const fp = filtersToUnitsParams(filters, effectiveSupported);
   for (const [key, value] of Object.entries(fp)) {
     if (Array.isArray(value)) {
       value.forEach((v) => params.append(key, String(v)));
