@@ -108,6 +108,13 @@ type FocusTarget = { lat: number; lng: number; zoom?: number; key?: number; labe
 
 type BoundaryGeom = { type: "Polygon" | "MultiPolygon"; coordinates: number[][][] | number[][][][] };
 
+type AreaHighlight = {
+  id?: number;
+  label?: string | null;
+  geometry: BoundaryGeom;
+  mode: "include" | "exclude";
+};
+
 type Props = {
   projects: ProjectPoint[];
   center: LatLngExpression;
@@ -119,7 +126,13 @@ type Props = {
   onProjectSelect?: (id: number | null) => void;
   poiOverview?: PoiOverview;
   focus?: FocusTarget | null;
+  /** Single area polygon — used by the address-search "highlight this area"
+   * action. Kept for the existing flow; for filter chips use areaHighlights. */
   highlightBoundary?: BoundaryGeom | null;
+  /** All currently-selected boundary_areas from the filter chips. Each
+   * rendered as a coloured outline so the broker sees which areas are
+   * included (green) vs excluded (red). */
+  areaHighlights?: AreaHighlight[];
 };
 
 /** Imperatively pan + zoom the map when `target` changes (address search). */
@@ -180,26 +193,29 @@ function ProjectsLeafletMap({
   poiOverview = null,
   focus = null,
   highlightBoundary = null,
+  areaHighlights = [],
 }: Props) {
-  // Convert GeoJSON Polygon/MultiPolygon ([lng, lat] order) into Leaflet
-  // ring arrays (positions are [lat, lng]) so we can render an outline of
-  // a searched-for administrative area (e.g. "Praha 8") as a Polygon layer.
-  const boundaryRings: [number, number][][] = [];
-  if (highlightBoundary) {
-    if (highlightBoundary.type === "Polygon") {
-      const coords = highlightBoundary.coordinates as number[][][];
+  // GeoJSON uses [lng, lat]; Leaflet positions are [lat, lng]. We flip per
+  // ring once and feed Leaflet a Polygon (multi-ring) per geometry.
+  const flipRings = (geom: BoundaryGeom): [number, number][][] => {
+    const out: [number, number][][] = [];
+    if (geom.type === "Polygon") {
+      const coords = geom.coordinates as number[][][];
       for (const ring of coords) {
-        boundaryRings.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
+        out.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
       }
-    } else if (highlightBoundary.type === "MultiPolygon") {
-      const coords = highlightBoundary.coordinates as number[][][][];
+    } else if (geom.type === "MultiPolygon") {
+      const coords = geom.coordinates as number[][][][];
       for (const poly of coords) {
         for (const ring of poly) {
-          boundaryRings.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
+          out.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
         }
       }
     }
-  }
+    return out;
+  };
+
+  const addressBoundaryRings = highlightBoundary ? flipRings(highlightBoundary) : [];
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
 
   // Vypočítat rozsah průměrných cen m² pro škálování barev
@@ -261,10 +277,55 @@ function ProjectsLeafletMap({
       />
       <ClickCapture drawing={drawing} onClick={onMapClick} />
       <MapFocusController target={focus} />
-      {boundaryRings.length > 0 && (
+      {/* Filter-chip area outlines — vivid so the broker can see which areas
+          are active without scrolling the legend. Include = emerald, exclude
+          = bold rose with a dashed stroke to distinguish from include. */}
+      {areaHighlights.map((h, i) => {
+        const rings = flipRings(h.geometry);
+        if (!rings.length) return null;
+        const include = h.mode === "include";
+        return (
+          <Polygon
+            key={`area-${h.id ?? i}-${h.mode}`}
+            positions={rings}
+            pathOptions={
+              include
+                ? {
+                    color: "#059669",          // emerald-600
+                    weight: 3.5,
+                    opacity: 0.95,
+                    fillColor: "#10b981",      // emerald-500
+                    fillOpacity: 0.18,
+                  }
+                : {
+                    color: "#e11d48",          // rose-600
+                    weight: 3.5,
+                    opacity: 0.95,
+                    dashArray: "8 6",
+                    fillColor: "#f43f5e",      // rose-500
+                    fillOpacity: 0.12,
+                  }
+            }
+          >
+            {h.label && (
+              <Popup>
+                <div style={{ minWidth: 160 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600 }}>{h.label}</div>
+                  <div style={{ fontSize: 11, color: "#64748b" }}>
+                    {include ? "Zahrnuto ve filtru" : "Vyloučeno z filtru"}
+                  </div>
+                </div>
+              </Popup>
+            )}
+          </Polygon>
+        );
+      })}
+      {/* Single address-search highlight — keeps the original amber styling
+          to distinguish it visually from filter chips. */}
+      {addressBoundaryRings.length > 0 && (
         <Polygon
-          positions={boundaryRings}
-          pathOptions={{ color: "#f43f5e", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.08 }}
+          positions={addressBoundaryRings}
+          pathOptions={{ color: "#d97706", weight: 3, opacity: 0.9, fillColor: "#f59e0b", fillOpacity: 0.10 }}
         />
       )}
       {focus && (

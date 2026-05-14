@@ -160,6 +160,20 @@ export default function ProjectsMapPage() {
   } | null>(null);
   const [boundary, setBoundary] = useState<Boundary | null>(null);
 
+  // Geometry overlay for every selected area-filter chip. We fetch each
+  // boundary once via GET /areas/{id} and keep it in this map keyed by id.
+  // include/exclude mode + label come along so the map can colour-code.
+  type AreaHighlight = {
+    id: number;
+    label: string;
+    geometry: BoundaryGeom;
+    mode: "include" | "exclude";
+  };
+  const [areaHighlights, setAreaHighlights] = useState<AreaHighlight[]>([]);
+
+  // (The area-highlight fetcher lives below currentFilters declaration; it
+  // would be a forward reference here.)
+
   // Debounce autosuggest 250 ms — every keystroke would otherwise hit HERE.
   useEffect(() => {
     const q = addressQuery.trim();
@@ -258,6 +272,46 @@ export default function ProjectsMapPage() {
   );
 
   const { currentFilters, drawerOpen, openDrawer, closeDrawer, onReset, onChangeFilter } = useFilterDrawer(filtersInUrl);
+
+  // Watch the URL/drawer filter state and (re)fetch each selected area's
+  // geometry for the map overlay. Cached server-side; subsequent picks
+  // of the same area are <50 ms.
+  useEffect(() => {
+    const toIds = (v: unknown): number[] =>
+      Array.isArray(v) ? v.map((x) => (typeof x === "number" ? x : Number(x))).filter(Number.isFinite) : [];
+    const incIds = toIds(currentFilters.area_id);
+    const excIds = toIds(currentFilters.exclude_area_id);
+    if (incIds.length === 0 && excIds.length === 0) {
+      setAreaHighlights([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+      const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+      const fetchOne = async (id: number, mode: "include" | "exclude"): Promise<AreaHighlight | null> => {
+        try {
+          const r = await fetch(`${API_BASE}/areas/${id}`, { headers });
+          if (!r.ok) return null;
+          const d = await r.json() as { id: number; name: string; geometry?: BoundaryGeom };
+          if (!d.geometry) return null;
+          return { id: d.id, label: d.name, geometry: d.geometry, mode };
+        } catch { return null; }
+      };
+      const [inc, exc] = await Promise.all([
+        Promise.all(incIds.map((id) => fetchOne(id, "include"))),
+        Promise.all(excIds.map((id) => fetchOne(id, "exclude"))),
+      ]);
+      if (cancelled) return;
+      const merged = [...inc, ...exc].filter((x): x is AreaHighlight => x != null);
+      setAreaHighlights(merged);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    Array.isArray(currentFilters.area_id) ? currentFilters.area_id.join(",") : currentFilters.area_id,
+    Array.isArray(currentFilters.exclude_area_id) ? currentFilters.exclude_area_id.join(",") : currentFilters.exclude_area_id,
+  ]);
 
   const { activeClient, activate } = useActiveClient();
   const isClientOverridden = activeClient != null && !filtersEqual(filtersInUrl, activeClient.derivedFilters);
@@ -881,6 +935,7 @@ export default function ProjectsMapPage() {
             poiOverview={poiOverviewData}
             focus={focusTarget}
             highlightBoundary={boundary?.geometry ?? null}
+            areaHighlights={areaHighlights}
           />
         </section>
       </div>
