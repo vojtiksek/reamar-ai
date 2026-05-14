@@ -1958,7 +1958,9 @@ export default function ProjectsPage() {
                         onClick={() => handleSortHeaderClick(flatKey)}
                         className={`sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
                           alignRight ? "text-right" : "text-left"
-                        } ${isActive ? "bg-gray-100" : ""} ${isStickyFirst ? "left-0 z-20" : ""}`}
+                        } ${isActive ? "bg-gray-100" : ""} ${
+                          isStickyFirst ? "left-0 z-20" : "w-px whitespace-nowrap"
+                        }`}
                       >
                         <span
                           className="inline-flex items-center gap-1"
