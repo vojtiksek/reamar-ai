@@ -10374,15 +10374,129 @@ def update_scoring_v2_config(body: dict[str, Any], db: DbSession) -> dict[str, A
     return {"config": SCORING_V2_CONFIG}
 
 
+_HERE_AUTOSUGGEST_CENTER = "50.08,14.42"  # rough Prague centroid
+
+
+@app.get("/geocode/suggest")
+def geocode_suggest(
+    q: str,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Typeahead suggestions via HERE Autosuggest. Returns up to 8 hits with
+    label + lat/lng + resultType so the map page can render a dropdown that
+    behaves like Google Maps. Czechia-only to avoid foreign matches."""
+    import os
+    import requests as _requests
+
+    api_key = os.environ.get("HERE_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
+    query = (q or "").strip()
+    if len(query) < 2:
+        return {"results": []}
+    try:
+        resp = _requests.get(
+            "https://autosuggest.search.hereapi.com/v1/autosuggest",
+            params={
+                "q": query,
+                "at": _HERE_AUTOSUGGEST_CENTER,
+                "in": "countryCode:CZE",
+                "limit": 8,
+                "apiKey": api_key,
+            },
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+    except _requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=f"Autosuggest upstream failed: {exc}") from exc
+
+    results: list[dict[str, Any]] = []
+    for item in data.get("items") or []:
+        pos = item.get("position") or {}
+        lat = pos.get("lat")
+        lng = pos.get("lng")
+        # Some suggestion types (chain, category) don't carry a position —
+        # surface them too so the broker can refine the query, but with
+        # null coords so the frontend knows it can't flyTo yet.
+        results.append({
+            "label": item.get("title"),
+            "address": (item.get("address") or {}).get("label"),
+            "lat": float(lat) if lat is not None else None,
+            "lng": float(lng) if lng is not None else None,
+            "result_type": item.get("resultType"),
+        })
+    return {"results": results}
+
+
+def _fetch_nominatim_boundary(query: str) -> dict[str, Any] | None:
+    """Lookup an administrative boundary polygon for the given query on
+    OSM Nominatim. HERE only returns a bounding box for admin areas;
+    Nominatim is free and ships proper GeoJSON polygons (Praha 8, Vinohrady,
+    Stodůlky, etc). Returns the first administrative-class match or None."""
+    import requests as _requests
+
+    try:
+        resp = _requests.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={
+                "q": query,
+                "format": "json",
+                "polygon_geojson": 1,
+                "limit": 3,
+                "countrycodes": "cz",
+                "addressdetails": 0,
+            },
+            headers={"User-Agent": "reamar-ai/1.0 (broker app, contact: vojtech.sommer@me.com)"},
+            timeout=6,
+        )
+        resp.raise_for_status()
+    except _requests.RequestException:
+        return None
+
+    for item in resp.json() or []:
+        if item.get("class") != "boundary" or item.get("type") != "administrative":
+            continue
+        geom = item.get("geojson")
+        if not isinstance(geom, dict):
+            continue
+        gtype = geom.get("type")
+        if gtype not in ("Polygon", "MultiPolygon"):
+            continue
+        bbox = item.get("boundingbox")
+        bounds = None
+        if isinstance(bbox, list) and len(bbox) == 4:
+            try:
+                bounds = {
+                    "south": float(bbox[0]),
+                    "north": float(bbox[1]),
+                    "west": float(bbox[2]),
+                    "east": float(bbox[3]),
+                }
+            except (TypeError, ValueError):
+                bounds = None
+        return {
+            "display_name": item.get("display_name"),
+            "geometry": geom,
+            "bounds": bounds,
+        }
+    return None
+
+
 @app.get("/geocode")
 def geocode_address(
     q: str,
+    include_boundary: bool = False,
     broker: Broker = Depends(get_current_broker),
 ) -> dict[str, Any]:
     """Forward to HERE Geocoding API. Returns top results with lat/lng + label.
     Used by the map page's address search — broker types "Vinohradská 50" and
     the map flies to the result. Czechia-only to avoid bleed from similarly
-    named streets abroad."""
+    named streets abroad.
+
+    When `include_boundary=true` we additionally try Nominatim for an
+    administrative polygon (Praha 8, Vinohrady, etc.) and return it on the
+    top result so the map can outline the whole area."""
     import os
     import requests as _requests
 
@@ -10421,4 +10535,16 @@ def geocode_address(
             "lng": float(lng),
             "result_type": item.get("resultType"),
         })
-    return {"results": results}
+
+    boundary = None
+    if include_boundary and results:
+        top_type = results[0].get("result_type") or ""
+        # Cheap heuristic: only hit Nominatim for results that look like a
+        # named district / locality / admin area. Avoids a Nominatim round
+        # trip for every "Vinohradská 50" lookup.
+        if top_type in ("locality", "administrativeArea", "district") or any(
+            tok in query.lower() for tok in ("praha", "okres", "kraj")
+        ):
+            boundary = _fetch_nominatim_boundary(query)
+
+    return {"results": results, "boundary": boundary}

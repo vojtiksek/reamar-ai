@@ -128,12 +128,29 @@ export default function ProjectsMapPage() {
   );
   const [poiPanelOpen, setPoiPanelOpen] = useState(true);
 
-  // Address search (HERE geocoding via /geocode). When the broker submits a
-  // query, we flyTo the first hit and drop a red pin so they can scan nearby
-  // projects without losing the current map state.
+  // Address search via /geocode (HERE) + /geocode/suggest (HERE Autosuggest)
+  // with optional /geocode boundary polygon (Nominatim) for admin areas.
+  // Behaviour mirrors Google Maps: typeahead dropdown, click suggestion or
+  // hit Enter to flyTo + drop a red pin + (for districts) outline the area.
+  type AddrSuggest = {
+    label: string;
+    address?: string | null;
+    lat: number | null;
+    lng: number | null;
+    result_type?: string | null;
+  };
+  type BoundaryGeom = { type: "Polygon" | "MultiPolygon"; coordinates: number[][][] | number[][][][] };
+  type Boundary = {
+    display_name?: string | null;
+    geometry: BoundaryGeom;
+    bounds?: { south: number; north: number; west: number; east: number } | null;
+  };
+
   const [addressQuery, setAddressQuery] = useState("");
   const [addressSearching, setAddressSearching] = useState(false);
   const [addressError, setAddressError] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<AddrSuggest[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   const [focusTarget, setFocusTarget] = useState<{
     lat: number;
     lng: number;
@@ -141,37 +158,99 @@ export default function ProjectsMapPage() {
     key: number;
     label?: string | null;
   } | null>(null);
+  const [boundary, setBoundary] = useState<Boundary | null>(null);
 
-  const handleAddressSearch = useCallback(async () => {
+  // Debounce autosuggest 250 ms — every keystroke would otherwise hit HERE.
+  useEffect(() => {
     const q = addressQuery.trim();
-    if (!q) return;
-    setAddressSearching(true);
-    setAddressError(null);
-    try {
-      const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
-      const res = await fetch(`${API_BASE}/geocode?q=${encodeURIComponent(q)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { results?: { lat: number; lng: number; label?: string }[] };
-      const top = data.results?.[0];
-      if (!top) {
-        setAddressError("Adresa nenalezena");
-        return;
-      }
-      setFocusTarget({
-        lat: top.lat,
-        lng: top.lng,
-        zoom: 16,
-        key: Date.now(),
-        label: top.label ?? null,
-      });
-    } catch (e) {
-      setAddressError(e instanceof Error ? e.message : "Chyba vyhledávání");
-    } finally {
-      setAddressSearching(false);
+    if (q.length < 2) {
+      setSuggestions([]);
+      return;
     }
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+        const res = await fetch(`${API_BASE}/geocode/suggest?q=${encodeURIComponent(q)}`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { results?: AddrSuggest[] };
+        if (cancelled) return;
+        setSuggestions(data.results ?? []);
+      } catch {
+        // Suggest failures are silent — user can still hit Enter for the
+        // full /geocode lookup.
+      }
+    }, 250);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [addressQuery]);
+
+  const applyResult = useCallback(
+    (item: { lat: number | null; lng: number | null; label?: string | null }, boundary: Boundary | null) => {
+      if (item.lat == null || item.lng == null) return;
+      // Wider zoom for admin areas so the whole district fits, tight zoom
+      // for a specific street address.
+      const zoom = boundary ? 13 : 16;
+      setFocusTarget({
+        lat: item.lat,
+        lng: item.lng,
+        zoom,
+        key: Date.now(),
+        label: item.label ?? null,
+      });
+      setBoundary(boundary);
+      setSuggestOpen(false);
+    },
+    [],
+  );
+
+  const handleAddressSearch = useCallback(
+    async (overrideQuery?: string) => {
+      const q = (overrideQuery ?? addressQuery).trim();
+      if (!q) return;
+      setAddressSearching(true);
+      setAddressError(null);
+      try {
+        const token = typeof window !== "undefined" ? localStorage.getItem("broker_token") : null;
+        const res = await fetch(
+          `${API_BASE}/geocode?q=${encodeURIComponent(q)}&include_boundary=true`,
+          { headers: token ? { Authorization: `Bearer ${token}` } : undefined },
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as {
+          results?: { lat: number; lng: number; label?: string }[];
+          boundary?: Boundary | null;
+        };
+        const top = data.results?.[0];
+        if (!top) {
+          setAddressError("Adresa nenalezena");
+          return;
+        }
+        applyResult(top, data.boundary ?? null);
+      } catch (e) {
+        setAddressError(e instanceof Error ? e.message : "Chyba vyhledávání");
+      } finally {
+        setAddressSearching(false);
+      }
+    },
+    [addressQuery, applyResult],
+  );
+
+  const handlePickSuggestion = useCallback(
+    async (s: AddrSuggest) => {
+      setAddressQuery(s.label);
+      // If the suggestion is an admin area, still call /geocode to get the
+      // boundary polygon. Otherwise we already have lat/lng — flyTo direct.
+      const isArea = s.result_type === "locality" || s.result_type === "administrativeArea" || s.result_type === "district";
+      if (isArea) {
+        await handleAddressSearch(s.label);
+      } else {
+        applyResult(s, null);
+      }
+    },
+    [handleAddressSearch, applyResult],
+  );
 
   const filtersInUrl: CurrentFilters = useMemo(
     () => parseFiltersFromSearchParams(new URLSearchParams(searchParams?.toString() ?? "")),
@@ -546,17 +625,20 @@ export default function ProjectsMapPage() {
             e.preventDefault();
             void handleAddressSearch();
           }}
-          className="flex items-center gap-1"
+          className="relative flex items-center gap-1"
           role="search"
         >
           <input
             type="text"
             value={addressQuery}
-            onChange={(e) => setAddressQuery(e.target.value)}
+            onChange={(e) => { setAddressQuery(e.target.value); setSuggestOpen(true); setAddressError(null); }}
+            onFocus={() => setSuggestOpen(true)}
+            onBlur={() => { setTimeout(() => setSuggestOpen(false), 150); }}
             placeholder="Hledat adresu…"
             aria-label="Hledat adresu na mapě"
+            autoComplete="off"
             className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-sm text-slate-800 placeholder:text-slate-400 focus:border-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-200"
-            style={{ minWidth: 220 }}
+            style={{ minWidth: 240 }}
           />
           <button
             type="submit"
@@ -566,10 +648,10 @@ export default function ProjectsMapPage() {
           >
             {addressSearching ? "Hledám…" : "Najít"}
           </button>
-          {focusTarget && (
+          {(focusTarget || boundary) && (
             <button
               type="button"
-              onClick={() => { setFocusTarget(null); setAddressQuery(""); setAddressError(null); }}
+              onClick={() => { setFocusTarget(null); setBoundary(null); setAddressQuery(""); setAddressError(null); }}
               className="text-xs text-slate-500 underline decoration-dotted underline-offset-2 hover:text-slate-900"
               title="Skrýt značku adresy"
             >
@@ -578,6 +660,29 @@ export default function ProjectsMapPage() {
           )}
           {addressError && (
             <span className="text-xs text-rose-600">{addressError}</span>
+          )}
+          {suggestOpen && suggestions.length > 0 && (
+            <ul
+              className="absolute left-0 top-full z-50 mt-1 max-h-72 min-w-[280px] overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg"
+              role="listbox"
+            >
+              {suggestions.map((s, i) => (
+                <li key={`${s.label}-${i}`}>
+                  <button
+                    type="button"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => void handlePickSuggestion(s)}
+                    className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50 focus:bg-slate-100 focus:outline-none"
+                  >
+                    <div className="truncate font-medium">{s.label}</div>
+                    {s.address && s.address !== s.label && (
+                      <div className="truncate text-[11px] text-slate-500">{s.address}</div>
+                    )}
+                    <div className="mt-0.5 text-[10px] uppercase tracking-wide text-slate-400">{s.result_type ?? ""}</div>
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
         </form>
         {isClientOverridden && (
@@ -775,6 +880,7 @@ export default function ProjectsMapPage() {
             onProjectSelect={setSelectedProjectId}
             poiOverview={poiOverviewData}
             focus={focusTarget}
+            highlightBoundary={boundary?.geometry ?? null}
           />
         </section>
       </div>

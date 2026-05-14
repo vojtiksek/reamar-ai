@@ -106,6 +106,8 @@ function getPoiCategoryIcon(category: string): L.DivIcon {
 
 type FocusTarget = { lat: number; lng: number; zoom?: number; key?: number; label?: string | null };
 
+type BoundaryGeom = { type: "Polygon" | "MultiPolygon"; coordinates: number[][][] | number[][][][] };
+
 type Props = {
   projects: ProjectPoint[];
   center: LatLngExpression;
@@ -117,6 +119,7 @@ type Props = {
   onProjectSelect?: (id: number | null) => void;
   poiOverview?: PoiOverview;
   focus?: FocusTarget | null;
+  highlightBoundary?: BoundaryGeom | null;
 };
 
 /** Imperatively pan + zoom the map when `target` changes (address search). */
@@ -176,7 +179,27 @@ function ProjectsLeafletMap({
   onProjectSelect,
   poiOverview = null,
   focus = null,
+  highlightBoundary = null,
 }: Props) {
+  // Convert GeoJSON Polygon/MultiPolygon ([lng, lat] order) into Leaflet
+  // ring arrays (positions are [lat, lng]) so we can render an outline of
+  // a searched-for administrative area (e.g. "Praha 8") as a Polygon layer.
+  const boundaryRings: [number, number][][] = [];
+  if (highlightBoundary) {
+    if (highlightBoundary.type === "Polygon") {
+      const coords = highlightBoundary.coordinates as number[][][];
+      for (const ring of coords) {
+        boundaryRings.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
+      }
+    } else if (highlightBoundary.type === "MultiPolygon") {
+      const coords = highlightBoundary.coordinates as number[][][][];
+      for (const poly of coords) {
+        for (const ring of poly) {
+          boundaryRings.push(ring.map(([lng, lat]) => [lat, lng] as [number, number]));
+        }
+      }
+    }
+  }
   const activePolygon = draftPolygon.length >= 2 ? draftPolygon : polygon;
 
   // Vypočítat rozsah průměrných cen m² pro škálování barev
@@ -238,6 +261,12 @@ function ProjectsLeafletMap({
       />
       <ClickCapture drawing={drawing} onClick={onMapClick} />
       <MapFocusController target={focus} />
+      {boundaryRings.length > 0 && (
+        <Polygon
+          positions={boundaryRings}
+          pathOptions={{ color: "#f43f5e", weight: 2, fillColor: "#f43f5e", fillOpacity: 0.08 }}
+        />
+      )}
       {focus && (
         <Marker position={[focus.lat, focus.lng]} icon={focusIcon}>
           <Popup>
