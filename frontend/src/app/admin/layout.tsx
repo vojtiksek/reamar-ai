@@ -7,6 +7,7 @@ const TABS = [
   { href: "/admin/scoring", label: "Scoring" },
   { href: "/admin/nabidka", label: "Nabídka" },
   { href: "/admin/operace", label: "Operace" },
+  { href: "/admin/here-metrics", label: "HERE API" },
   { href: "/admin/future-projects", label: "Budoucí projekty" },
   { href: "/admin/brokers", label: "Brokeři" },
   { href: "/admin/sloupce", label: "Sloupce" },
