@@ -574,6 +574,28 @@ class CommuteCache(Base):
     )
 
 
+class GeocodeCache(Base):
+    """Persistent HERE Geocoding/Autosuggest response cache.
+
+    `kind` is "geocode" | "suggest" | "geocode_boundary". `query` is the
+    lowercased, stripped user query. TTL is enforced by the caller (see
+    `GEOCODE_CACHE_TTL_DAYS` in main.py).
+    """
+
+    __tablename__ = "geocode_cache"
+
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    query: Mapped[str] = mapped_column(String(512), primary_key=True)
+    results_json: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
+    boundary_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        server_onupdate=func.now(),
+    )
+
+
 class UnitOverride(Base):
     __tablename__ = "unit_overrides"
     __table_args__ = (

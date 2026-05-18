@@ -460,7 +460,7 @@ def _build_provider_from_config() -> RoutingProvider:
 
 _provider: RoutingProvider = _build_provider_from_config()
 
-COMMUTE_CACHE_TTL_DAYS = 30
+COMMUTE_CACHE_TTL_DAYS = 90
 
 # ---------------------------------------------------------------------------
 # In-process request-scoped commute cache — eliminuje opakované DB SELECT
@@ -538,14 +538,20 @@ def get_cached_commute_result(
       .scalars()
       .first()
     )
+    from . import here_metrics
+
     if row and (now - row.updated_at) <= ttl:
       # is_estimated: provider "mock" nebo chybí itinerář (OTP selhal, uložen mock výsledek)
       _is_est = row.provider == "mock" or row.itinerary_json is None
       _cached = CommuteResult(minutes=row.minutes, itinerary=row.itinerary_json, is_estimated=_is_est)
       _request_commute_cache[_req_key] = _cached
+      if "here" in (row.provider or ""):
+        here_metrics.incr("transit.cache_hit")
       return _cached
 
     # Cache miss — compute via provider
+    if "here" in COMMUTE_PROVIDER_NAME:
+      here_metrics.incr("transit.here_call")
     result: CommuteResult | None = None
     if hasattr(_provider, "get_commute_result"):
       result = _provider.get_commute_result(  # type: ignore[attr-defined]

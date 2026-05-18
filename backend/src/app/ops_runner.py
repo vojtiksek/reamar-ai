@@ -341,8 +341,12 @@ DEFAULT_STEPS: list[tuple[str, Callable[[], dict[str, Any]]]] = [
 
 def _execute_pipeline(run_id: int) -> None:
     """Run every step, persisting progress to OpsRun row after each one."""
+    from . import here_metrics
+
     steps_record: list[dict[str, Any]] = []
     any_error = False
+
+    here_before = here_metrics.snapshot()
 
     db = SessionLocal()
     try:
@@ -372,13 +376,22 @@ def _execute_pipeline(run_id: int) -> None:
             db.close()
 
     # Final status + summary
+    here_after = here_metrics.snapshot()
+    here_delta = {
+        k: here_after.get(k, 0) - here_before.get(k, 0)
+        for k in set(here_after) | set(here_before)
+    }
+
     db = SessionLocal()
     try:
         run = db.get(OpsRun, run_id)
         if run is not None:
             run.status = "partial" if any_error else "done"
             run.finished_at = datetime.now(timezone.utc)
-            run.summary_json = _build_summary(steps_record)
+            summary = _build_summary(steps_record)
+            summary["here_calls_this_run"] = here_delta
+            summary["here_calls_cumulative"] = here_after
+            run.summary_json = summary
             db.commit()
     finally:
         db.close()

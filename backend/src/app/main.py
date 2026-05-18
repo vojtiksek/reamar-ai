@@ -56,6 +56,8 @@ from .models import (
     ClientPortalSession,
     ErrorLog,
     AppSetting,
+    GeocodeCache,
+    CommuteCache,
 )
 from .overrides import (
     OVERRIDEABLE_FIELDS,
@@ -8102,6 +8104,54 @@ def admin_ops_summary(db: DbSession) -> dict[str, Any]:
     }
 
 
+@app.get("/admin/here-metrics/live")
+def admin_here_metrics_live(
+    db: DbSession,
+    broker: Broker = Depends(get_current_broker),
+) -> dict[str, Any]:
+    """Live snapshot of HERE API call counters.
+
+    Counters are in-process — they accumulate since the backend worker booted
+    and reset on restart/redeploy. Use this between daily ops runs to see
+    current HERE traffic without waiting for the next OpsRun summary.
+
+    Also reports current `geocode_cache` size + age distribution, so the broker
+    can tell how much of the load the cache is absorbing.
+    """
+    from . import here_metrics
+
+    counts = here_metrics.snapshot()
+
+    now = datetime.now(timezone.utc)
+    geocode_total = db.execute(sa.select(sa.func.count()).select_from(GeocodeCache)).scalar() or 0
+    geocode_last_24h = db.execute(
+        sa.select(sa.func.count()).select_from(GeocodeCache).where(
+            GeocodeCache.updated_at >= now - timedelta(days=1)
+        )
+    ).scalar() or 0
+    commute_total = db.execute(sa.select(sa.func.count()).select_from(CommuteCache)).scalar() or 0
+    commute_last_24h = db.execute(
+        sa.select(sa.func.count()).select_from(CommuteCache).where(
+            CommuteCache.updated_at >= now - timedelta(days=1)
+        )
+    ).scalar() or 0
+
+    return {
+        "counters": counts,
+        "ttl_days": {
+            "geocode_cache": GEOCODE_CACHE_TTL_DAYS,
+            "commute_cache": 90,
+        },
+        "cache_size": {
+            "geocode_cache_rows": geocode_total,
+            "geocode_cache_written_24h": geocode_last_24h,
+            "commute_cache_rows": commute_total,
+            "commute_cache_written_24h": commute_last_24h,
+        },
+        "note": "Counters are process-local — reset on backend restart.",
+    }
+
+
 def _serialize_ops_run(run: Any, include_steps: bool) -> dict[str, Any]:
     out: dict[str, Any] = {
         "id": run.id,
@@ -10536,24 +10586,84 @@ def update_scoring_v2_config(body: dict[str, Any], db: DbSession) -> dict[str, A
 
 _HERE_AUTOSUGGEST_CENTER = "50.08,14.42"  # rough Prague centroid
 
+# Persistent geocoding cache TTL. HERE-billed endpoints (/geocode, /geocode/suggest)
+# repeat the same text queries heavily across broker sessions; a 90-day TTL is
+# safe for Czech address data which barely shifts year-to-year.
+GEOCODE_CACHE_TTL_DAYS = 90
+
+
+def _geocode_cache_get(
+    db: Session,
+    kind: str,
+    query: str,
+) -> GeocodeCache | None:
+    """Return a fresh GeocodeCache row, or None if missing/expired."""
+    row = db.get(GeocodeCache, (kind, query))
+    if row is None:
+        return None
+    age = datetime.now(timezone.utc) - row.updated_at
+    if age > timedelta(days=GEOCODE_CACHE_TTL_DAYS):
+        return None
+    return row
+
+
+def _geocode_cache_put(
+    db: Session,
+    kind: str,
+    query: str,
+    results: list[dict[str, Any]] | dict[str, Any],
+    boundary: dict[str, Any] | None = None,
+) -> None:
+    """Upsert a cache row. Best-effort — caller already returned data."""
+    now = datetime.now(timezone.utc)
+    row = db.get(GeocodeCache, (kind, query))
+    if row is None:
+        db.add(GeocodeCache(
+            kind=kind,
+            query=query,
+            results_json=results,
+            boundary_json=boundary,
+            updated_at=now,
+        ))
+    else:
+        row.results_json = results
+        row.boundary_json = boundary
+        row.updated_at = now
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+
 
 @app.get("/geocode/suggest")
 def geocode_suggest(
     q: str,
+    db: DbSession,
     broker: Broker = Depends(get_current_broker),
 ) -> dict[str, Any]:
     """Typeahead suggestions via HERE Autosuggest. Returns up to 8 hits with
     label + lat/lng + resultType so the map page can render a dropdown that
-    behaves like Google Maps. Czechia-only to avoid foreign matches."""
+    behaves like Google Maps. Czechia-only to avoid foreign matches.
+
+    Cached in `geocode_cache` for 90 days to avoid hammering HERE on every
+    keystroke."""
     import os
     import requests as _requests
+    from . import here_metrics
 
     api_key = os.environ.get("HERE_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
-    query = (q or "").strip()
+    query = (q or "").strip().lower()
     if len(query) < 2:
         return {"results": []}
+
+    cached = _geocode_cache_get(db, "suggest", query)
+    if cached is not None:
+        here_metrics.incr("geocode.suggest.cache_hit")
+        return {"results": cached.results_json or [], "cached": True}
+
+    here_metrics.incr("geocode.suggest.here_call")
     try:
         resp = _requests.get(
             "https://autosuggest.search.hereapi.com/v1/autosuggest",
@@ -10586,6 +10696,8 @@ def geocode_suggest(
             "lng": float(lng) if lng is not None else None,
             "result_type": item.get("resultType"),
         })
+
+    _geocode_cache_put(db, "suggest", query, results)
     return {"results": results}
 
 
@@ -10646,6 +10758,7 @@ def _fetch_nominatim_boundary(query: str) -> dict[str, Any] | None:
 @app.get("/geocode")
 def geocode_address(
     q: str,
+    db: DbSession,
     include_boundary: bool = False,
     broker: Broker = Depends(get_current_broker),
 ) -> dict[str, Any]:
@@ -10656,16 +10769,33 @@ def geocode_address(
 
     When `include_boundary=true` we additionally try Nominatim for an
     administrative polygon (Praha 8, Vinohrady, etc.) and return it on the
-    top result so the map can outline the whole area."""
+    top result so the map can outline the whole area.
+
+    Cached in `geocode_cache` for 90 days. `include_boundary=true` uses a
+    separate cache key ("geocode_boundary") so the cheap address-only variant
+    isn't poisoned by a missing boundary or vice versa."""
     import os
     import requests as _requests
+    from . import here_metrics
 
     api_key = os.environ.get("HERE_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
-    query = (q or "").strip()
+    query = (q or "").strip().lower()
     if not query:
         return {"results": []}
+
+    kind = "geocode_boundary" if include_boundary else "geocode"
+    cached = _geocode_cache_get(db, kind, query)
+    if cached is not None:
+        here_metrics.incr("geocode.address.cache_hit")
+        return {
+            "results": cached.results_json or [],
+            "boundary": cached.boundary_json,
+            "cached": True,
+        }
+
+    here_metrics.incr("geocode.address.here_call")
     try:
         resp = _requests.get(
             "https://geocode.search.hereapi.com/v1/geocode",
@@ -10703,10 +10833,11 @@ def geocode_address(
         # named district / locality / admin area. Avoids a Nominatim round
         # trip for every "Vinohradská 50" lookup.
         if top_type in ("locality", "administrativeArea", "district") or any(
-            tok in query.lower() for tok in ("praha", "okres", "kraj")
+            tok in query for tok in ("praha", "okres", "kraj")
         ):
             boundary = _fetch_nominatim_boundary(query)
 
+    _geocode_cache_put(db, kind, query, results, boundary)
     return {"results": results, "boundary": boundary}
 
 
