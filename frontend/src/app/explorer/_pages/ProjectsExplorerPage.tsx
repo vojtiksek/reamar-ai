@@ -1947,6 +1947,7 @@ export default function ProjectsPage() {
                     const isWalkabilityScore = flatKey === "walkability_score";
                     const isWalkabilityLabel = flatKey === "walkability_label";
                     const isStickyFirst = columnIndex === 0;
+                    const isProjectHeader = flatKey === "name" || flatKey === "project";
                     const alignRight =
                       col.data_type === "number" ||
                       (col.unit != null &&
@@ -1959,8 +1960,8 @@ export default function ProjectsPage() {
                         className={`sticky top-0 z-10 border-b border-slate-200 bg-slate-50/95 px-3 py-2 text-xs sm:text-sm font-semibold text-slate-700 cursor-pointer select-none transition-colors hover:bg-gray-100 ${
                           alignRight ? "text-right" : "text-left"
                         } ${isActive ? "bg-gray-100" : ""} ${
-                          isStickyFirst ? "left-0 z-20" : "w-px"
-                        }`}
+                          isStickyFirst ? "left-0 z-20" : ""
+                        } ${isProjectHeader ? "w-[260px]" : !isStickyFirst ? "w-px" : ""}`}
                       >
                         <span
                           className="inline-flex items-center gap-1"
@@ -2072,15 +2073,15 @@ export default function ProjectsPage() {
 
                         const isStickyFirst = columnIndex === 0;
                         // Project name cell is multi-line + carries inline
-                        // badges, so give it a generous min-width on desktop.
-                        // Other cells stay compact.
+                        // badges; width is anchored on the header (`w-[260px]`)
+                        // and the inner flex wraps badges to new lines as needed.
                         const isProjectCell = fieldKey === "name" || fieldKey === "project";
                         return (
                           <td
                             key={col.key}
                             className={`px-3 py-1.5 text-xs sm:text-sm text-slate-900 ${
                               alignRight ? "text-right" : "text-left"
-                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${isProjectCell ? "min-w-[320px] max-w-[480px]" : ""}`}
+                            } ${isEditable ? "cursor-pointer" : ""} ${isStickyFirst ? "sticky left-0 z-10 bg-white" : ""} ${isProjectCell ? "w-[260px] max-w-[260px]" : ""}`}
                             onDoubleClick={() => {
                               if (!isEditable || loading || savingOverride) return;
                               const projectId = p.id as number;
