@@ -46,6 +46,11 @@ class Settings(BaseSettings):
 
     builtmind_api_key: str | None = Field(default=None, validation_alias="BUILTMIND_API_KEY")
 
+    # HERE API key — powers /geocode and /geocode/suggest (address + area typeahead).
+    # Read here so it works from the .env file regardless of whether the launcher
+    # (dev script vs start_stack.sh) exports it into the process environment.
+    here_api_key: str | None = Field(default=None, validation_alias="HERE_API_KEY")
+
     # ----- Supabase (Auth) -----
     # Project URL — required for admin broker operations (Supabase Admin API).
     supabase_url: str | None = Field(default=None, validation_alias="SUPABASE_URL")

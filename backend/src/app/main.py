@@ -10651,7 +10651,7 @@ def geocode_suggest(
     import requests as _requests
     from . import here_metrics
 
-    api_key = os.environ.get("HERE_API_KEY", "")
+    api_key = _settings.here_api_key or os.environ.get("HERE_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
     query = (q or "").strip().lower()
@@ -10778,7 +10778,7 @@ def geocode_address(
     import requests as _requests
     from . import here_metrics
 
-    api_key = os.environ.get("HERE_API_KEY", "")
+    api_key = _settings.here_api_key or os.environ.get("HERE_API_KEY", "")
     if not api_key:
         raise HTTPException(status_code=503, detail="Geocoding not configured (HERE_API_KEY missing)")
     query = (q or "").strip().lower()
