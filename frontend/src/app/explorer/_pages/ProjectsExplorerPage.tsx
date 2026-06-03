@@ -769,6 +769,9 @@ export default function ProjectsPage() {
   const [linkCopied, setLinkCopied] = useState(false);
   const [savingOverride, setSavingOverride] = useState(false);
   const [refetchTrigger, setRefetchTrigger] = useState(0);
+  // Backend default skrývá vyprodané/staré projekty (include_archived=False).
+  // Tenhle toggle umožní brokerovi je zobrazit — stejně jako v units exploreru.
+  const [includeArchived, setIncludeArchived] = useState(() => searchParams?.get("include_archived") === "1");
 
   const [walkPrefsOpen, setWalkPrefsOpen] = useState(false);
   const [walkPrefs, setWalkPrefs] = useState<WalkabilityPreferences>(() => getDefaultPreferences());
@@ -890,6 +893,7 @@ export default function ProjectsPage() {
     setSortBy(parsed.sortBy);
     setSortDir(parsed.sortDir as "asc" | "desc");
     setPolygon(parsed.polygon ?? null);
+    setIncludeArchived(searchParams?.get("include_archived") === "1");
   }, [searchParams]);
 
   // Explorer filter persistence: jednorázová hydratace z localStorage,
@@ -1135,13 +1139,14 @@ export default function ProjectsPage() {
           geoSuffix = `&min_latitude=${minLat}&max_latitude=${maxLat}&min_longitude=${minLng}&max_longitude=${maxLng}`;
         }
       }
-      const dataQs = `${baseQs}${geoSuffix}&with_count=false`;
+      const archivedSuffix = includeArchived ? "&include_archived=1" : "";
+      const dataQs = `${baseQs}${geoSuffix}${archivedSuffix}&with_count=false`;
       const countQs = buildUnitsQuery(
         filters,
         supportedFilterKeys,
         { limit: 1, offset: 0 },
         { sort_by: effectiveSortBy, sort_dir: sortDir }
-      ) + geoSuffix + "&with_count=true";
+      ) + geoSuffix + archivedSuffix + "&with_count=true";
 
       // Hlavní data fetch — render tabulky závisí jen na něm.
       fetch(`${API_BASE}/projects?${dataQs}`, { signal: dataController.signal })
@@ -1170,7 +1175,7 @@ export default function ProjectsPage() {
       dataController.abort();
       countController.abort();
     };
-  }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon, refetchTrigger]);
+  }, [filters, safeLimit, offset, effectiveSortBy, sortDir, supportedFilterKeys, polygon, refetchTrigger, includeArchived]);
 
   const visibleColumns = useMemo(() => {
     const byKey = new Map(columns.map((c) => [c.key, c]));
@@ -1647,6 +1652,21 @@ export default function ProjectsPage() {
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100"
                 >
                   Sloupce
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !includeArchived;
+                    setIncludeArchived(next);
+                    const p = new URLSearchParams(searchParams?.toString() ?? "");
+                    if (next) p.set("include_archived", "1");
+                    else p.delete("include_archived");
+                    router.replace(p.toString() ? `${pathname}?${p}` : pathname, { scroll: false });
+                    setActionsOpen(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-100"
+                >
+                  {includeArchived ? "Skrýt archiv" : "Zobrazit archiv"}
                 </button>
                 <button
                   type="button"
