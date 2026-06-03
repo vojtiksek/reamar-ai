@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # (dev script vs start_stack.sh) exports it into the process environment.
     here_api_key: str | None = Field(default=None, validation_alias="HERE_API_KEY")
 
+    # ----- Auth (Google Sign-In → own JWT) -----
+    # Google OAuth Web client id — the `aud` we require on incoming Google ID tokens.
+    google_client_id: str | None = Field(default=None, validation_alias="GOOGLE_CLIENT_ID")
+    # HS256 secret used to sign our own broker_token (issued after a verified
+    # Google login + broker allowlist match). Server-only.
+    auth_jwt_secret: str | None = Field(default=None, validation_alias="AUTH_JWT_SECRET")
+    # How long an issued broker_token stays valid (hours).
+    auth_jwt_ttl_hours: int = Field(default=720, validation_alias="AUTH_JWT_TTL_HOURS")
+
     # ----- Supabase (Auth) -----
     # Project URL — required for admin broker operations (Supabase Admin API).
     supabase_url: str | None = Field(default=None, validation_alias="SUPABASE_URL")

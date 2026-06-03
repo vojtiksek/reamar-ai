@@ -662,6 +662,103 @@ def _try_verify_supabase_jwt(token: str) -> tuple[str, str | None] | None:
     return sub, email
 
 
+# ---------------------------------------------------------------------------
+# Google Sign-In → own JWT.  We verify Google's ID token (RS256, Google JWKS),
+# check the email against the brokers allowlist, and mint our own HS256 token
+# that the frontend keeps using as `broker_token`. No Supabase involved.
+# ---------------------------------------------------------------------------
+_GOOGLE_JWKS_URL = "https://www.googleapis.com/oauth2/v3/certs"
+_GOOGLE_ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
+_OUR_JWT_ISSUER = "reamar-ai"
+_google_jwks_client = None
+
+
+def _get_google_jwks_client():
+    global _google_jwks_client
+    if _google_jwks_client is not None:
+        return _google_jwks_client
+    try:
+        import jwt  # PyJWT
+        _google_jwks_client = jwt.PyJWKClient(_GOOGLE_JWKS_URL, cache_keys=True)
+        return _google_jwks_client
+    except Exception:
+        return None
+
+
+def _verify_google_id_token(token: str) -> str | None:
+    """Return the verified, lowercased email from a Google ID token, or None.
+
+    Validates signature (Google JWKS), audience (our GOOGLE_CLIENT_ID), issuer
+    and expiry, and requires a verified email. Returns None on any failure —
+    the caller turns that into a 401."""
+    client_id = _settings.google_client_id
+    if not client_id:
+        return None
+    jwks = _get_google_jwks_client()
+    if jwks is None:
+        return None
+    try:
+        import jwt  # PyJWT
+        signing_key = jwks.get_signing_key_from_jwt(token).key
+        payload = jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            audience=client_id,
+            options={"require": ["sub", "exp", "aud", "iss"]},
+        )
+    except Exception:
+        return None
+    if payload.get("iss") not in _GOOGLE_ISSUERS:
+        return None
+    if payload.get("email_verified") is not True:
+        return None
+    email = payload.get("email")
+    if not isinstance(email, str) or "@" not in email:
+        return None
+    return email.strip().lower()
+
+
+def _issue_broker_jwt(broker: "Broker") -> str:
+    """Mint our own HS256 broker_token for an allowlisted broker."""
+    import jwt  # PyJWT
+    secret = _settings.auth_jwt_secret
+    if not secret:
+        raise HTTPException(status_code=503, detail="Auth not configured (AUTH_JWT_SECRET missing)")
+    now = datetime.now(timezone.utc)
+    payload = {
+        "iss": _OUR_JWT_ISSUER,
+        "sub": str(broker.id),
+        "email": broker.email,
+        "iat": now,
+        "exp": now + timedelta(hours=_settings.auth_jwt_ttl_hours),
+    }
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def _try_verify_our_jwt(token: str) -> int | None:
+    """Return broker id if token is one we issued (valid HS256 + our issuer)."""
+    secret = _settings.auth_jwt_secret
+    if not secret:
+        return None
+    try:
+        import jwt  # PyJWT
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=["HS256"],
+            issuer=_OUR_JWT_ISSUER,
+            options={"require": ["sub", "exp", "iss"]},
+        )
+    except Exception:
+        return None
+    sub = payload.get("sub")
+    try:
+        return int(sub)
+    except (TypeError, ValueError):
+        return None
+
+
 def get_current_broker(
     db: DbSession,
     authorization: str | None = Header(default=None, alias=AUTH_HEADER),
@@ -670,7 +767,16 @@ def get_current_broker(
         raise HTTPException(status_code=401, detail="Missing or invalid Authorization header")
     token = authorization.split(" ", 1)[1].strip()
 
-    # Preferred path: Supabase JWT.
+    # Preferred path: our own JWT (issued by POST /auth/google after a verified
+    # Google login + broker allowlist match).
+    broker_id = _try_verify_our_jwt(token)
+    if broker_id is not None:
+        broker = db.get(Broker, broker_id)
+        if broker:
+            return broker
+        raise HTTPException(status_code=401, detail="Broker not provisioned")
+
+    # Transition path: Supabase JWT (kept until Supabase is fully removed).
     verified = _try_verify_supabase_jwt(token)
     if verified:
         sub, email = verified
@@ -708,6 +814,36 @@ def get_current_broker(
         return broker
 
     raise HTTPException(status_code=401, detail="Invalid token")
+
+
+class GoogleAuthRequest(BaseModel):
+    # The ID token (JWT) returned by Google Identity Services on the frontend.
+    credential: str
+
+
+@app.post("/auth/google", summary="Exchange a Google ID token for a broker_token")
+def auth_google(body: GoogleAuthRequest, db: DbSession) -> dict[str, Any]:
+    """Verify a Google Sign-In ID token, match the email against the brokers
+    allowlist, and issue our own broker_token. No public registration: an email
+    that isn't already a broker row gets 403."""
+    email = _verify_google_id_token(body.credential)
+    if not email:
+        raise HTTPException(status_code=401, detail="Přihlášení přes Google selhalo")
+    broker = db.execute(
+        select(Broker).where(func.lower(Broker.email) == email)
+    ).scalars().first()
+    if broker is None:
+        raise HTTPException(status_code=403, detail="Tento účet nemá přístup")
+    token = _issue_broker_jwt(broker)
+    return {
+        "token": token,
+        "broker": {
+            "id": broker.id,
+            "email": broker.email,
+            "name": broker.name,
+            "role": broker.role,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
