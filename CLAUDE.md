@@ -22,9 +22,9 @@ It is a data-driven tool used by a consultant (broker) to:
 | **Case / Client** | A customer with preferences, budget, wizard answers |
 
 ### Stack
-- **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind) — hostováno na **Vercel**
-- **Backend**: FastAPI + SQLAlchemy 2.0 + Alembic — hostováno na **Railway**
-- **DB**: PostgreSQL 16 + PostGIS — **Supabase** (managed)
+- **Frontend**: Next.js 16 (App Router, TypeScript, Tailwind) — hostováno na **Vercel** (`app.reamar.cz`)
+- **Backend**: FastAPI + SQLAlchemy 2.0 + Alembic — self-hosted na **Mac mini** přes PM2 (`reamar-api.blasst.cz`)
+- **DB**: PostgreSQL 16 + PostGIS — lokální na Mac mini (`localhost:5433`); **Supabase** už jen pro auth (JWT)
 - **Python**: 3.11, venv at `backend/.venv`
 - JSONB columns carry wizard state, scoring config, and overrides
 - Project-level overrides always take precedence over unit base data
@@ -61,9 +61,10 @@ It is a data-driven tool used by a consultant (broker) to:
 ## 2.5 Automation & Deployment
 
 ### Produkce
-- **Frontend**: Vercel (Next.js 16, `main` branch auto-deploy)
-- **Backend**: Railway (FastAPI, auto-deploy z `main`)
-- **DB**: Supabase (PostgreSQL 16 + PostGIS, managed)
+- **Frontend**: Vercel (Next.js 16, `main` branch auto-deploy) — veřejně `https://app.reamar.cz`. Vercel projekt `reamar-ai`. Push do `main` = auto-deploy production (ověř `vercel ls reamar-ai`). Build pečuje `NEXT_PUBLIC_API_URL=https://reamar-api.blasst.cz` z `frontend/.env.production`.
+- **Backend**: self-hosted na **Mac mini** přes PM2 (FastAPI/uvicorn `:8001`), veřejně `https://reamar-api.blasst.cz` přes cloudflared. **Railway už nepoužíváme.** Deploy = edit + `pm2 restart reamar-ai-api` (běží z working tree tohoto repa).
+- **DB**: lokální **PostgreSQL 16 + PostGIS** na Mac mini (`localhost:5433`, docker-compose). **Ne Supabase** pro data — migrace se aplikují tady.
+- **Auth**: Supabase JWT (broker login) zůstává — `get_current_broker` ověřuje Supabase JWT přes JWKS. Supabase = jen auth, ne datová DB.
 
 ### Daily automation (05:00 CEST / 04:00 CET)
 - Vercel Cron `vercel.json`: `0 3 * * *` UTC
@@ -81,9 +82,10 @@ It is a data-driven tool used by a consultant (broker) to:
 
 ### Environment proměnné
 - `CRON_SECRET` — Vercel project env (bearer token pro cron route)
-- `BACKEND_API_URL` — veřejná URL Railway backendu (např. `https://…railway.app`)
-- `DATABASE_URL` — Supabase connection string (pooler/direct)
-- Backend na Railway musí mít stejný `CRON_SECRET` v env (main.py kontroluje `x-cron-secret` header)
+- `BACKEND_API_URL` — veřejná URL backendu na Mac mini (`https://reamar-api.blasst.cz`), nastaveno ve Vercel env
+- `DATABASE_URL` — connection string lokálního Postgresu na Mac mini (`localhost:5433`), v root `.env`
+- `HERE_API_KEY` — pro `/geocode` + `/geocode/suggest`; musí být v root `.env` (čte se přes pydantic `Settings`, ne přes shell export — PM2 ani start_stack `.env` nesourcují)
+- Backend musí mít stejný `CRON_SECRET` v env (main.py kontroluje `x-cron-secret` header)
 
 ---
 
@@ -191,9 +193,15 @@ For UI tasks:
 - **MacBook** — secondary/mobile, review, fallback edits (`~/Desktop/reamar_ai`)
 
 **Produkce:**
-- **Frontend** → Vercel (auto-deploy z `main`)
-- **Backend** → Railway (auto-deploy z `main`)
-- **DB** → Supabase (managed PostgreSQL + PostGIS)
+- **Frontend** → Vercel (`app.reamar.cz`, auto-deploy z `main`)
+- **Backend** → self-hosted na **Mac mini** přes PM2 (`reamar-api.blasst.cz` přes cloudflared). Deploy: `pm2 restart reamar-ai-api`. (Railway už ne.)
+- **DB** → lokální PostgreSQL 16 + PostGIS na Mac mini (`localhost:5433`, docker-compose)
+- **Auth** → Supabase JWT (jen auth, ne datová DB)
+
+**PM2 služby na Mac mini** (`pm2 list`):
+- `reamar-ai-api` — uvicorn `:8001` (backend; běží z tohoto repa)
+- `reamar-ai-web` — `next start` `:3001` (interní instance přes Tailscale `100.118.81.100:3001`; veřejný broker je Vercel/app.reamar.cz). Změna FE tady = `npm run build` + `pm2 restart reamar-ai-web`
+- `reamar-ai-tunnel` — cloudflared (`~/.cloudflared/reamar-ai.yml`: `reamar-api.blasst.cz → :8001`)
 
 ## Project layout
 ```
@@ -231,16 +239,15 @@ cd backend && source .venv/bin/activate && alembic upgrade head
 ```
 
 ## DATABASE_URL
-- **Produkce** (Railway backend → Supabase): Supabase connection string v Railway env
-- **Dev** (local backend → Supabase): stejný Supabase string v `backend/.env`
-- Pozor na pooler vs direct connection — pro Alembic migrace použij direct, pro app pooler
+- Lokální PostgreSQL na Mac mini: `localhost:5433` (docker-compose), connection string v **root `.env`** (ten čte pydantic `Settings`, ne `backend/.env`)
+- Pozn.: `backend/.env` je zastaralý (drží už jen `HERE_API_KEY` apod.); kanonický je root `.env`
+- Konfig se čte přes pydantic `Settings` (`backend/src/app/settings.py`, `env_file` = root `.env`) — `os.environ` nemusí mít proměnné, protože PM2 ani `start_stack.sh` `.env` nesourcují
 
 ## DB migrations
 - New migration = new file in `backend/alembic/versions/`
 - Command: `alembic revision --autogenerate -m "describe_change"`
 - Always review generated migration before applying
-- Supabase = shared DB → **nikdy** `alembic upgrade head` ani `downgrade` bez explicitního potvrzení
-- Produkční migrace se spouští cíleně, ne automaticky při Railway deploy
+- Prod DB je lokální na Mac mini → migrace pouštěj cíleně, **nikdy** `alembic upgrade head`/`downgrade` bez explicitního potvrzení
 
 ## Git
 - Commit often, push when checks pass
