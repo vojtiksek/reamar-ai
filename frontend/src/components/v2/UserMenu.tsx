@@ -2,25 +2,25 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { getSupabase } from "@/lib/supabase";
 
 export function UserMenu() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [email, setEmail] = useState<string>("");
-  const [initials, setInitials] = useState<string>("?");
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+  const initials = email ? email.slice(0, 1).toUpperCase() : "?";
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await getSupabase().auth.getUser();
-      if (cancelled) return;
-      const em = data.user?.email ?? "";
-      setEmail(em);
-      setInitials(em ? em.slice(0, 1).toUpperCase() : "?");
-    })();
-    return () => { cancelled = true; };
+    // broker_name je dostupné až na klientovi (localStorage) → čteme po mountu,
+    // aby nedošlo k hydration mismatch.
+    let name = "";
+    try {
+      name = window.localStorage.getItem("broker_name") ?? "";
+    } catch {
+      name = "";
+    }
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEmail(name);
   }, []);
 
   useEffect(() => {
@@ -34,8 +34,7 @@ export function UserMenu() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  const handleSignOut = async () => {
-    await getSupabase().auth.signOut();
+  const handleSignOut = () => {
     try {
       window.localStorage.removeItem("broker_token");
       window.localStorage.removeItem("broker_name");
