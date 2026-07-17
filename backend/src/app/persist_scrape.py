@@ -41,6 +41,9 @@ Usage (from ``backend/`` with venv active):
         --project-url "https://www.city-home.cz/.../nabidka-nemovitosti1" \\
         --fetch 5
 
+    # Scrape every project first seen in the last 10 days (project_first_seen)
+    python -m app.persist_scrape --recent-days 10 --fetch 20
+
     # Dry-run: fetch + parse + match + print what *would* be written, no commit
     python -m app.persist_scrape --unit-url "..." --dry-run
 """
@@ -52,7 +55,7 @@ import json
 import logging
 import sys
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Iterable
 
@@ -60,7 +63,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal
-from .models import Unit, UnitScrapeEnrichment
+from .models import Project, ProjectAggregates, Unit, UnitScrapeEnrichment
 from .parse_units import ParsedUnit, parse_unit_html
 from .scrape_units import (
     DiscoveredUnit,
@@ -408,6 +411,64 @@ def persist_units_from_project_url(
     return outcomes
 
 
+def select_recent_project_urls(db: Session, *, recent_days: int) -> list[tuple[int, str]]:
+    """Return (project_id, project_url) for projects first seen within the last
+    ``recent_days`` days that have a non-empty ``project_url``.
+
+    Recency comes from ``ProjectAggregates.project_first_seen`` (= min unit
+    first_seen), so aggregates must be up to date for the window to be correct.
+    """
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=recent_days)
+    rows = db.execute(
+        select(Project.id, Project.project_url)
+        .join(ProjectAggregates, ProjectAggregates.project_id == Project.id)
+        .where(
+            Project.project_url.isnot(None),
+            Project.project_url != "",
+            ProjectAggregates.project_first_seen.isnot(None),
+            ProjectAggregates.project_first_seen >= cutoff,
+        )
+        .order_by(ProjectAggregates.project_first_seen.desc())
+    ).all()
+    return [(pid, url) for pid, url in rows]
+
+
+def persist_units_from_recent_projects(
+    db: Session,
+    *,
+    recent_days: int,
+    fetch_limit: int,
+    allow_playwright: bool = True,
+    dry_run: bool = False,
+) -> list[PersistOutcome]:
+    """Scrape + persist enrichment for every project first seen within the last
+    ``recent_days`` days. Best-effort per project: a project that fails is
+    logged and the loop continues. Returns the flat list of all unit outcomes.
+    """
+    targets = select_recent_project_urls(db, recent_days=recent_days)
+    logger.info(
+        "recent-projects scrape: %d project(s) first seen in last %d day(s)",
+        len(targets),
+        recent_days,
+    )
+    outcomes: list[PersistOutcome] = []
+    for pid, project_url in targets:
+        logger.info("scraping project id=%s url=%s", pid, project_url)
+        try:
+            outcomes.extend(
+                persist_units_from_project_url(
+                    db,
+                    project_url,
+                    fetch_limit=fetch_limit,
+                    allow_playwright=allow_playwright,
+                    dry_run=dry_run,
+                )
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("project id=%s scrape failed — continuing", pid)
+    return outcomes
+
+
 # --------------------------------------------------------------------------- #
 # CLI
 # --------------------------------------------------------------------------- #
@@ -446,11 +507,24 @@ def main(argv: Iterable[str] | None = None) -> int:
         "--project-url",
         help="Project URL — discover first N units and persist each.",
     )
+    src.add_argument(
+        "--recent-days",
+        type=int,
+        metavar="N",
+        help=(
+            "Scrape every project first seen within the last N days "
+            "(project_first_seen, projects with a project_url). "
+            "Persists up to --fetch units per project."
+        ),
+    )
     parser.add_argument(
         "--fetch",
         type=int,
         default=5,
-        help="Max units to fetch/persist when using --project-url (default 5).",
+        help=(
+            "Max units to fetch/persist per project when using --project-url "
+            "or --recent-days (default 5)."
+        ),
     )
     parser.add_argument(
         "--no-playwright",
@@ -480,6 +554,16 @@ def main(argv: Iterable[str] | None = None) -> int:
                     db,
                     args.unit_url,
                     http_session=http_session,
+                    allow_playwright=not args.no_playwright,
+                    dry_run=args.dry_run,
+                )
+            )
+        elif args.recent_days is not None:
+            outcomes.extend(
+                persist_units_from_recent_projects(
+                    db,
+                    recent_days=args.recent_days,
+                    fetch_limit=args.fetch,
                     allow_playwright=not args.no_playwright,
                     dry_run=args.dry_run,
                 )
